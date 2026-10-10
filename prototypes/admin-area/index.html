@@ -1,0 +1,1008 @@
+<!--
+  PROTOTYPE, throwaway: three variants of the Admin area, switchable via ?variant=A|B|C
+  Also ?theme=light|dark (default follows system). All mutations are in-memory stubs; reload resets.
+  Answers: what screens and flows does the Admin use to manage Clients, Client Users, Projects/boards,
+  Invoices and the Requests inbox, and what is a list versus a detail view?
+-->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Admin area prototype</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+/* ---------- Tokens (DESIGN.md 2.1 / 2.2, not forked) ---------- */
+:root{
+  --bg:#F4F4F2;--surface:#FFFFFF;--surface-2:#EFEFEC;--surface-3:#DBDBD6;--fg:#161614;--fg-2:#5E5E58;
+  --line:#E3E3DF;--line-strong:#C6C6C0;--line-input:#85857E;--accent:#0F766E;--accent-hover:#115E59;
+  --accent-subtle:#D5EFEC;--accent-fg:#0B5F58;--on-accent:#FFFFFF;
+  --ok:#467210;--ok-subtle:#ECF5DA;--risk:#A84D08;--risk-subtle:#FDF1DE;--off:#C81E1E;--off-subtle:#FDE7E7;
+  --done:#6D28D9;--done-subtle:#EFE7FD;--idle:#57574F;--idle-subtle:#EEEEEA;
+  --sans:"IBM Plex Sans",system-ui,sans-serif;--mono:"IBM Plex Mono",ui-monospace,monospace;
+  color-scheme:light;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#0C0C0B;--surface:#151513;--surface-2:#1D1D1B;--surface-3:#2F2F2C;--fg:#ECECE8;--fg-2:#9C9C95;
+    --line:#272724;--line-strong:#3B3B37;--line-input:#66665F;--accent:#2DD4BF;--accent-hover:#5EEAD4;
+    --accent-subtle:#0F2E2B;--accent-fg:#5EEAD4;--on-accent:#04201D;
+    --ok:#A3E635;--ok-subtle:#1E2A0B;--risk:#FBBF24;--risk-subtle:#2E2408;--off:#F87171;--off-subtle:#341313;
+    --done:#B794F6;--done-subtle:#241A3A;--idle:#A3A39C;--idle-subtle:#1F1F1C;color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0C0C0B;--surface:#151513;--surface-2:#1D1D1B;--surface-3:#2F2F2C;--fg:#ECECE8;--fg-2:#9C9C95;
+  --line:#272724;--line-strong:#3B3B37;--line-input:#66665F;--accent:#2DD4BF;--accent-hover:#5EEAD4;
+  --accent-subtle:#0F2E2B;--accent-fg:#5EEAD4;--on-accent:#04201D;
+  --ok:#A3E635;--ok-subtle:#1E2A0B;--risk:#FBBF24;--risk-subtle:#2E2408;--off:#F87171;--off-subtle:#341313;
+  --done:#B794F6;--done-subtle:#241A3A;--idle:#A3A39C;--idle-subtle:#1F1F1C;color-scheme:dark;
+}
+/* ---------- Base ---------- */
+*,*::before,*::after{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{background:var(--bg);color:var(--fg);font:14px/20px var(--sans);overflow-x:hidden}
+button,input,select,textarea{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+a,.lnk{color:var(--accent-fg);text-decoration:underline;text-underline-offset:2px;cursor:pointer;background:none;border:0;padding:0}
+.num{font-family:var(--mono);font-variant-numeric:tabular-nums}
+.r,.t .r{text-align:right}
+.meta{font:12px/16px var(--mono);color:var(--fg-2)}
+.muted{color:var(--fg-2)}
+.help{font-size:13px;color:var(--fg-2);margin:0}
+.ico{width:12px;height:12px;flex:none;vertical-align:-1px}
+.micro{font-size:12px;line-height:16px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--fg-2)}
+/* ---------- Shell ---------- */
+.shell{display:grid;grid-template-columns:220px minmax(0,1fr);min-height:100dvh}
+.side{position:sticky;top:0;height:100dvh;overflow-y:auto;background:var(--surface);border-right:1px solid var(--line);display:flex;flex-direction:column}
+.brand{padding:12px;border-bottom:1px solid var(--line)}
+.brand b{display:block;font-size:14px;font-weight:600}
+.brand small{font:12px/16px var(--mono);text-transform:uppercase;color:var(--fg-2)}
+.nav{display:flex;flex-direction:column;gap:1px;padding:8px}
+.nav .sec{padding:12px 8px 4px}
+.ni{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:3px;font-size:13px;color:var(--fg-2);cursor:pointer;background:none;border:0;text-align:left;width:100%;min-width:0}
+.ni span.nm{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ni:hover{background:var(--surface-2);color:var(--fg)}
+.ni.on{background:var(--surface-2);color:var(--fg);box-shadow:inset 2px 0 0 var(--accent)}
+.ni .ct{margin-left:auto;font:12px var(--mono);color:var(--fg-2)}
+.ni .dot{margin-left:auto;color:var(--off);display:inline-flex}
+.ni.add{color:var(--accent-fg)}
+.me{margin-top:auto;border-top:1px solid var(--line);padding:10px 12px;display:flex;gap:8px;align-items:center;font-size:13px}
+.av{width:24px;height:24px;border-radius:3px;background:var(--accent);color:var(--on-accent);display:grid;place-items:center;font-weight:600;font-size:12px;flex:none}
+main{min-width:0;padding:16px 20px 120px;max-width:1280px;width:100%}
+.hdr{display:flex;align-items:flex-end;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:16px}
+.crumb{font:12px/16px var(--mono);text-transform:uppercase;color:var(--fg-2)}
+.crumb button{font:inherit;text-transform:inherit;color:var(--accent-fg);background:none;border:0;padding:0;cursor:pointer;text-decoration:underline}
+h1{font-size:18px;line-height:24px;font-weight:600;margin:2px 0 0}
+.acts{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.sub{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:4px}
+/* ---------- Panels, tables ---------- */
+.panel{border:1px solid var(--line);border-radius:3px;background:var(--surface);min-width:0;margin-bottom:16px}
+.ph{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 12px;min-height:40px;border-bottom:1px solid var(--line);flex-wrap:wrap}
+.ph h2{margin:0;font-size:12px;line-height:16px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--fg-2)}
+.pb{padding:12px}
+.grid2{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px}
+.tw{overflow-x:auto}
+table.t{width:100%;border-collapse:collapse;font-size:13px}
+.t th{background:var(--surface-2);font-size:12px;line-height:16px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--fg-2);text-align:left;padding:6px 12px;white-space:nowrap}
+.t td{border-top:1px solid var(--line);padding:8px 12px;vertical-align:top}
+.t tr.lk{cursor:pointer}
+.t tr.lk:hover td{background:var(--surface-2)}
+.t tr.sel td{background:var(--accent-subtle)}
+.t td.rowacts{text-align:right;white-space:nowrap}
+.t td.rowacts .btn{margin-left:4px}
+.t .strong{font-weight:600}
+.empty{padding:20px 12px;color:var(--fg-2);font-size:13px}
+dl.kv{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:6px 16px;margin:0;font-size:13px}
+dl.kv dt{color:var(--fg-2)}
+dl.kv dd{margin:0;min-width:0}
+/* ---------- Badges, status ---------- */
+.badge{display:inline-flex;align-items:center;gap:6px;white-space:nowrap;border:1px solid var(--hc);color:var(--hc);background:var(--hb);border-radius:3px;padding:1px 6px;font-size:12px;line-height:16px;font-weight:500}
+.rs{display:inline-flex;align-items:center;gap:6px;font:12px/16px var(--mono);white-space:nowrap}
+.rk{display:inline-flex;align-items:center;gap:6px;font-size:12px;white-space:nowrap}
+.tag{display:inline-block;border:1px solid var(--line-strong);border-radius:3px;padding:0 6px;font-size:12px;line-height:18px;color:var(--fg-2);white-space:nowrap}
+.tag.acc{border-color:var(--accent);color:var(--accent-fg);background:var(--accent-subtle)}
+.bar{height:4px;background:var(--surface-3);border-radius:1px;overflow:hidden;min-width:60px}
+.bar span{display:block;height:100%;transform-origin:left;background:var(--hc)}
+/* ---------- KPI strip ---------- */
+.kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));border:1px solid var(--line);border-radius:3px;background:var(--surface);margin-bottom:16px}
+.kpi{padding:10px 12px;border-left:1px solid var(--line);min-width:0;text-align:left;background:none;border-top:0;border-right:0;border-bottom:0;font:inherit;color:inherit}
+.kpi:first-child{border-left:0}
+button.kpi{cursor:pointer}
+button.kpi:hover{background:var(--surface-2)}
+.kpi .v{font:500 20px/28px var(--mono);font-variant-numeric:tabular-nums;display:flex;gap:6px;align-items:center}
+.kpi .v.bad{color:var(--off)}
+/* ---------- Buttons, fields ---------- */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:32px;padding:0 10px;border-radius:3px;font-weight:500;font-size:13px;cursor:pointer;border:1px solid var(--line-strong);background:var(--surface-2);color:var(--fg);white-space:nowrap;text-decoration:none}
+.btn:hover{background:var(--surface-3)}
+.btn:active{transform:scale(.98)}
+.btn.pri{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}
+.btn.pri:hover{background:var(--accent-hover);border-color:var(--accent-hover)}
+.btn.ghost{background:none;border-color:transparent;color:var(--fg-2)}
+.btn.ghost:hover{background:var(--surface-2);color:var(--fg)}
+.btn.danger{color:var(--off)}
+.btn.sm{height:26px;padding:0 8px;font-size:12px}
+.btn:disabled{background:var(--surface-2);color:var(--fg-2);border-color:var(--line);cursor:not-allowed;transform:none}
+.field{display:flex;flex-direction:column;gap:6px;min-width:0}
+.field>label,.field>.l{font-size:13px;line-height:18px;font-weight:600}
+.opt{font-weight:400;color:var(--fg-2)}
+.in{width:100%;background:var(--bg);border:1px solid var(--line-input);border-radius:3px;padding:0 10px;height:36px;font-size:14px;color:var(--fg);min-width:0}
+.in:hover{border-color:var(--fg-2)}
+.in:focus{border-color:var(--accent)}
+.in:disabled{background:var(--surface-2);color:var(--fg-2)}
+textarea.in{height:auto;min-height:88px;padding:8px 10px;resize:vertical;line-height:20px}
+select.in{padding-right:24px}
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.fb{display:flex;flex-direction:column;gap:16px;padding:16px}
+.ff{display:flex;align-items:center;justify-content:flex-end;gap:8px;padding:12px 16px;border-top:1px solid var(--line);flex-wrap:wrap}
+.ferr{margin-right:auto;color:var(--off);font-size:13px}
+.li{display:grid;grid-template-columns:minmax(0,1fr) 120px 32px;gap:6px;align-items:center}
+.lihead{display:grid;grid-template-columns:minmax(0,1fr) 120px 32px;gap:6px}
+.total{display:flex;justify-content:space-between;border-top:1px solid var(--line);padding-top:8px;font-weight:600}
+.maptbl select{min-width:150px}
+.note{border-left:2px solid var(--accent);padding:6px 10px;background:var(--accent-subtle);font-size:13px;border-radius:0 3px 3px 0}
+.warn{border-left:2px solid var(--risk);padding:6px 10px;background:var(--risk-subtle);font-size:13px;border-radius:0 3px 3px 0;color:var(--fg)}
+/* ---------- Tabs (variant A) ---------- */
+.tabs{display:flex;gap:2px;border-bottom:1px solid var(--line);margin-bottom:16px;overflow-x:auto}
+.tab{padding:8px 12px;font-size:13px;border:0;background:none;color:var(--fg-2);cursor:pointer;box-shadow:inset 0 -2px 0 transparent;white-space:nowrap}
+.tab:hover{color:var(--fg)}
+.tab.on{color:var(--fg);box-shadow:inset 0 -2px 0 var(--accent)}
+.tab .ct{font:12px var(--mono);margin-left:4px;color:var(--fg-2)}
+/* ---------- Filter bar (variant B) ---------- */
+.filters{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:8px 12px;border-bottom:1px solid var(--line)}
+.filters .in{width:auto;height:30px;font-size:13px}
+/* ---------- Split pane (variant C) ---------- */
+.split{display:grid;grid-template-columns:minmax(260px,360px) minmax(0,1fr);gap:16px;align-items:start}
+.split>.left{position:sticky;top:16px;max-height:calc(100dvh - 32px);overflow-y:auto}
+.it{display:block;width:100%;text-align:left;padding:8px 12px;border:0;border-top:1px solid var(--line);background:none;cursor:pointer;color:var(--fg);font-size:13px}
+.it:first-child{border-top:0}
+.it:hover{background:var(--surface-2)}
+.it.on{background:var(--accent-subtle);box-shadow:inset 2px 0 0 var(--accent)}
+.it .t1{display:flex;gap:6px;align-items:center;justify-content:space-between}
+.it .t1 .nm{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:500}
+.grp{padding:8px 12px 4px;background:var(--surface-2);border-top:1px solid var(--line);display:flex;justify-content:space-between}
+.grp:first-child{border-top:0}
+.chips{display:flex;gap:4px;flex-wrap:wrap}
+.chip{border:1px solid var(--line-strong);background:var(--surface);border-radius:3px;padding:2px 8px;font-size:12px;cursor:pointer;color:var(--fg-2)}
+.chip:focus-within{outline:2px solid var(--accent);outline-offset:2px}
+.chip.on{border-color:var(--accent);color:var(--accent-fg);background:var(--accent-subtle)}
+.pane-empty{padding:48px 16px;text-align:center;color:var(--fg-2)}
+/* ---------- Drawer, dialog, toast ---------- */
+#drawer[hidden]{display:none}
+#drawer .bk{position:fixed;inset:0;background:rgb(0 0 0/.45);z-index:50;animation:fade .2s}
+#drawer .dp{position:fixed;top:0;right:0;bottom:0;width:440px;max-width:100%;background:var(--surface);border-left:1px solid var(--line);z-index:51;display:flex;flex-direction:column;animation:slide .24s cubic-bezier(.2,0,0,1)}
+#drawer .dh{display:flex;align-items:center;justify-content:space-between;padding:8px 8px 8px 16px;border-bottom:1px solid var(--line)}
+#drawer .dh h2{margin:0;font-size:13px;font-weight:600;text-transform:uppercase;letter-spacing:.06em}
+#drawer form{display:flex;flex-direction:column;flex:1;min-height:0}
+#drawer .fb{flex:1;overflow-y:auto}
+@keyframes slide{from{transform:translateX(100%)}to{transform:none}}
+@keyframes fade{from{opacity:0}to{opacity:1}}
+dialog#cfm{border:1px solid var(--line-strong);border-radius:3px;background:var(--surface);color:var(--fg);padding:0;width:420px;max-width:calc(100vw - 24px);box-shadow:0 10px 30px rgb(0 0 0/.18)}
+dialog#cfm::backdrop{background:rgb(0 0 0/.45)}
+dialog#cfm h2{font-size:14px;margin:0;padding:16px 16px 0}
+dialog#cfm .cb{padding:8px 16px 16px;display:flex;flex-direction:column;gap:12px;font-size:14px}
+#toast{position:fixed;right:16px;bottom:16px;z-index:60;background:var(--surface);border:1px solid var(--line-strong);border-radius:3px;padding:10px 12px;font-size:13px;box-shadow:0 10px 30px rgb(0 0 0/.18);max-width:360px}
+#toast[hidden]{display:none}
+.flash td,.flash{animation:flash 1.2s ease-out}
+@keyframes flash{from{background:var(--accent-subtle)}to{background:transparent}}
+/* ---------- Prototype switcher (deliberately not the design) ---------- */
+#proto{position:fixed;left:50%;bottom:16px;transform:translateX(-50%);z-index:1000;display:flex;flex-direction:column;align-items:center;gap:8px;font:13px/1.3 ui-monospace,SFMono-Regular,Menlo,monospace;max-width:calc(100vw - 16px)}
+#proto .pill{display:flex;align-items:center;gap:2px;background:#111;color:#fff;border:2px solid #ffd400;border-radius:999px;padding:4px;box-shadow:0 6px 24px rgba(0,0,0,.4)}
+#proto button{background:transparent;color:#fff;border:0;font:inherit;cursor:pointer;padding:8px 10px;border-radius:999px;white-space:nowrap}
+#proto button:hover{background:#333}
+#proto button:focus-visible{outline:2px solid #ffd400}
+#proto .lbl{padding:0 8px;white-space:nowrap;font-weight:700}
+#proto .sep{width:1px;height:20px;background:#555;margin:0 2px}
+#proto .st{background:#111;color:#eee;border:2px solid #ffd400;border-radius:10px;padding:10px 12px;width:440px;max-width:calc(100vw - 16px);max-height:50vh;overflow:auto;box-shadow:0 6px 24px rgba(0,0,0,.4);font-size:12px}
+#proto .st[hidden]{display:none}
+#proto .st h4{margin:0 0 6px;color:#ffd400;font-size:12px}
+#proto .st ol{margin:0 0 8px;padding-left:18px}
+#proto .st code{color:#9fe}
+/* ---------- Mobile (tolerable) ---------- */
+@media (max-width:767px){
+  .shell{grid-template-columns:1fr}
+  .side{position:sticky;top:0;height:auto;z-index:10;border-right:0;border-bottom:1px solid var(--line)}
+  .brand{padding:8px 12px}
+  .nav{flex-direction:row;overflow-x:auto;padding:0 4px;scrollbar-width:none}
+  .nav .sec,.me,.ni .ct,.ni .dot{display:none}
+  .ni{width:auto;flex:none;min-height:44px;border-radius:0}
+  .ni.on{box-shadow:inset 0 -2px 0 var(--accent)}
+  main{padding:12px 12px 120px}
+  .kpis{grid-template-columns:1fr 1fr}
+  .kpi:nth-child(3){border-left:0}
+  .kpi:nth-child(n+3){border-top:1px solid var(--line)}
+  .grid2,.split,.row2{grid-template-columns:1fr}
+  .split>.left{position:static;max-height:none}
+  .in{font-size:16px;height:44px}
+  .btn{min-height:40px}
+  .btn.sm{min-height:32px}
+  #toast{left:12px;right:12px;bottom:76px}
+  #proto .tname{display:none}
+}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<div id="drawer" hidden><div class="bk" data-act="closeDrawer"></div><aside class="dp" role="dialog" aria-modal="true" aria-labelledby="drawerTitle"></aside></div>
+<dialog id="cfm"><form method="dialog"><h2 id="cfT"></h2><div class="cb"><div id="cfX"></div><div id="cfF"></div></div><div class="ff"><button value="cancel" class="btn">Cancel</button><button value="ok" id="cfOk" class="btn pri">OK</button></div></form></dialog>
+<div id="toast" role="status" aria-live="polite" hidden></div>
+
+<div id="proto" aria-label="Prototype switcher (not part of the design)">
+  <div class="st" id="stPanel" hidden></div>
+  <div class="pill">
+    <button id="prev" title="Previous variant (←)" aria-label="Previous variant">←</button>
+    <span class="lbl" id="lbl"></span>
+    <button id="next" title="Next variant (→)" aria-label="Next variant">→</button>
+    <span class="sep"></span>
+    <button id="themeBtn" title="Toggle light/dark"></button>
+    <button id="stBtn" aria-expanded="false" title="Show in-memory state and mutation log">state</button>
+  </div>
+</div>
+
+<script>
+// =====================================================================
+// Data (in-memory). "Today" is fixed so Overdue / expiry are stable.
+// =====================================================================
+const TODAY = '2026-10-10';
+const MON = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const addDays = (iso, n) => { const d = new Date(iso + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
+const fD = iso => { if (!iso) return '—'; const [y, m, d] = iso.split('-'); return MON[+m - 1] + ' ' + (+d) + (y !== TODAY.slice(0, 4) ? ', ' + y : ''); };
+const fTs = ts => ts ? fD(ts.slice(0, 10)) + ' ' + ts.slice(11) : 'never';
+const nowTs = () => { const d = new Date(); return TODAY + ' ' + String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0'); };
+const money = n => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(n);
+let seq = 100; const uid = p => p + (++seq);
+
+const S = {
+  clients: [
+    { id: 'acme', name: 'Acme Freight', archived: false, created: '2025-02-11' },
+    { id: 'mesa', name: 'Mesa Dental Group', archived: false, created: '2025-06-03' },
+    { id: 'harbor', name: 'Harbor & Pine', archived: false, created: '2026-10-04' },
+    { id: 'bright', name: 'Brightline Studio', archived: true, created: '2024-11-20', archivedOn: '2026-05-30' },
+  ],
+  users: [
+    { id: 'u1', clientId: 'acme', name: 'Dana Whitfield', email: 'dana@acmefreight.com', role: 'Owner', joined: '2025-02-12' },
+    { id: 'u2', clientId: 'acme', name: 'Luis Ortega', email: 'luis@acmefreight.com', role: 'Member', joined: '2025-03-01' },
+    { id: 'u3', clientId: 'acme', name: 'Kim Nakamura', email: 'kim@acmefreight.com', role: 'Member', joined: '2026-01-15' },
+    { id: 'u4', clientId: 'acme', name: 'Rob Feld', email: 'rob@acmefreight.com', role: 'Member', joined: '2025-03-01', removed: true, removedOn: '2026-04-02' },
+    { id: 'u5', clientId: 'mesa', name: 'Maya Chen', email: 'maya@mesadental.com', role: 'Owner', joined: '2025-06-04' },
+    { id: 'u6', clientId: 'mesa', name: 'Tom Reyes', email: 'tom@mesadental.com', role: 'Member', joined: '2025-07-19' },
+    { id: 'u7', clientId: 'bright', name: 'Jo Park', email: 'jo@brightline.studio', role: 'Owner', joined: '2024-11-21' },
+  ],
+  invites: [
+    { id: 'i1', clientId: 'harbor', email: 'eli@harborandpine.co', role: 'Owner', sent: '2026-10-04', expires: '2026-10-11', by: 'Admin' },
+    { id: 'i2', clientId: 'acme', email: 'sam@acmefreight.com', role: 'Member', sent: '2026-10-08', expires: '2026-10-15', by: 'Dana Whitfield' },
+    { id: 'i3', clientId: 'mesa', email: 'billing@mesadental.com', role: 'Member', sent: '2026-09-20', expires: '2026-09-27', by: 'Maya Chen' },
+  ],
+  // GitHub Projects v2 boards in the Neves Labs org, as seen by the read-only GitHub App.
+  boards: [
+    { id: 'b1', num: 12, title: 'Dispatch portal', repo: 'neves-labs/acme-dispatch', clientId: 'acme', state: 'linked', linkedOn: '2025-02-20',
+      columns: ['Backlog', 'Todo', 'In progress', 'In review', 'Done'], map: { Backlog: 'hidden', Todo: 'up', 'In progress': 'ip', 'In review': 'ip', Done: 'done' },
+      fields: { vis: true, note: true, target: true }, lastSync: '2026-10-10 09:42', webhook: 'ok', health: 'on track', update: 'Tracking page shipped; CSV export scoped for November.', updated: '2026-10-07',
+      milestones: [{ name: 'v2 Tracking', due: '2026-11-14' }, { name: 'Billing sync', due: '2027-01-15' }] },
+    { id: 'b2', num: 15, title: 'Driver app', repo: 'neves-labs/acme-driver', clientId: 'acme', state: 'linked', linkedOn: '2026-03-02',
+      columns: ['Todo', 'In progress', 'QA', 'Done'], map: { Todo: 'up', 'In progress': 'ip', Done: 'done' },
+      fields: { vis: true, note: true, target: true }, lastSync: '2026-10-10 09:42', webhook: 'ok', health: 'at risk', update: 'Offline mode slipped a week waiting on test devices.', updated: '2026-10-03',
+      milestones: [{ name: 'Beta', due: '2026-10-31' }] },
+    { id: 'b3', num: 9, title: 'Patient intake', repo: 'neves-labs/mesa-intake', clientId: 'mesa', state: 'linked', linkedOn: '2025-06-10',
+      columns: ['Todo', 'Doing', 'Done'], map: { Todo: 'up', Doing: 'ip', Done: 'done' },
+      fields: { vis: true, note: true, target: true }, lastSync: '2026-10-09 17:05', webhook: 'failing', health: 'on track', update: 'Autosave in testing.', updated: '2026-10-01',
+      milestones: [{ name: 'Autosave', due: '2026-10-24' }] },
+    { id: 'b4', num: 4, title: 'Website rebuild', repo: 'neves-labs/brightline-site', clientId: 'bright', state: 'past', linkedOn: '2024-11-25', frozenOn: '2026-05-30',
+      columns: ['Todo', 'In progress', 'Done'], map: { Todo: 'up', 'In progress': 'ip', Done: 'done' },
+      fields: { vis: true, note: true, target: true }, lastSync: '2026-05-30 11:00', webhook: null, health: 'complete', update: 'Launched.', updated: '2026-05-28',
+      milestones: [{ name: 'Launch', due: '2026-05-15' }] },
+    { id: 'b5', num: 18, title: 'Booking MVP', repo: 'neves-labs/harbor-booking', clientId: null, state: 'unlinked',
+      columns: ['Backlog', 'Ready', 'In progress', 'Review', 'Shipped'], map: {},
+      fields: { vis: true, note: true, target: false }, lastSync: '2026-10-10 09:42', webhook: null, health: 'inactive', update: '', updated: null, milestones: [{ name: 'MVP', due: '2026-12-01' }] },
+    { id: 'b6', num: 2, title: 'Neves Labs website', repo: 'neves-labs/site', clientId: null, state: 'unlinked',
+      columns: ['Ideas', 'Doing', 'Done'], map: {},
+      fields: { vis: false, note: false, target: false }, lastSync: '2026-10-10 09:42', webhook: null, health: 'inactive', update: '', updated: null, milestones: [] },
+  ],
+  tasks: [
+    { id: 't1', boardId: 'b1', title: 'ETA shown in customer timezone', col: 'Todo', visible: true, milestone: 'v2 Tracking', target: '2026-10-30' },
+    { id: 't2', boardId: 'b1', title: 'CSV export of deliveries', col: 'Backlog', visible: false, milestone: 'v2 Tracking' },
+    { id: 't3', boardId: 'b1', title: 'Proof-of-delivery photos', col: 'In progress', visible: true, milestone: 'v2 Tracking', target: '2026-11-07' },
+    { id: 't4', boardId: 'b1', title: 'Magic link lasts 24h', col: 'Done', visible: false, milestone: null },
+    { id: 't5', boardId: 'b1', title: 'Customer tracking page', col: 'Done', visible: true, milestone: 'v2 Tracking' },
+    { id: 't11', boardId: 'b1', title: 'Invoice sync with QuickBooks', col: 'Todo', visible: true, milestone: 'Billing sync' },
+    { id: 't6', boardId: 'b2', title: 'Offline mode', col: 'QA', visible: true, milestone: 'Beta', target: '2026-10-24' },
+    { id: 't7', boardId: 'b2', title: 'Push notifications', col: 'In progress', visible: true, milestone: 'Beta' },
+    { id: 't8', boardId: 'b3', title: 'Intake form autosave', col: 'Doing', visible: true, milestone: 'Autosave', target: '2026-10-20' },
+    { id: 't9', boardId: 'b3', title: 'Insurance card photo upload', col: 'Todo', visible: true, milestone: null },
+    { id: 't12', boardId: 'b3', title: 'Back-button keeps answers', col: 'Done', visible: true, milestone: 'Autosave' },
+    { id: 't10', boardId: 'b4', title: 'New homepage', col: 'Done', visible: true, milestone: 'Launch' },
+    { id: 't13', boardId: 'b5', title: 'Calendar availability', col: 'Ready', visible: true, milestone: 'MVP' },
+  ],
+  invoices: [
+    { id: 'v1', num: 'NL-0011-2025', clientId: 'acme', projectId: 'b1', issued: '2025-11-01', due: '2025-12-01', memo: 'October retainer', items: [{ d: 'Retainer, October', a: 4000 }], status: 'Paid', paidOn: '2025-11-20' },
+    { id: 'v2', num: 'NL-0012-2025', clientId: 'mesa', projectId: 'b3', issued: '2025-12-01', due: '2025-12-31', memo: '', items: [{ d: 'Intake form v1', a: 6500 }, { d: 'Hosting setup', a: 300 }], status: 'Paid', paidOn: '2025-12-28' },
+    { id: 'v3', num: 'NL-0013-2025', clientId: 'bright', projectId: 'b4', issued: '2025-12-15', due: '2026-01-14', memo: '', items: [{ d: 'Design phase', a: 5200 }], status: 'Paid', paidOn: '2026-01-10' },
+    { id: 'v4', num: 'NL-0001-2026', clientId: 'acme', projectId: 'b1', issued: '2026-02-01', due: '2026-03-03', memo: '', items: [{ d: 'Retainer, January', a: 4000 }, { d: 'Extra hours (6h)', a: 900 }], status: 'Paid', paidOn: '2026-02-25' },
+    { id: 'v5', num: 'NL-0002-2026', clientId: 'bright', projectId: 'b4', issued: '2026-05-30', due: '2026-06-29', memo: 'Final milestone', items: [{ d: 'Build and launch', a: 7800 }], status: 'Paid', paidOn: '2026-06-20' },
+    { id: 'v6', num: 'NL-0003-2026', clientId: 'acme', projectId: null, issued: '2026-07-01', due: '2026-07-31', memo: 'Wrong amount, reissued as NL-0004-2026', items: [{ d: 'Retainer, June', a: 400 }], status: 'Void', voidedOn: '2026-07-02' },
+    { id: 'v7', num: 'NL-0004-2026', clientId: 'acme', projectId: null, issued: '2026-07-02', due: '2026-08-01', memo: '', items: [{ d: 'Retainer, June', a: 4000 }], status: 'Paid', paidOn: '2026-07-29' },
+    { id: 'v8', num: 'NL-0005-2026', clientId: 'mesa', projectId: 'b3', issued: '2026-08-31', due: '2026-09-30', memo: 'Autosave milestone', items: [{ d: 'Autosave design + build', a: 3200 }, { d: 'QA pass', a: 650 }], status: 'Open' },
+    { id: 'v9', num: 'NL-0006-2026', clientId: 'acme', projectId: 'b2', issued: '2026-09-15', due: '2026-10-15', memo: '', items: [{ d: 'Driver app, sprint 4', a: 5400 }], status: 'Open' },
+    { id: 'v10', num: 'NL-0007-2026', clientId: 'acme', projectId: 'b1', issued: '2026-10-01', due: '2026-10-31', memo: 'September retainer', items: [{ d: 'Retainer, September', a: 4000 }, { d: 'Extra hours (3h)', a: 450 }], status: 'Open' },
+  ],
+  requests: [
+    { id: 'r1', clientId: 'acme', kind: 'Bug', title: 'Tracking page shows ETA in the wrong timezone', desc: 'Customers in Arizona see an ETA one hour off since the DST change.', projectId: 'b1', by: 'u2', created: '2026-10-09', status: 'New', response: '', taskId: null },
+    { id: 'r2', clientId: 'acme', kind: 'Feature', title: 'Export deliveries to CSV', desc: 'Finance needs a monthly export of all delivered loads.', projectId: 'b1', by: 'u1', created: '2026-10-08', status: 'New', response: '', taskId: null },
+    { id: 'r3', clientId: 'mesa', kind: 'Bug', title: 'Intake form loses answers when pressing Back', desc: 'Patient pressed Back on step 3 and steps 1-2 were empty.', projectId: 'b3', by: 'u6', created: '2026-10-06', status: 'New', response: '', taskId: null },
+    { id: 'r4', clientId: 'acme', kind: 'Feature', title: 'Driver photo on proof of delivery', desc: 'Show the photo the driver takes at drop-off.', projectId: 'b1', by: 'u1', created: '2026-09-12', status: 'Accepted', response: 'Scheduled in v2 Tracking, aiming for early November.', taskId: 't3' },
+    { id: 'r5', clientId: 'mesa', kind: 'Feature', title: 'Spanish translation of the intake form', desc: '', projectId: 'b3', by: 'u5', created: '2026-09-02', status: 'Declined', response: 'Out of scope for this contract; happy to quote it separately.', taskId: null },
+    { id: 'r6', clientId: 'acme', kind: 'Bug', title: 'Login link expires too fast', desc: 'Link from email expired before I opened it.', projectId: null, by: 'u3', created: '2026-08-20', status: 'Done', response: 'Extended to 24 hours.', taskId: 't4' },
+    { id: 'r7', clientId: 'mesa', kind: 'Bug', title: 'Duplicate reminder SMS', desc: 'Two reminders sent for one appointment.', projectId: 'b3', by: 'u6', created: '2026-09-25', status: 'Withdrawn', response: '', taskId: null },
+    { id: 'r8', clientId: 'bright', kind: 'Feature', title: 'Blog section', desc: 'A simple blog under /journal.', projectId: 'b4', by: 'u7', created: '2026-04-10', status: 'Accepted', response: 'Added to the launch scope.', taskId: 't10' },
+  ],
+  log: [],
+};
+
+// =====================================================================
+// Queries
+// =====================================================================
+const byId = (arr, id) => arr.find(x => x.id === id);
+const client = id => byId(S.clients, id);
+const board = id => byId(S.boards, id);
+const inv = id => byId(S.invoices, id);
+const req = id => byId(S.requests, id);
+const task = id => byId(S.tasks, id);
+const user = id => byId(S.users, id);
+const activeUsers = cid => S.users.filter(u => u.clientId === cid && !u.removed);
+const owners = cid => activeUsers(cid).filter(u => u.role === 'Owner');
+const invAmount = i => i.items.reduce((s, x) => s + (+x.a || 0), 0);
+const invSt = i => i.status === 'Open' && i.due < TODAY ? 'Overdue' : i.status;
+const inviteSt = i => i.revoked ? 'Revoked' : i.accepted ? 'Accepted' : i.expires < TODAY ? 'Expired' : (i.expires <= addDays(TODAY, 2) ? 'Expiring' : 'Pending');
+const openInvites = cid => S.invites.filter(i => (!cid || i.clientId === cid) && !i.revoked && !i.accepted);
+const clientBoards = cid => S.boards.filter(b => b.clientId === cid && b.state !== 'unlinked');
+const unmapped = b => b.columns.filter(c => !b.map[c]);
+const CS = { up: 'Up next', ip: 'In progress', done: 'Done', hidden: 'Not shown' };
+const taskClientStatus = t => { const b = board(t.boardId); const m = b.map[t.col]; return m && m !== 'hidden' ? m : null; };
+const isTracked = t => t && t.visible && !!taskClientStatus(t);
+const clientTasks = cid => S.tasks.filter(t => { const b = board(t.boardId); return b.clientId === cid && b.state === 'linked' && isTracked(t); });
+const openBalance = cid => S.invoices.filter(i => (!cid || i.clientId === cid) && (i.status === 'Open')).reduce((s, i) => s + invAmount(i), 0);
+const newReqs = cid => S.requests.filter(r => r.status === 'New' && (!cid || r.clientId === cid));
+const projName = id => id ? board(id).title : '—';
+const nextNumber = year => {
+  const used = S.invoices.filter(i => i.num.endsWith('-' + year)).map(i => +i.num.slice(3, 7));
+  return 'NL-' + String((used.length ? Math.max(...used) : 0) + 1).padStart(4, '0') + '-' + year;
+};
+const msProgress = (b, name) => { const ts = S.tasks.filter(t => t.boardId === b.id && t.milestone === name && isTracked(t)); return ts.length ? Math.round(100 * ts.filter(t => taskClientStatus(t) === 'done').length / ts.length) : 0; };
+
+function attention(cid) {
+  const out = [];
+  const live = c => !client(c).archived;
+  S.requests.filter(r => r.status === 'New' && (!cid || r.clientId === cid)).forEach(r =>
+    out.push({ grp: 'New Requests', kind: 'request', id: r.id, title: r.title, meta: client(r.clientId).name + ' · ' + r.kind + ' · ' + fD(r.created) }));
+  S.invoices.filter(i => invSt(i) === 'Overdue' && (!cid || i.clientId === cid)).forEach(i =>
+    out.push({ grp: 'Overdue Invoices', kind: 'invoice', id: i.id, title: i.num + ' · ' + money(invAmount(i)), meta: client(i.clientId).name + ' · due ' + fD(i.due) }));
+  if (!cid) S.boards.filter(b => b.state === 'unlinked').forEach(b =>
+    out.push({ grp: 'Unlinked GitHub boards', kind: 'board', id: b.id, title: b.title, meta: b.repo + ' · #' + b.num }));
+  S.boards.filter(b => b.state === 'linked' && unmapped(b).length && (!cid || b.clientId === cid)).forEach(b =>
+    out.push({ grp: 'Unmapped columns', kind: 'board', id: b.id, title: b.title, meta: client(b.clientId).name + ' · ' + unmapped(b).join(', ') }));
+  S.boards.filter(b => b.state === 'linked' && b.webhook === 'failing' && (!cid || b.clientId === cid)).forEach(b =>
+    out.push({ grp: 'Sync problems', kind: 'board', id: b.id, title: b.title, meta: 'Webhook failing · last synced ' + fTs(b.lastSync) }));
+  S.invites.filter(i => ['Expiring', 'Expired'].includes(inviteSt(i)) && live(i.clientId) && (!cid || i.clientId === cid)).forEach(i =>
+    out.push({ grp: 'Expiring Invitations', kind: 'team', id: i.clientId, title: i.email, meta: client(i.clientId).name + ' · ' + inviteSt(i).toLowerCase() + ' ' + fD(i.expires) }));
+  S.clients.filter(c => !c.archived && !owners(c.id).length && (!cid || c.id === cid)).forEach(c =>
+    out.push({ grp: 'Clients with no Owner', kind: 'team', id: c.id, title: c.name, meta: openInvites(c.id).length ? 'Owner Invitation pending' : 'No Invitation sent' }));
+  return out;
+}
+
+// =====================================================================
+// Atoms
+// =====================================================================
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const J = o => esc(JSON.stringify(o));
+const sv = p => `<svg class="ico" viewBox="0 0 16 16" aria-hidden="true">${p}</svg>`;
+const STK = 'stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"';
+const ICON = {
+  'on track': sv('<circle cx="8" cy="8" r="7" fill="currentColor"/><path d="M4.5 8.2l2.3 2.3 4.7-4.8" stroke="var(--bg)" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/>'),
+  'at risk': sv('<path d="M8 1.2L15.2 14.5H.8z" fill="currentColor"/><path d="M8 6v4" stroke="var(--bg)" stroke-width="1.8" stroke-linecap="round"/><circle cx="8" cy="12.2" r="1" fill="var(--bg)"/>'),
+  'off track': sv('<path d="M5 1h6l4 4v6l-4 4H5l-4-4V5z" fill="currentColor"/><path d="M5.6 5.6l4.8 4.8M10.4 5.6l-4.8 4.8" stroke="var(--bg)" stroke-width="1.8" stroke-linecap="round"/>'),
+  'complete': sv('<rect x="1.5" y="1.5" width="13" height="13" rx="2" ' + STK + '/><path d="M4.5 8.2l2.3 2.3 4.7-4.8" ' + STK + '/>'),
+  'inactive': sv('<circle cx="8" cy="8" r="6.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-dasharray="3 2.2"/><path d="M5 8h6" ' + STK + '/>'),
+  Open: sv('<circle cx="8" cy="8" r="6" ' + STK + '/>'),
+  Paid: sv('<path d="M2.5 8.5l3.5 3.5 7.5-8" ' + STK + ' stroke-width="2"/>'),
+  Overdue: sv('<circle cx="8" cy="8" r="7" fill="currentColor"/><path d="M8 4.2v4.6" stroke="var(--bg)" stroke-width="1.9" stroke-linecap="round"/><circle cx="8" cy="11.6" r="1.1" fill="var(--bg)"/>'),
+  Void: sv('<circle cx="8" cy="8" r="6" ' + STK + '/><path d="M3.8 12.2l8.4-8.4" ' + STK + '/>'),
+  Bug: sv('<rect x="3" y="3" width="10" height="10" rx="1" fill="currentColor"/>'),
+  Feature: sv('<path d="M8 1.5L14.5 8 8 14.5 1.5 8z" fill="currentColor"/>'),
+  New: sv('<circle cx="8" cy="8" r="4" fill="currentColor"/>'),
+  Accepted: sv('<path d="M3 8.5l3 3 7-7.5" ' + STK + '/>'),
+  Done: sv('<path d="M1 8.5l3 3 6-6.5M7 11l.5.5 7-7.5" ' + STK + '/>'),
+  Declined: sv('<path d="M4 4l8 8M12 4l-8 8" ' + STK + '/>'),
+  Withdrawn: sv('<path d="M4 8h8" ' + STK + '/>'),
+};
+const HC = { 'on track': 'ok', 'at risk': 'risk', 'off track': 'off', 'complete': 'done', 'inactive': 'idle' };
+const badge = (fg, bg, icon, label) => `<span class="badge" style="--hc:var(--${fg});--hb:var(--${bg})">${icon}<span>${label}</span></span>`;
+const hBadge = h => h ? badge(HC[h], HC[h] + '-subtle', ICON[h], h[0].toUpperCase() + h.slice(1)) : '';
+const iBadge = i => { const s = invSt(i); const m = { Open: ['fg-2', 'surface-2'], Paid: ['ok', 'ok-subtle'], Overdue: ['off', 'off-subtle'], Void: ['idle', 'idle-subtle'] }[s]; return badge(m[0], m[1], ICON[s], s); };
+const rStatus = s => `<span class="rs" style="color:var(${['Declined', 'Withdrawn'].includes(s) ? '--fg-2' : '--fg'})">${ICON[s]}${s}</span>`;
+const rKind = k => `<span class="rk" style="color:var(${k === 'Bug' ? '--off' : '--accent-fg'})">${ICON[k]}<span style="color:var(--fg)">${k}</span></span>`;
+const hookBadge = b => b.state !== 'linked' ? '<span class="meta">no webhook</span>' : b.webhook === 'ok' ? badge('ok', 'ok-subtle', ICON['on track'], 'Webhook healthy') : badge('off', 'off-subtle', ICON['off track'], 'Webhook failing');
+const stateTag = b => b.state === 'linked' ? '<span class="tag acc">Linked</span>' : b.state === 'past' ? '<span class="tag">Past Project · frozen</span>' : '<span class="tag">Unlinked</span>';
+const inviteTag = i => { const s = inviteSt(i); return s === 'Expiring' || s === 'Expired' ? badge('risk', 'risk-subtle', ICON['at risk'], s) : `<span class="tag">${s}</span>`; };
+const btn = (label, act, id, o = {}) => `<button type="button" class="btn ${o.size || 'sm'} ${o.pri ? 'pri' : ''} ${o.danger ? 'danger' : ''}" data-act="${act}" data-id="${esc(id)}" ${o.disabled ? 'disabled' : ''} ${o.title ? `title="${esc(o.title)}"` : ''}>${label}</button>`;
+const fbtn = (label, form, args, o = {}) => `<button type="button" class="btn ${o.sm ? 'sm' : ''} ${o.pri ? 'pri' : ''}" data-act="form" data-form-name="${form}" data-args="${J(args)}" ${o.disabled ? 'disabled' : ''}>${label}</button>`;
+const openAttr = (kind, id) => `data-act="open" data-kind="${kind}" data-id="${esc(id)}"`;
+const clink = cid => `<button type="button" class="lnk" ${openAttr('client', cid)}>${esc(client(cid).name)}</button>`;
+const panel = (title, body, right = '') => `<section class="panel"><div class="ph"><h2>${title}</h2><div class="acts">${right}</div></div>${body}</section>`;
+const table = (heads, rows, empty) => rows.length ? `<div class="tw"><table class="t"><thead><tr>${heads.map(h => `<th class="${h.startsWith('>') ? 'r' : ''}">${h.replace(/^>/, '')}</th>`).join('')}</tr></thead><tbody>${rows.join('')}</tbody></table></div>` : `<div class="empty">${empty}</div>`;
+const kpis = tiles => `<div class="kpis">${tiles.map(t => t.go ? `<button class="kpi" ${t.go}><div class="micro">${t.l}</div><div class="v ${t.bad ? 'bad' : ''}">${t.bad ? ICON.Overdue : ''}${t.v}</div></button>` : `<div class="kpi"><div class="micro">${t.l}</div><div class="v ${t.bad ? 'bad' : ''}">${t.bad ? ICON.Overdue : ''}${t.v}</div></div>`).join('')}</div>`;
+const selRow = (kind, id) => isSelected(kind, id) ? 'sel' : '';
+
+// =====================================================================
+// Shared tables
+// =====================================================================
+function invoiceTable(list, o = {}) {
+  list = [...list].sort((a, b) => b.issued.localeCompare(a.issued) || b.num.localeCompare(a.num));
+  return table(['Number', ...(o.client ? ['Client'] : []), 'Project', 'Issued', 'Due', '>Amount', 'Status'], list.map(i =>
+    `<tr class="lk ${selRow('invoice', i.id)}" ${openAttr('invoice', i.id)}><td class="num strong">${i.num}</td>${o.client ? `<td>${esc(client(i.clientId).name)}</td>` : ''}<td class="muted">${esc(projName(i.projectId))}</td><td class="num">${fD(i.issued)}</td><td class="num">${fD(i.due)}</td><td class="num r">${money(invAmount(i))}</td><td>${iBadge(i)}</td></tr>`), 'No Invoices yet.');
+}
+function requestTable(list, o = {}) {
+  list = [...list].sort((a, b) => (a.status === 'New' ? 0 : 1) - (b.status === 'New' ? 0 : 1) || b.created.localeCompare(a.created));
+  return table(['Kind', 'Title', ...(o.client ? ['Client'] : []), 'Project', 'Submitter', 'Status', 'Created'], list.map(r =>
+    `<tr class="lk ${selRow('request', r.id)}" ${openAttr('request', r.id)}><td>${rKind(r.kind)}</td><td class="strong">${esc(r.title)}</td>${o.client ? `<td>${esc(client(r.clientId).name)}</td>` : ''}<td class="muted">${esc(projName(r.projectId))}</td><td class="muted">${esc(user(r.by).name)}</td><td>${rStatus(r.status)}</td><td class="num">${fD(r.created)}</td></tr>`), 'No Requests yet.');
+}
+function boardTable(list, o = {}) {
+  return table(['Board', ...(o.client ? ['Client'] : []), 'State', 'Health', 'Columns', 'Sync'], list.map(b => {
+    const um = unmapped(b);
+    return `<tr class="lk ${selRow('board', b.id)}" ${openAttr('board', b.id)}><td><div class="strong">${esc(b.title)}</div><div class="meta">${b.repo} · #${b.num}</div></td>${o.client ? `<td>${b.clientId ? esc(client(b.clientId).name) : '<span class="muted">—</span>'}</td>` : ''}<td>${stateTag(b)}</td><td>${b.state === 'unlinked' ? '' : hBadge(b.health)}</td><td>${b.state === 'unlinked' ? `<span class="meta">${b.columns.length} columns</span>` : um.length ? badge('risk', 'risk-subtle', ICON['at risk'], um.length + ' unmapped') : '<span class="meta">all mapped</span>'}</td><td><div class="meta">${fTs(b.lastSync)}</div>${b.state === 'linked' ? hookBadge(b) : ''}</td></tr>`;
+  }), 'No boards.');
+}
+function clientsTable(list) {
+  return table(['Client', 'Owner', 'Users', 'Projects', '>Open balance', 'Attention', 'State'], list.map(c => {
+    const ow = owners(c.id), a = attention(c.id).length;
+    return `<tr class="lk ${selRow('client', c.id)}" ${openAttr('client', c.id)}><td class="strong">${esc(c.name)}</td><td>${ow.length ? esc(ow.map(u => u.name).join(', ')) : badge('risk', 'risk-subtle', ICON['at risk'], 'No Owner')}</td><td class="num">${activeUsers(c.id).length}${openInvites(c.id).length ? ` <span class="meta">+${openInvites(c.id).length} invited</span>` : ''}</td><td class="num">${clientBoards(c.id).filter(b => b.state === 'linked').length}</td><td class="num r">${money(openBalance(c.id))}</td><td class="num">${a || '<span class="meta">—</span>'}</td><td>${c.archived ? '<span class="tag">Archived</span>' : '<span class="tag acc">Active</span>'}</td></tr>`;
+  }), 'No Clients yet.');
+}
+function attentionTable(items) {
+  return table(['Type', 'Item', 'Details'], items.map(a => `<tr class="lk" ${openAttr(a.kind, a.id)}><td class="micro">${a.grp}</td><td class="strong">${esc(a.title)}</td><td class="meta">${esc(a.meta)}</td></tr>`), 'Nothing needs attention.');
+}
+
+// =====================================================================
+// Shared sections / details. Each detail returns {crumb,title,sub,actions,body}
+// =====================================================================
+function teamSection(cid) {
+  const c = client(cid), us = activeUsers(cid), nOwn = owners(cid).length, ro = c.archived;
+  const removed = S.users.filter(u => u.clientId === cid && u.removed);
+  const rows = us.map(u => {
+    const last = u.role === 'Owner' && nOwn === 1;
+    const why = 'A Client always has at least one Owner';
+    const acts = ro ? '' : (u.role === 'Owner' ? btn('Demote to Member', 'demote', u.id, { disabled: last, title: last ? why : '' }) : btn('Promote to Owner', 'promote', u.id)) + btn('Remove', 'removeUser', u.id, { danger: 1, disabled: last, title: last ? why : '' });
+    return `<tr><td><div class="strong">${esc(u.name)}</div><div class="meta">${esc(u.email)}</div></td><td>${u.role}${last ? '<div class="meta">last Owner</div>' : ''}</td><td class="num">${fD(u.joined)}</td><td class="rowacts">${acts}</td></tr>`;
+  });
+  const invs = openInvites(cid).map(i => `<tr><td>${esc(i.email)}</td><td>${i.role}</td><td class="meta">${esc(i.by)}</td><td class="num">${fD(i.sent)}</td><td class="num">${fD(i.expires)}</td><td>${inviteTag(i)}</td><td class="rowacts">${ro ? '' : btn('Resend', 'resendInv', i.id) + btn('Revoke', 'revokeInv', i.id, { danger: 1 }) + btn('(sim) accept', 'simAccept', i.id, { title: 'Prototype only: pretend the invitee signed in' })}</td></tr>`);
+  const first = !nOwn;
+  return panel('Client Users', (ro ? '<div class="pb"><div class="warn">Archived: these Client Users cannot sign in. Nothing was deleted.</div></div>' : first ? `<div class="pb"><div class="warn">No Owner yet. ${openInvites(cid).length ? 'Waiting for the Owner Invitation to be accepted.' : 'Invite the first user; they become the Owner.'}</div></div>` : '') +
+      table(['Name', 'Role', 'Joined', ''], rows, 'No Client Users yet.') +
+      (removed.length ? `<div class="pb meta">Removed (soft-deleted, actions stay attributed): ${removed.map(u => esc(u.name) + ' on ' + fD(u.removedOn)).join(', ')}</div>` : ''),
+      ro ? '' : fbtn(first ? 'Invite first Owner' : 'Invite', 'inviteUser', { clientId: cid }, { sm: 1, pri: first })) +
+    panel('Invitations', table(['Email', 'Role', 'Invited by', 'Sent', 'Expires', 'State', ''], invs, 'No pending Invitations.'), '<span class="meta">expire after 7 days</span>');
+}
+
+function clientDetail(cid, full) {
+  const c = client(cid), att = attention(cid), lb = clientBoards(cid);
+  const ov = kpis([
+    { l: 'Client Users', v: activeUsers(cid).length + (owners(cid).length ? '' : ' · no Owner') },
+    { l: 'Active projects', v: lb.filter(b => b.state === 'linked').length },
+    { l: 'Open balance', v: money(openBalance(cid)) },
+    { l: 'New requests', v: newReqs(cid).length },
+  ]) + (att.length ? panel('Needs attention', attentionTable(att), `<span class="meta">${att.length}</span>`) : '');
+  const body = full
+    ? ov + teamSection(cid) + panel('Projects (linked boards)', boardTable(lb), c.archived ? '' : fbtn('Link board', 'linkBoard', { clientId: cid }, { sm: 1 }))
+        + panel('Invoices', invoiceTable(S.invoices.filter(i => i.clientId === cid)), c.archived ? '' : fbtn('New invoice', 'newInvoice', { clientId: cid }, { sm: 1 }))
+        + panel('Requests', requestTable(S.requests.filter(r => r.clientId === cid)))
+    : ov + `<div class="grid2">${panel('Latest Invoices', invoiceTable(S.invoices.filter(i => i.clientId === cid).sort((a, b) => b.issued.localeCompare(a.issued)).slice(0, 4)))}${panel('Latest Requests', requestTable(S.requests.filter(r => r.clientId === cid).slice(0, 4)))}</div>`;
+  return {
+    crumb: 'Clients', title: c.name,
+    sub: (c.archived ? `<span class="tag">Archived ${fD(c.archivedOn)}</span>` : '<span class="tag acc">Active</span>') + `<span class="meta">Client since ${fD(c.created)}</span>`,
+    actions: c.archived ? btn('Unarchive', 'unarchive', cid, { size: '' }) : fbtn('New invoice', 'newInvoice', { clientId: cid }, { pri: 1 }) + btn('Archive client', 'archive', cid, { size: '', danger: 1 }),
+    body,
+  };
+}
+
+function mappingFields(b) {
+  const counts = c => S.tasks.filter(t => t.boardId === b.id && t.col === c).length;
+  return `<div class="tw"><table class="t maptbl"><thead><tr><th>GitHub column</th><th class="r">Items</th><th>Client status</th></tr></thead><tbody>${b.columns.map(c => `<tr><td>${esc(c)}</td><td class="num r">${counts(c)}</td><td><select class="in" name="map:${esc(c)}" aria-label="Client status for ${esc(c)}"><option value="">— unmapped —</option>${Object.entries(CS).map(([k, v]) => `<option value="${k}" ${b.map[c] === k ? 'selected' : ''}>${v}</option>`).join('')}</select></td></tr>`).join('')}</tbody></table></div><p class="help">Only items with <span class="num">Client visibility</span> = Yes become Tasks. Items in a "Not shown" or unmapped column stay hidden from Client Users.</p>`;
+}
+function fieldsCheck(b) {
+  const f = (ok, n) => `<li>${ok ? badge('ok', 'ok-subtle', ICON['on track'], 'present') : badge('off', 'off-subtle', ICON['off track'], 'missing')} <span class="num">${n}</span></li>`;
+  return `<ul style="list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px">${f(b.fields.vis, 'Client visibility')}${f(b.fields.note, 'Client note')}${f(b.fields.target, 'Target date')}</ul><p class="help" style="margin-top:8px">Milestones come from the repo's milestones.</p>`;
+}
+
+function boardDetail(id) {
+  const b = board(id);
+  const vis = S.tasks.filter(t => t.boardId === id && isTracked(t)), hidden = S.tasks.filter(t => t.boardId === id && !isTracked(t)).length;
+  const sync = `<dl class="kv"><dt>State</dt><dd>${stateTag(b)}</dd><dt>Client</dt><dd>${b.clientId ? clink(b.clientId) : '<span class="muted">not linked</span>'}</dd>${b.linkedOn ? `<dt>Linked</dt><dd class="num">${fD(b.linkedOn)}</dd>` : ''}${b.frozenOn ? `<dt>Frozen</dt><dd class="num">${fD(b.frozenOn)}</dd>` : ''}<dt>Last synced</dt><dd class="num">${fTs(b.lastSync)}</dd><dt>Webhook</dt><dd>${hookBadge(b)}</dd>${b.state !== 'unlinked' ? `<dt>Latest Status Update</dt><dd>${hBadge(b.health)} <span class="meta">${fD(b.updated)}</span><div>${esc(b.update)}</div></dd>` : ''}</dl>`;
+  let mapping;
+  if (b.state === 'linked') mapping = `<form data-form="editMapping" data-args="${J({ boardId: id })}">${mappingFields(b)}<div class="ff"><span class="ferr" role="alert"></span><button class="btn pri">Save mapping</button></div></form>`;
+  else if (b.state === 'past') mapping = `<div class="pb"><div class="note">Frozen as a Past Project for ${esc(client(b.clientId).name)} on ${fD(b.frozenOn)}. Client Users still see it as it last was. Mapping at unlink: ${b.columns.map(c => esc(c) + ' → ' + (CS[b.map[c]] || 'unmapped')).join(', ')}.</div></div>`;
+  else mapping = variant === 'C' ? formHtml('linkBoard', { boardId: id }, 'embed') : `<div class="pb"><p class="help">Not linked. Choose which Client this board belongs to; it is never inferred.</p><div style="margin-top:8px">${fbtn('Link to a Client…', 'linkBoard', { boardId: id }, { pri: 1 })}</div></div>`;
+  const ms = b.milestones.map(m => { const p = msProgress(b, m.name); return `<tr><td>${esc(m.name)}</td><td class="num">${fD(m.due)}</td><td style="width:40%"><div class="bar" role="progressbar" aria-valuenow="${p}" aria-valuemin="0" aria-valuemax="100" aria-label="${esc(m.name)} progress" style="--hc:var(--${HC[b.health]})"><span style="transform:scaleX(${p / 100})"></span></div></td><td class="num r">${p}%</td></tr>`; });
+  const ts = vis.map(t => `<tr><td>${esc(t.title)}</td><td class="meta">${esc(t.col)}</td><td>${CS[taskClientStatus(t)]}</td><td class="meta">${esc(t.milestone || '—')}</td><td class="num">${fD(t.target)}</td></tr>`);
+  return {
+    crumb: 'Projects & boards', title: b.title,
+    sub: `<span class="meta">${b.repo} · GitHub Project #${b.num}</span>${stateTag(b)}`,
+    actions: (b.state !== 'past' ? btn('Sync now', 'syncNow', id, { size: '' }) : '') + (b.state === 'linked' ? btn('Unlink board', 'unlink', id, { size: '', danger: 1 }) : ''),
+    body: `<div class="grid2">${panel('Sync', `<div class="pb">${sync}</div>`)}${panel('Required GitHub fields', `<div class="pb">${fieldsCheck(b)}</div>`)}</div>`
+      + panel(b.state === 'unlinked' ? 'Link to Client' : 'Column mapping', mapping, b.state === 'linked' && unmapped(b).length ? badge('risk', 'risk-subtle', ICON['at risk'], unmapped(b).length + ' unmapped') : '')
+      + panel('Milestones (repo milestones)', table(['Milestone', 'Due', 'Progress', '>%'], ms, 'No repo milestones.'))
+      + panel('Client-visible Tasks', table(['Task', 'GitHub column', 'Client status', 'Milestone', 'Target'], ts, 'No client-visible Tasks.'), `<span class="meta">${vis.length} visible · ${hidden} hidden</span>`),
+  };
+}
+
+function invoiceDetail(id) {
+  const i = inv(id), s = invSt(i);
+  const items = i.items.map(x => `<tr><td>${esc(x.d)}</td><td class="num r">${money(+x.a)}</td></tr>`).concat([`<tr><td class="strong">Total</td><td class="num r strong">${money(invAmount(i))}</td></tr>`]);
+  const live = s === 'Open' || s === 'Overdue';
+  return {
+    crumb: 'Invoices', title: i.num,
+    sub: iBadge(i) + `<span class="meta">${esc(client(i.clientId).name)}</span>`,
+    actions: live ? btn('Mark paid…', 'markPaid', id, { size: '', pri: 1 }) + btn('Void…', 'voidInv', id, { size: '', danger: 1 }) : '',
+    body: (s === 'Void' ? `<div class="warn" style="margin-bottom:16px">Void on ${fD(i.voidedOn)}. Hidden from Client Users; the number stays used.</div>` : '')
+      + `<div class="grid2">${panel('Invoice', `<div class="pb"><dl class="kv"><dt>Client</dt><dd>${clink(i.clientId)}</dd><dt>Project</dt><dd>${i.projectId ? `<button class="lnk" ${openAttr('board', i.projectId)}>${esc(projName(i.projectId))}</button>` : '<span class="muted">none</span>'}</dd><dt>Issued</dt><dd class="num">${fD(i.issued)}</dd><dt>Due</dt><dd class="num">${fD(i.due)}${s === 'Overdue' ? ` <span class="meta">(${Math.round((new Date(TODAY) - new Date(i.due)) / 864e5)} days late)</span>` : ''}</dd>${i.paidOn ? `<dt>Paid</dt><dd class="num">${fD(i.paidOn)}</dd>` : ''}<dt>Memo</dt><dd>${esc(i.memo) || '<span class="muted">—</span>'}</dd></dl></div>`)}
+        ${panel('Line Items', table(['Description', '>Amount'], items, ''), '<span class="meta">USD</span>')}</div>`,
+  };
+}
+
+function requestDetail(id) {
+  const r = req(id), t = r.taskId ? task(r.taskId) : null;
+  const linked = t ? (isTracked(t) ? `${esc(t.title)} <span class="meta">${esc(board(t.boardId).title)} · ${CS[taskClientStatus(t)]}</span>` : `${esc(t.title)} <span class="muted">(no longer tracked)</span>`) : '<span class="muted">none</span>';
+  const tri = r.status === 'Withdrawn'
+    ? `<div class="pb"><div class="note">Withdrawn by the submitter. Read-only.</div></div>`
+    : formHtml('triage', { requestId: id }, 'embed');
+  return {
+    crumb: 'Requests', title: r.title,
+    sub: rKind(r.kind) + rStatus(r.status) + `<span class="meta">${esc(client(r.clientId).name)}</span>`,
+    actions: '',
+    body: `<div class="grid2">${panel('Request', `<div class="pb"><dl class="kv"><dt>Client</dt><dd>${clink(r.clientId)}</dd><dt>Submitter</dt><dd>${esc(user(r.by).name)} <span class="meta">${user(r.by).role}</span></dd><dt>Project</dt><dd>${esc(projName(r.projectId))}</dd><dt>Created</dt><dd class="num">${fD(r.created)}</dd><dt>Linked Task</dt><dd>${linked}</dd></dl><p style="margin:12px 0 0;white-space:pre-wrap">${esc(r.desc) || '<span class="muted">No description.</span>'}</p></div>`)}
+      ${panel('Triage', tri, '<span class="meta">Client sees status + response</span>')}</div>`,
+  };
+}
+
+// =====================================================================
+// Forms (drawer in A/B, inline pane in C; triage/linkBoard can embed)
+// =====================================================================
+const field = (label, ctrl, opt) => `<div class="field"><label>${label}${opt ? ' <span class="opt">(optional)</span>' : ''}${ctrl}</label></div>`;
+const fieldL = (label, ctrl, opt) => `<div class="field"><span class="l">${label}${opt ? ' <span class="opt">(optional)</span>' : ''}</span>${ctrl}</div>`;
+const clientOptions = sel => S.clients.filter(c => !c.archived).map(c => `<option value="${c.id}" ${c.id === sel ? 'selected' : ''}>${esc(c.name)}</option>`).join('');
+const projectOptions = (cid, sel) => `<option value="">No specific project</option>` + (cid ? clientBoards(cid).map(b => `<option value="${b.id}" ${b.id === sel ? 'selected' : ''}>${esc(b.title)}${b.state === 'past' ? ' (past)' : ''}</option>`).join('') : '');
+const lineRow = (d = '', a = '') => `<div class="li"><input class="in" name="li-d" aria-label="Line Item description" placeholder="Description" value="${esc(d)}"><input class="in num r" name="li-a" type="number" min="0" step="0.01" aria-label="Amount (USD)" placeholder="0.00" value="${a}"><button type="button" class="btn ghost sm" data-act="rmLine" aria-label="Remove Line Item">✕</button></div>`;
+
+const FORMS = {
+  newClient: () => ({ title: 'New client', submit: 'Create client', body: fieldL('Client name', '<input class="in" name="name" autocomplete="off" placeholder="e.g. Northwind Logistics">') + '<p class="help">Next you invite the first user, who becomes its Owner.</p>' }),
+  inviteUser: a => {
+    const c = client(a.clientId), first = !owners(c.id).length;
+    return { title: first ? 'Invite first Owner' : 'Invite to ' + c.name, submit: 'Send invitation',
+      body: `<div class="meta">${esc(c.name.toUpperCase())}</div>` + fieldL('Email', '<input class="in" name="email" type="email" autocomplete="off" placeholder="name@company.com">')
+        + (first ? '<input type="hidden" name="role" value="Owner"><div class="note">This Client has no Owner, so this person joins as <b>Owner</b>.</div>'
+          : fieldL('Role', '<select class="in" name="role"><option>Member</option><option>Owner</option></select>'))
+        + '<p class="help">Expires in 7 days and can be revoked. They must sign in with this exact email. An email can belong to one Client only.</p>' };
+  },
+  linkBoard: a => {
+    const b = a.boardId ? board(a.boardId) : null, unl = S.boards.filter(x => x.state === 'unlinked');
+    const boardPick = b ? `<input type="hidden" name="boardId" value="${b.id}"><div><b>${esc(b.title)}</b> <span class="meta">${b.repo} · #${b.num}</span></div>`
+      : unl.length ? fieldL('GitHub board', `<select class="in" name="boardId" data-swap="map"><option value="">Choose an unlinked board…</option>${unl.map(x => `<option value="${x.id}">${esc(x.title)} · ${x.repo}</option>`).join('')}</select>`) : '<div class="warn">No unlinked boards in the GitHub org.</div>';
+    const clientPick = a.clientId ? `<input type="hidden" name="clientId" value="${a.clientId}"><div class="meta">FOR ${esc(client(a.clientId).name.toUpperCase())}</div>` : fieldL('Client', `<select class="in" name="clientId"><option value="">Choose a Client…</option>${clientOptions()}</select>`);
+    return { title: 'Link GitHub board', submit: 'Link board', body: clientPick + boardPick + `<div class="mapwrap">${b ? fieldL('Map columns to client statuses', mappingFields(b)) + (b.fields.vis && b.fields.note && b.fields.target ? '' : '<div class="warn">This board is missing required fields (see Required GitHub fields). Tasks may not show until they exist.</div>') : '<p class="help">Pick a board to map its columns.</p>'}</div>` };
+  },
+  newInvoice: a => {
+    const cid = a.clientId || '';
+    return { title: 'New invoice', submit: 'Issue invoice', body:
+      fieldL('Client', `<select class="in" name="clientId"><option value="">Choose a Client…</option>${clientOptions(cid)}</select>`)
+      + fieldL('Project', `<select class="in" name="projectId">${projectOptions(cid)}</select>`, 1)
+      + `<div class="row2">${fieldL('Issue date', `<input class="in" type="date" name="issued" value="${TODAY}">`)}${fieldL('Due date', `<input class="in" type="date" name="due" value="${addDays(TODAY, 30)}">`)}</div>`
+      + `<div class="meta">NUMBER WILL BE <b class="numprev">${nextNumber(TODAY.slice(0, 4))}</b></div>`
+      + fieldL('Memo', '<textarea class="in" name="memo" rows="2" style="min-height:60px" placeholder="Shown to the Client"></textarea>', 1)
+      + `<div class="field"><span class="l">Line Items</span><div class="lihead micro"><span>Description</span><span class="r">Amount</span><span></span></div><div class="lines" style="display:flex;flex-direction:column;gap:6px">${lineRow()}</div><div><button type="button" class="btn sm" data-act="addLine">+ Add Line Item</button></div><div class="total"><span>Total</span><span class="num tot">${money(0)}</span></div></div>` };
+  },
+  triage: a => {
+    const r = req(a.requestId), tasks = clientTasks(r.clientId), canLink = ['Accepted', 'Done'].includes(r.status);
+    const cur = r.taskId && !tasks.find(t => t.id === r.taskId) ? task(r.taskId) : null;
+    return { embed: true, submit: 'Save triage', body:
+      fieldL('Status', `<div class="chips" role="radiogroup">${['New', 'Accepted', 'Declined', 'Done'].map(s => `<label class="chip ${r.status === s ? 'on' : ''}"><input type="radio" name="status" value="${s}" ${r.status === s ? 'checked' : ''} style="position:absolute;opacity:0">${ICON[s]} ${s}</label>`).join('')}</div>`)
+      + fieldL('Response note', `<textarea class="in" name="response" placeholder="The Client sees this note.">${esc(r.response)}</textarea>`, 1)
+      + fieldL('Linked Task', `<select class="in" name="taskId" ${canLink ? '' : 'disabled'}><option value="">No Task</option>${cur ? `<option value="${cur.id}" selected>${esc(cur.title)} (no longer tracked)</option>` : ''}${tasks.map(t => `<option value="${t.id}" ${t.id === r.taskId ? 'selected' : ''}>${esc(t.title)} · ${esc(board(t.boardId).title)} · ${CS[taskClientStatus(t)]}</option>`).join('')}</select>`, 1)
+      + `<p class="help tasknote">${canLink ? `Picker lists ${esc(client(r.clientId).name)}'s client-visible Tasks.` : 'Set status to Accepted to link a Task.'}</p>` };
+  },
+};
+
+function formHtml(name, a, mode) {
+  const f = FORMS[name](a);
+  const head = mode === 'inline' ? `<div class="ph"><h2>${esc(f.title)}</h2><button type="button" class="btn ghost sm" data-act="cancelForm">Close</button></div>` : '';
+  const cancel = mode === 'embed' ? '' : '<button type="button" class="btn" data-act="cancelForm">Cancel</button>';
+  return `<form data-form="${name}" data-args="${J(a)}" novalidate>${head}<div class="fb">${f.body}</div><div class="ff"><span class="ferr" role="alert"></span>${cancel}<button class="btn pri">${f.submit}</button></div></form>`;
+}
+
+// =====================================================================
+// Mutations (stubs). Each returns an error string to show, or nothing.
+// =====================================================================
+const isEmail = s => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s);
+function emailOwner(email) {
+  email = email.toLowerCase();
+  const u = S.users.find(x => !x.removed && x.email.toLowerCase() === email);
+  if (u) return u.clientId;
+  const i = S.invites.find(x => !x.revoked && !x.accepted && x.email.toLowerCase() === email && inviteSt(x) !== 'Expired');
+  return i ? i.clientId : null;
+}
+const SUBMIT = {
+  newClient(fd) {
+    const name = (fd.name || '').trim();
+    if (!name) return 'Enter a name.';
+    if (S.clients.some(c => c.name.toLowerCase() === name.toLowerCase())) return 'A Client with that name exists.';
+    const id = uid('c');
+    S.clients.push({ id, name, archived: false, created: TODAY });
+    log(`Created Client "${name}"`);
+    return { goto: ['team', id], next: ['inviteUser', { clientId: id }] };
+  },
+  inviteUser(fd, a) {
+    const email = (fd.email || '').trim();
+    if (!isEmail(email)) return 'Enter a valid email.';
+    const owner = emailOwner(email);
+    if (owner && owner !== a.clientId) return `That email already belongs to ${client(owner).name}. One email, one Client.`;
+    if (owner === a.clientId) return 'That person is already a Client User or invited here.';
+    S.invites.push({ id: uid('i'), clientId: a.clientId, email, role: fd.role || 'Member', sent: TODAY, expires: addDays(TODAY, 7), by: 'Admin' });
+    log(`Invited ${email} as ${fd.role} to ${client(a.clientId).name} (expires ${fD(addDays(TODAY, 7))})`);
+  },
+  linkBoard(fd, a, f) {
+    const cid = fd.clientId, bid = fd.boardId;
+    if (!cid) return 'Choose a Client.';
+    if (!bid) return 'Choose a board.';
+    const b = board(bid), map = readMap(f);
+    Object.assign(b, { clientId: cid, state: 'linked', linkedOn: TODAY, map, lastSync: nowTs(), webhook: 'ok', health: b.health || 'inactive', updated: b.updated || TODAY });
+    log(`Linked board "${b.title}" to ${client(cid).name}; ${unmapped(b).length} column(s) unmapped`);
+    return { goto: ['board', bid] };
+  },
+  editMapping(fd, a, f) {
+    const b = board(a.boardId); b.map = readMap(f);
+    log(`Saved column mapping for "${b.title}": ${b.columns.map(c => c + '→' + (CS[b.map[c]] || 'unmapped')).join(', ')}`);
+  },
+  newInvoice(fd, a, f) {
+    if (!fd.clientId) return 'Choose a Client.';
+    if (!fd.issued || !fd.due) return 'Set issue and due dates.';
+    if (fd.due < fd.issued) return 'Due date is before the issue date.';
+    const items = [...f.querySelectorAll('.li')].map(r => ({ d: r.querySelector('[name=li-d]').value.trim(), a: parseFloat(r.querySelector('[name=li-a]').value) }));
+    if (!items.length || items.some(x => !x.d || !(x.a > 0))) return 'Each Line Item needs a description and an amount above $0.';
+    const num = nextNumber(fd.issued.slice(0, 4)), id = uid('v');
+    S.invoices.push({ id, num, clientId: fd.clientId, projectId: fd.projectId || null, issued: fd.issued, due: fd.due, memo: fd.memo.trim(), items, status: 'Open' });
+    log(`Issued ${num} to ${client(fd.clientId).name} for ${money(invAmount(inv(id)))}`);
+    return { goto: ['invoice', id] };
+  },
+  triage(fd, a) {
+    const r = req(a.requestId), prev = r.status;
+    r.status = fd.status; r.response = (fd.response || '').trim();
+    r.taskId = ['Accepted', 'Done'].includes(r.status) ? (fd.taskId || null) : null;
+    log(`Request "${r.title}": ${prev} → ${r.status}${r.response ? ', response note saved' : ''}${r.taskId ? ', linked to Task "' + task(r.taskId).title + '"' : ''}`);
+  },
+};
+function readMap(f) { const m = {}; f.querySelectorAll('select[name^="map:"]').forEach(s => { if (s.value) m[s.name.slice(4)] = s.value; }); return m; }
+
+const ACT = {
+  promote: id => { const u = user(id); u.role = 'Owner'; log(`Promoted ${u.name} to Owner`); },
+  demote: id => { const u = user(id); if (owners(u.clientId).length < 2) return toast('A Client always has at least one Owner.'); u.role = 'Member'; log(`Demoted ${u.name} to Member`); },
+  removeUser: id => { const u = user(id); ask({ title: `Remove ${u.name}?`, text: `They lose access to ${client(u.clientId).name} at once. Their past Requests stay attributed to them.`, ok: 'Remove', danger: 1 }, () => { u.removed = true; u.removedOn = TODAY; log(`Removed ${u.name} from ${client(u.clientId).name} (soft-delete)`); render(); }); return 'async'; },
+  resendInv: id => { const i = byId(S.invites, id); i.sent = TODAY; i.expires = addDays(TODAY, 7); log(`Resent Invitation to ${i.email}; expires ${fD(i.expires)}`); },
+  revokeInv: id => { const i = byId(S.invites, id); ask({ title: 'Revoke Invitation?', text: `The link sent to ${esc(i.email)} stops working.`, ok: 'Revoke', danger: 1 }, () => { i.revoked = true; log(`Revoked Invitation to ${i.email}`); render(); }); return 'async'; },
+  simAccept: id => { const i = byId(S.invites, id); i.accepted = true; const nm = i.email.split('@')[0].replace(/[._]/g, ' ').replace(/\b\w/g, c => c.toUpperCase()); S.users.push({ id: uid('u'), clientId: i.clientId, name: nm, email: i.email, role: i.role, joined: TODAY }); log(`(sim) ${i.email} accepted; now ${i.role} of ${client(i.clientId).name}`); },
+  archive: id => { const c = client(id); ask({ title: `Archive ${c.name}?`, text: `Its ${activeUsers(id).length} Client User(s) lose access. Nothing is deleted: Projects, Invoices and Requests stay.`, ok: 'Archive', danger: 1 }, () => { c.archived = true; c.archivedOn = TODAY; log(`Archived Client ${c.name}`); render(); }); return 'async'; },
+  unarchive: id => { const c = client(id); c.archived = false; delete c.archivedOn; log(`Unarchived Client ${c.name}`); },
+  syncNow: id => { const b = board(id); b.lastSync = nowTs(); log(`Synced "${b.title}" from GitHub${b.webhook === 'failing' ? ' (webhook still failing; poll succeeded)' : ''}`); },
+  unlink: id => { const b = board(id); ask({ title: `Unlink "${b.title}"?`, text: `It becomes a Past Project for ${esc(client(b.clientId).name)}, frozen as it is now. GitHub changes stop flowing in.`, ok: 'Unlink', danger: 1 }, () => { b.state = 'past'; b.frozenOn = TODAY; b.webhook = null; log(`Unlinked "${b.title}"; frozen as a Past Project`); render(); }); return 'async'; },
+  markPaid: id => { const i = inv(id); ask({ title: `Mark ${i.num} paid?`, text: `${money(invAmount(i))} from ${esc(client(i.clientId).name)}. Payment happened outside the dashboard.`, ok: 'Mark paid', date: TODAY }, d => { i.status = 'Paid'; i.paidOn = d || TODAY; log(`Marked ${i.num} Paid on ${fD(i.paidOn)}`); render(); }); return 'async'; },
+  voidInv: id => { const i = inv(id); ask({ title: `Void ${i.num}?`, text: `Void is final. The number stays used (a gap in the sequence) and Client Users stop seeing it.`, ok: 'Void invoice', danger: 1 }, () => { i.status = 'Void'; i.voidedOn = TODAY; log(`Voided ${i.num}`); render(); }); return 'async'; },
+};
+
+// =====================================================================
+// Variant A · Client-centric
+// =====================================================================
+const NAV = {
+  A: { page: 'home', client: null, tab: 'overview', sel: null, filter: 'New' },
+  B: { page: 'overview', detail: null, fClient: '', fStatus: '' },
+  C: { page: 'queue', sel: null, form: null, filter: 'New' },
+};
+const go = to => `data-act="go" data-to="${J(to)}"`;
+const ni = (label, on, to, extra = '') => `<button class="ni ${on ? 'on' : ''}" ${on ? 'aria-current="page"' : ''} ${go(to)}><span class="nm">${label}</span>${extra}</button>`;
+const ct = n => n ? `<span class="ct">${n}</span>` : '';
+const shell = (nav, main) => `<div class="shell"><aside class="side"><div class="brand"><b>Neves Labs</b><small>Admin</small></div><nav class="nav" aria-label="Main">${nav}</nav><div class="me"><span class="av">FN</span><div>Franklin<div class="meta">Admin</div></div></div></aside><main>${main}</main></div>`;
+const header = (crumbs, title, actions = '', sub = '') => `<div class="hdr"><div><div class="crumb">${crumbs}</div><h1>${esc(title)}</h1>${sub ? `<div class="sub">${sub}</div>` : ''}</div><div class="acts">${actions}</div></div>`;
+const detailPage = (d, crumbs) => header(crumbs, d.title, d.actions, d.sub) + d.body;
+
+function renderA() {
+  const N = NAV.A, live = S.clients.filter(c => !c.archived), arch = S.clients.filter(c => c.archived);
+  const nav = ni('Home', N.page === 'home', { page: 'home', client: null, sel: null }) + ni('Requests inbox', N.page === 'inbox', { page: 'inbox', client: null, sel: null }, ct(newReqs().length))
+    + `<div class="sec micro">Clients</div>` + live.map(c => ni(esc(c.name), N.client === c.id, { page: 'client', client: c.id, tab: 'overview', sel: null }, attention(c.id).length ? `<span class="dot" title="${attention(c.id).length} need attention">${ICON.Overdue}</span>` : '')).join('')
+    + `<button class="ni add" data-act="form" data-form-name="newClient" data-args="{}"><span class="nm">+ New client</span></button>`
+    + (arch.length ? `<div class="sec micro">Archived</div>` + arch.map(c => ni(esc(c.name), N.client === c.id, { page: 'client', client: c.id, tab: 'overview', sel: null })).join('') : '');
+  let main;
+  const back = to => `<button ${go(to)}>`;
+  if (N.page === 'home') {
+    if (N.sel) main = detailPage(boardDetail(N.sel), `${back({ sel: null })}Home</button> / Board`);
+    else {
+      const unl = S.boards.filter(b => b.state === 'unlinked');
+      main = header('Admin / Home', 'All clients', fbtn('+ New client', 'newClient', {}, { pri: 1 }))
+        + kpis([{ l: 'Active clients', v: live.length }, { l: 'Open balance', v: money(openBalance()) }, { l: 'Overdue', v: S.invoices.filter(i => invSt(i) === 'Overdue').length, bad: S.invoices.some(i => invSt(i) === 'Overdue') }, { l: 'New requests', v: newReqs().length, go: go({ page: 'inbox', client: null, sel: null }) }])
+        + panel('Clients', clientsTable(S.clients), '<span class="meta">pick one in the sidebar or here</span>')
+        + panel('Unassigned GitHub boards', table(['Board', 'Columns', 'Fields', ''], unl.map(b => `<tr class="lk" ${openAttr('board', b.id)}><td><div class="strong">${esc(b.title)}</div><div class="meta">${b.repo} · #${b.num}</div></td><td class="meta">${b.columns.join(' · ')}</td><td>${b.fields.vis && b.fields.note && b.fields.target ? '<span class="meta">ok</span>' : badge('risk', 'risk-subtle', ICON['at risk'], 'missing fields')}</td><td class="rowacts">${fbtn('Link to client…', 'linkBoard', { boardId: b.id }, { sm: 1 })}</td></tr>`), 'Every board in the GitHub org is linked.'), `<span class="meta">${unl.length} in org, not linked</span>`);
+    }
+  } else if (N.page === 'inbox') {
+    if (N.sel) main = detailPage(requestDetail(N.sel), `${back({ sel: null })}Requests inbox</button> / ${esc(client(req(N.sel).clientId).name)}`);
+    else {
+      const fs = ['New', 'Accepted', 'Declined', 'Done', 'Withdrawn', 'All'];
+      const list = S.requests.filter(r => N.filter === 'All' || r.status === N.filter);
+      main = header('Admin / Requests', 'Requests inbox', '', `<span class="meta">${newReqs().length} New across all Clients</span>`)
+        + `<div class="tabs">${fs.map(s => `<button class="tab ${N.filter === s ? 'on' : ''}" ${go({ filter: s })}>${s}<span class="ct">${s === 'All' ? S.requests.length : S.requests.filter(r => r.status === s).length}</span></button>`).join('')}</div>`
+        + panel('Requests', requestTable(list, { client: 1 }));
+    }
+  } else {
+    const c = client(N.client), cid = c.id;
+    const tabs = [['overview', 'Overview', ''], ['boards', 'Projects & boards', clientBoards(cid).filter(b => b.state === 'linked').length], ['team', 'Team', activeUsers(cid).length], ['invoices', 'Invoices', S.invoices.filter(i => i.clientId === cid && i.status === 'Open').length], ['requests', 'Requests', newReqs(cid).length]];
+    const d = clientDetail(cid, false);
+    const crumbBase = `Clients / ${esc(c.name)}`;
+    let body;
+    if (N.sel && N.tab === 'boards') body = detailPage(boardDetail(N.sel), `${back({ sel: null })}${esc(c.name)} / Projects & boards</button>`);
+    else if (N.sel && N.tab === 'invoices') body = detailPage(invoiceDetail(N.sel), `${back({ sel: null })}${esc(c.name)} / Invoices</button>`);
+    else if (N.sel && N.tab === 'requests') body = detailPage(requestDetail(N.sel), `${back({ sel: null })}${esc(c.name)} / Requests</button>`);
+    else body = {
+      overview: () => d.body,
+      boards: () => panel('Projects (linked boards)', boardTable(clientBoards(cid)), c.archived ? '' : fbtn('Link board', 'linkBoard', { clientId: cid }, { sm: 1, pri: 1 }))
+        + `<p class="help">Linking picks from the GitHub org's unlinked boards (${S.boards.filter(b => b.state === 'unlinked').length} available). Unlinking freezes a board as a Past Project.</p>`,
+      team: () => teamSection(cid),
+      invoices: () => panel('Invoices (incl. Void)', invoiceTable(S.invoices.filter(i => i.clientId === cid)), `<span class="meta">open ${money(openBalance(cid))}</span>` + (c.archived ? '' : fbtn('New invoice', 'newInvoice', { clientId: cid }, { sm: 1 }))),
+      requests: () => panel('Requests', requestTable(S.requests.filter(r => r.clientId === cid))),
+    }[N.tab]();
+    main = (N.sel ? '' : header(crumbBase, c.name, d.actions, d.sub))
+      + `<div class="tabs" role="tablist">${tabs.map(([k, l, n]) => `<button role="tab" aria-selected="${N.tab === k}" class="tab ${N.tab === k ? 'on' : ''}" ${go({ tab: k, sel: null })}>${l}${n !== '' ? `<span class="ct">${n}</span>` : ''}</button>`).join('')}</div>` + body;
+  }
+  return shell(nav, main);
+}
+
+// =====================================================================
+// Variant B · Object-centric
+// =====================================================================
+function renderB() {
+  const N = NAV.B;
+  const pages = [['overview', 'Overview', attention().length], ['clients', 'Clients', S.clients.filter(c => !c.archived).length], ['boards', 'Projects & boards', S.boards.filter(b => b.state === 'unlinked').length ? S.boards.filter(b => b.state === 'unlinked').length + ' unlinked' : ''], ['invoices', 'Invoices', S.invoices.filter(i => i.status === 'Open').length], ['requests', 'Requests', newReqs().length], ['team', 'Team', '']];
+  const nav = pages.map(([k, l, n]) => ni(l, N.page === k, { page: k, detail: null, fClient: '', fStatus: '' }, ct(n))).join('');
+  const pageLabel = pages.find(p => p[0] === N.page)[1];
+  const back = `<button ${go({ detail: null })}>${pageLabel}</button>`;
+  const fClient = `<label class="meta">Client <select class="in" data-filter="fClient"><option value="">All clients</option>${S.clients.map(c => `<option value="${c.id}" ${N.fClient === c.id ? 'selected' : ''}>${esc(c.name)}${c.archived ? ' (archived)' : ''}</option>`).join('')}</select></label>`;
+  const fStatus = opts => `<label class="meta">Status <select class="in" data-filter="fStatus"><option value="">All</option>${opts.map(o => `<option ${N.fStatus === o ? 'selected' : ''}>${o}</option>`).join('')}</select></label>`;
+  const byC = x => !N.fClient || x.clientId === N.fClient;
+  let main;
+  if (N.detail) {
+    const d = { clients: () => clientDetail(N.detail, true), boards: () => boardDetail(N.detail), invoices: () => invoiceDetail(N.detail), requests: () => requestDetail(N.detail) }[N.page]();
+    main = detailPage(d, `${back} / ${esc(d.title)}`);
+  } else if (N.page === 'overview') {
+    main = header('Admin', 'Overview', fbtn('+ New invoice', 'newInvoice', {}, { pri: 1 }))
+      + kpis([{ l: 'Active clients', v: S.clients.filter(c => !c.archived).length, go: go({ page: 'clients', detail: null }) }, { l: 'Open balance', v: money(openBalance()), go: go({ page: 'invoices', detail: null, fClient: '', fStatus: 'Open' }) }, { l: 'Overdue', v: S.invoices.filter(i => invSt(i) === 'Overdue').length, bad: S.invoices.some(i => invSt(i) === 'Overdue'), go: go({ page: 'invoices', detail: null, fClient: '', fStatus: 'Overdue' }) }, { l: 'New requests', v: newReqs().length, go: go({ page: 'requests', detail: null, fClient: '', fStatus: 'New' }) }])
+      + panel('Needs attention', attentionTable(attention()), `<span class="meta">${attention().length}</span>`)
+      + panel('Recent activity (this session)', S.log.length ? `<div class="pb meta">${S.log.slice(-8).reverse().map(l => esc(l.msg)).join('<br>')}</div>` : '<div class="empty">No changes yet.</div>');
+  } else if (N.page === 'clients') {
+    main = header('Admin / Clients', 'Clients', fbtn('+ New client', 'newClient', {}, { pri: 1 })) + panel('All clients', clientsTable(S.clients), '<span class="meta">archived Clients stay listed</span>');
+  } else if (N.page === 'boards') {
+    const list = S.boards.filter(b => byC(b) && (!N.fStatus || stateLabel(b) === N.fStatus));
+    main = header('Admin / Projects & boards', 'Projects & boards', fbtn('Link a board…', 'linkBoard', {}, { pri: 1 }), '<span class="meta">GitHub org: neves-labs · read-only GitHub App</span>')
+      + panel('GitHub boards', `<div class="filters">${fClient}${fStatus(['Linked', 'Unlinked', 'Past'])}</div>` + boardTable(list, { client: 1 }), `<span class="meta">${list.length} of ${S.boards.length}</span>`);
+  } else if (N.page === 'invoices') {
+    const list = S.invoices.filter(i => byC(i) && (!N.fStatus || invSt(i) === N.fStatus));
+    main = header('Admin / Invoices', 'Invoices', fbtn('+ New invoice', 'newInvoice', { clientId: N.fClient || undefined }, { pri: 1 }), `<span class="meta">next number ${nextNumber(TODAY.slice(0, 4))}</span>`)
+      + panel('All invoices', `<div class="filters">${fClient}${fStatus(['Open', 'Overdue', 'Paid', 'Void'])}</div>` + invoiceTable(list, { client: 1 }), `<span class="meta">open ${money(list.filter(i => i.status === 'Open').reduce((s, i) => s + invAmount(i), 0))}</span>`);
+  } else if (N.page === 'requests') {
+    const list = S.requests.filter(r => byC(r) && (!N.fStatus || r.status === N.fStatus));
+    main = header('Admin / Requests', 'Requests') + panel('All requests', `<div class="filters">${fClient}${fStatus(['New', 'Accepted', 'Declined', 'Done', 'Withdrawn'])}</div>` + requestTable(list, { client: 1 }), `<span class="meta">${list.length}</span>`);
+  } else if (N.page === 'team') {
+    const us = S.users.filter(u => !u.removed && byC(u));
+    const rows = us.map(u => { const last = u.role === 'Owner' && owners(u.clientId).length === 1, ro = client(u.clientId).archived; return `<tr><td><div class="strong">${esc(u.name)}</div><div class="meta">${esc(u.email)}</div></td><td><button class="lnk" ${openAttr('client', u.clientId)}>${esc(client(u.clientId).name)}</button>${ro ? ' <span class="tag">archived</span>' : ''}</td><td>${u.role}</td><td class="num">${fD(u.joined)}</td><td class="rowacts">${ro ? '' : (u.role === 'Owner' ? btn('Demote', 'demote', u.id, { disabled: last, title: last ? 'Last Owner' : '' }) : btn('Promote', 'promote', u.id)) + btn('Remove', 'removeUser', u.id, { danger: 1, disabled: last })}</td></tr>`; });
+    const invs = openInvites().filter(byC).map(i => `<tr><td>${esc(i.email)}</td><td>${esc(client(i.clientId).name)}</td><td>${i.role}</td><td class="num">${fD(i.expires)}</td><td>${inviteTag(i)}</td><td class="rowacts">${btn('Resend', 'resendInv', i.id) + btn('Revoke', 'revokeInv', i.id, { danger: 1 }) + btn('(sim) accept', 'simAccept', i.id)}</td></tr>`);
+    const inviteTo = N.fClient ? fbtn('+ Invite to ' + esc(client(N.fClient).name), 'inviteUser', { clientId: N.fClient }, { pri: 1 }) : '<span class="meta">pick a Client filter to invite</span>';
+    main = header('Admin / Team', 'Team', inviteTo, '<span class="meta">Client Users across all Clients</span>')
+      + panel('Client Users', `<div class="filters">${fClient}</div>` + table(['Name', 'Client', 'Role', 'Joined', ''], rows, 'No Client Users.'))
+      + panel('Pending Invitations', table(['Email', 'Client', 'Role', 'Expires', 'State', ''], invs, 'No pending Invitations.'));
+  }
+  return shell(nav, main);
+}
+const stateLabel = b => ({ linked: 'Linked', unlinked: 'Unlinked', past: 'Past' }[b.state]);
+
+// =====================================================================
+// Variant C · Queue-first / master-detail
+// =====================================================================
+function renderC() {
+  const N = NAV.C, att = attention();
+  const pages = [['queue', 'Needs attention', att.length], ['requests', 'Requests', newReqs().length], ['invoices', 'Invoices', S.invoices.filter(i => invSt(i) === 'Overdue').length ? S.invoices.filter(i => invSt(i) === 'Overdue').length + ' overdue' : ''], ['clients', 'Clients', ''], ['boards', 'Boards', S.boards.filter(b => b.state === 'unlinked').length ? S.boards.filter(b => b.state === 'unlinked').length + ' unlinked' : '']];
+  const nav = pages.map(([k, l, n]) => ni(l, N.page === k, { page: k, sel: null, form: null }, ct(n))).join('');
+  const on = (k, id) => (k = k === 'team' ? 'client' : k, N.sel && N.sel.kind === k) && N.sel.id === id && !N.form ? 'on' : '';
+  const item = (kind, id, t1, right, meta) => `<button class="it ${on(kind, id)}" data-act="csel" data-kind="${kind}" data-id="${esc(id)}"><div class="t1"><span class="nm">${t1}</span>${right}</div><div class="meta">${meta}</div></button>`;
+  let left, title, action = '';
+  if (N.page === 'queue') {
+    title = 'Needs attention';
+    const groups = [...new Set(att.map(a => a.grp))];
+    left = groups.length ? groups.map(g => `<div class="grp"><span class="micro">${g}</span><span class="meta">${att.filter(a => a.grp === g).length}</span></div>` + att.filter(a => a.grp === g).map(a => item(a.kind, a.id, esc(a.title), '', esc(a.meta))).join('')).join('') : '<div class="empty">All clear. Nothing needs attention.</div>';
+  } else if (N.page === 'requests') {
+    title = 'Requests';
+    const fs = ['New', 'Accepted', 'All'];
+    const list = S.requests.filter(r => N.filter === 'All' || r.status === N.filter).sort((a, b) => b.created.localeCompare(a.created));
+    left = `<div class="pb chips">${fs.map(s => `<button class="chip ${N.filter === s ? 'on' : ''}" ${go({ filter: s })}>${s}</button>`).join('')}</div>` + (list.map(r => item('request', r.id, esc(r.title), rStatus(r.status), `${rKind(r.kind)} · ${esc(client(r.clientId).name)} · ${fD(r.created)}`)).join('') || '<div class="empty">No Requests.</div>');
+  } else if (N.page === 'invoices') {
+    title = 'Invoices'; action = btn('+ New invoice', 'cform', 'newInvoice', { pri: 1 });
+    const list = [...S.invoices].sort((a, b) => (invSt(a) === 'Overdue' ? 0 : 1) - (invSt(b) === 'Overdue' ? 0 : 1) || b.issued.localeCompare(a.issued));
+    left = list.map(i => item('invoice', i.id, i.num, iBadge(i), `${esc(client(i.clientId).name)} · ${money(invAmount(i))} · due ${fD(i.due)}`)).join('');
+  } else if (N.page === 'clients') {
+    title = 'Clients'; action = btn('+ New client', 'cform', 'newClient', { pri: 1 });
+    left = S.clients.slice().sort((a, b) => a.archived - b.archived).map(c => item('client', c.id, esc(c.name), c.archived ? '<span class="tag">Archived</span>' : attention(c.id).length ? `<span class="meta" style="color:var(--off)">${attention(c.id).length} !</span>` : '', `${activeUsers(c.id).length} users · ${clientBoards(c.id).filter(b => b.state === 'linked').length} projects · open ${money(openBalance(c.id))}`)).join('');
+  } else if (N.page === 'boards') {
+    title = 'GitHub boards';
+    left = ['unlinked', 'linked', 'past'].map(st => { const l = S.boards.filter(b => b.state === st); return l.length ? `<div class="grp"><span class="micro">${{ unlinked: 'Unlinked', linked: 'Linked', past: 'Past Projects' }[st]}</span><span class="meta">${l.length}</span></div>` + l.map(b => item('board', b.id, esc(b.title), b.state === 'linked' && (unmapped(b).length || b.webhook === 'failing') ? ICON['at risk'] : '', `${b.clientId ? esc(client(b.clientId).name) : 'no Client'} · ${b.repo}`)).join('') : ''; }).join('');
+  }
+  let right;
+  if (N.form) right = `<section class="panel">${formHtml(N.form.name, N.form.args, 'inline')}</section>`;
+  else if (N.sel) {
+    const s = N.sel;
+    const d = s.kind === 'request' ? requestDetail(s.id) : s.kind === 'invoice' ? invoiceDetail(s.id) : s.kind === 'board' ? boardDetail(s.id) : clientDetail(s.id, true);
+    right = `<div class="hdr"><div><div class="crumb">${esc(d.crumb)}</div><h1>${esc(d.title)}</h1><div class="sub">${d.sub}</div></div><div class="acts">${d.actions}</div></div>` + d.body;
+  } else right = `<section class="panel"><div class="pane-empty">Select an item on the left.${N.page === 'queue' && att.length ? ' Start with the first: the queue empties as you resolve items.' : ''}</div></section>`;
+  const main = `<div class="split"><section class="panel left"><div class="ph"><h2>${title}</h2><div class="acts">${action}</div></div><div class="list">${left}</div></section><div class="rightpane" style="min-width:0">${right}</div></div>`;
+  return shell(nav, main);
+}
+
+// =====================================================================
+// Controller: routing, opening objects, forms, events
+// =====================================================================
+const ORDER = ['A', 'B', 'C'];
+const NAMES = { A: 'Client-centric', B: 'Object-centric', C: 'Queue-first' };
+const RENDER = { A: renderA, B: renderB, C: renderC };
+const params = new URLSearchParams(location.search);
+let variant = ORDER.includes((params.get('variant') || '').toUpperCase()) ? params.get('variant').toUpperCase() : 'A';
+let theme = ['light', 'dark'].includes(params.get('theme')) ? params.get('theme') : null; // null = follow system
+const app = document.getElementById('app');
+
+function isSelected(kind, id) {
+  if (variant === 'C') return NAV.C.sel && NAV.C.sel.kind === kind && NAV.C.sel.id === id;
+  return false;
+}
+
+function openObj(kind, id) {
+  if (variant === 'A') {
+    const N = NAV.A;
+    if (kind === 'client' || kind === 'team') Object.assign(N, { page: 'client', client: id, tab: kind === 'team' ? 'team' : 'overview', sel: null });
+    else if (kind === 'request') { if (N.page === 'inbox') N.sel = id; else Object.assign(N, { page: 'client', client: req(id).clientId, tab: 'requests', sel: id }); }
+    else if (kind === 'invoice') Object.assign(N, { page: 'client', client: inv(id).clientId, tab: 'invoices', sel: id });
+    else if (kind === 'board') { const b = board(id); if (!b.clientId) Object.assign(N, { page: 'home', client: null, sel: id }); else Object.assign(N, { page: 'client', client: b.clientId, tab: 'boards', sel: id }); }
+  } else if (variant === 'B') {
+    const page = { client: 'clients', team: 'clients', request: 'requests', invoice: 'invoices', board: 'boards' }[kind];
+    Object.assign(NAV.B, { page, detail: id });
+  } else {
+    const k = kind === 'team' ? 'client' : kind;
+    if (NAV.C.page !== 'queue') NAV.C.page = { client: 'clients', request: 'requests', invoice: 'invoices', board: 'boards' }[k];
+    if (k === 'request' && NAV.C.page === 'requests' && NAV.C.filter !== 'All' && req(id).status !== NAV.C.filter) NAV.C.filter = 'All';
+    Object.assign(NAV.C, { sel: { kind: k, id }, form: null });
+  }
+  render(); window.scrollTo(0, 0);
+}
+
+function showForm(name, args) {
+  if (variant === 'C') { NAV.C.form = { name, args }; render(); focusFirst(app.querySelector('.rightpane form')); return; }
+  const dp = document.querySelector('#drawer .dp');
+  dp.innerHTML = `<div class="dh"><h2 id="drawerTitle">${esc(FORMS[name](args).title)}</h2><button class="btn ghost" data-act="closeDrawer" aria-label="Close">✕</button></div>` + formHtml(name, args, 'drawer');
+  document.getElementById('drawer').hidden = false;
+  focusFirst(dp.querySelector('form'));
+}
+function focusFirst(f) { const el = f && f.querySelector('input:not([type=hidden]),select,textarea'); if (el) el.focus(); }
+function closeDrawer() { document.getElementById('drawer').hidden = true; document.querySelector('#drawer .dp').innerHTML = ''; }
+function closeForm(f) { if (f && f.closest('#drawer')) closeDrawer(); else if (variant === 'C' && NAV.C.form) { NAV.C.form = null; } }
+
+function log(msg) {
+  S.log.push({ at: new Date().toLocaleTimeString(), msg });
+  console.log('[mutation]', msg, JSON.parse(JSON.stringify({ clients: S.clients, users: S.users, invites: S.invites, boards: S.boards.map(({ id, state, clientId, map, lastSync }) => ({ id, state, clientId, map, lastSync })), invoices: S.invoices, requests: S.requests })));
+  toast(msg); renderState();
+}
+function toast(msg) { const t = document.getElementById('toast'); t.textContent = msg; t.hidden = false; clearTimeout(toast.t); toast.t = setTimeout(() => t.hidden = true, 4000); }
+
+function ask(o, cb) {
+  const d = document.getElementById('cfm');
+  document.getElementById('cfT').textContent = o.title;
+  document.getElementById('cfX').innerHTML = o.text;
+  document.getElementById('cfF').innerHTML = o.date ? `<div class="field"><span class="l">Paid on</span><input class="in" type="date" id="cfDate" value="${o.date}"></div>` : '';
+  const ok = document.getElementById('cfOk'); ok.textContent = o.ok; ok.className = 'btn ' + (o.danger ? 'danger' : 'pri');
+  d.returnValue = '';
+  d.onclose = () => { if (d.returnValue === 'ok') cb(o.date ? document.getElementById('cfDate').value : undefined); };
+  d.showModal();
+}
+
+function render() {
+  if (theme) document.documentElement.dataset.theme = theme; else delete document.documentElement.dataset.theme;
+  app.innerHTML = RENDER[variant]();
+  document.getElementById('lbl').textContent = `${variant} · ${NAMES[variant]}`;
+  const dark = theme ? theme === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
+  document.getElementById('themeBtn').innerHTML = dark ? '☾<span class="tname"> dark</span>' : '☀<span class="tname"> light</span>';
+  document.title = `PROTOTYPE · Admin ${variant} · ${NAMES[variant]}`;
+  const p = new URLSearchParams(location.search); p.set('variant', variant); theme ? p.set('theme', theme) : p.delete('theme');
+  history.replaceState(null, '', location.pathname + '?' + p.toString() + location.hash);
+  renderState();
+}
+function renderState() {
+  const el = document.getElementById('stPanel'); if (el.hidden) return;
+  el.innerHTML = `<h4>In-memory state (reload resets)</h4>
+    <div>Clients ${S.clients.length} (${S.clients.filter(c => c.archived).length} archived) · Users ${S.users.filter(u => !u.removed).length} · open Invitations ${openInvites().length}<br>
+    Boards linked ${S.boards.filter(b => b.state === 'linked').length} / unlinked ${S.boards.filter(b => b.state === 'unlinked').length} / past ${S.boards.filter(b => b.state === 'past').length}<br>
+    Invoices ${S.invoices.length} · next <code>${nextNumber(TODAY.slice(0, 4))}</code> · Requests New ${newReqs().length} · attention ${attention().length}<br>
+    nav <code>${esc(JSON.stringify(NAV[variant]))}</code></div>
+    <h4 style="margin-top:8px">Mutation log</h4>${S.log.length ? `<ol>${S.log.slice().reverse().map(l => `<li>${l.at} ${esc(l.msg)}</li>`).join('')}</ol>` : '<div>none yet</div>'}`;
+}
+function step(d) { variant = ORDER[(ORDER.indexOf(variant) + d + ORDER.length) % ORDER.length]; closeDrawer(); render(); }
+
+document.getElementById('prev').onclick = () => step(-1);
+document.getElementById('next').onclick = () => step(1);
+document.getElementById('themeBtn').onclick = () => { const dark = theme ? theme === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches; theme = dark ? 'light' : 'dark'; render(); };
+document.getElementById('stBtn').onclick = e => { const p = document.getElementById('stPanel'); p.hidden = !p.hidden; e.currentTarget.setAttribute('aria-expanded', !p.hidden); renderState(); };
+
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && !document.getElementById('drawer').hidden) { closeDrawer(); return; }
+  if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+  const el = document.activeElement;
+  if (el && (el.matches('input, textarea, select') || el.isContentEditable)) return;
+  if (document.getElementById('cfm').open || !document.getElementById('drawer').hidden) return;
+  step(e.key === 'ArrowLeft' ? -1 : 1);
+});
+
+document.addEventListener('click', e => {
+  const el = e.target.closest('[data-act]'); if (!el || el.disabled) return;
+  if (el.closest('#proto')) return;
+  const a = el.dataset.act, id = el.dataset.id;
+  if (a === 'go') { Object.assign(NAV[variant], JSON.parse(el.dataset.to)); render(); window.scrollTo(0, 0); return; }
+  if (a === 'open') { openObj(el.dataset.kind, id); return; }
+  if (a === 'csel') { NAV.C.sel = { kind: el.dataset.kind === 'team' ? 'client' : el.dataset.kind, id }; NAV.C.form = null; render(); return; }
+  if (a === 'cform') { showForm(id, {}); return; }
+  if (a === 'form') { e.stopPropagation(); showForm(el.dataset.formName, JSON.parse(el.dataset.args || '{}')); return; }
+  if (a === 'closeDrawer') { closeDrawer(); return; }
+  if (a === 'cancelForm') { const f = el.closest('form'); closeForm(f); if (!f.closest('#drawer')) render(); return; }
+  if (a === 'addLine') { el.closest('.field').querySelector('.lines').insertAdjacentHTML('beforeend', lineRow()); recalc(el.closest('form')); el.closest('.field').querySelector('.lines .li:last-child input').focus(); return; }
+  if (a === 'rmLine') { const f = el.closest('form'); if (f.querySelectorAll('.li').length > 1) el.closest('.li').remove(); recalc(f); return; }
+  if (ACT[a]) { e.stopPropagation(); const r = ACT[a](id); if (r !== 'async') render(); }
+});
+
+// Live behaviours inside forms
+function recalc(f) {
+  if (!f || f.dataset.form !== 'newInvoice') return;
+  const sum = [...f.querySelectorAll('[name=li-a]')].reduce((s, i) => s + (parseFloat(i.value) || 0), 0);
+  f.querySelector('.tot').textContent = money(sum);
+  const iss = f.querySelector('[name=issued]').value; if (iss) f.querySelector('.numprev').textContent = nextNumber(iss.slice(0, 4));
+  const rms = f.querySelectorAll('[data-act=rmLine]'); rms.forEach(b => b.disabled = rms.length === 1);
+}
+document.addEventListener('input', e => recalc(e.target.form));
+document.addEventListener('change', e => {
+  const t = e.target, f = t.form;
+  if (t.matches('[data-filter]')) { NAV.B[t.dataset.filter] = t.value; render(); return; }
+  if (!f) return;
+  if (f.dataset.form === 'newInvoice' && t.name === 'clientId') f.querySelector('[name=projectId]').innerHTML = projectOptions(t.value);
+  if (f.dataset.form === 'linkBoard' && t.dataset.swap === 'map') { const b = board(t.value); f.querySelector('.mapwrap').innerHTML = b ? `<div class="field"><span class="l">Map columns to client statuses</span>${mappingFields(b)}</div>` : ''; }
+  if (f.dataset.form === 'triage' && t.name === 'status') {
+    f.querySelectorAll('.chip').forEach(c => c.classList.toggle('on', c.querySelector('input').checked));
+    const can = ['Accepted', 'Done'].includes(t.value), sel = f.querySelector('[name=taskId]');
+    sel.disabled = !can; if (!can) sel.value = '';
+    f.querySelector('.tasknote').textContent = can ? 'Picker lists this Client\'s client-visible Tasks.' : 'Set status to Accepted to link a Task.';
+  }
+  recalc(f);
+});
+document.addEventListener('submit', e => {
+  const f = e.target.closest('form[data-form]'); if (!f) return;
+  e.preventDefault();
+  const a = JSON.parse(f.dataset.args || '{}');
+  const fd = Object.fromEntries(new FormData(f));
+  const res = SUBMIT[f.dataset.form](fd, a, f);
+  if (typeof res === 'string') { f.querySelector('.ferr').textContent = res; return; }
+  closeForm(f);
+  if (res && res.goto && f.dataset.form !== 'triage') openObj(res.goto[0], res.goto[1]); else render();
+  if (res && res.next) showForm(res.next[0], res.next[1]);
+});
+document.addEventListener('focusin', e => { if (e.target.closest && e.target.closest('form[data-form=newInvoice]')) recalc(e.target.closest('form')); });
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { if (!theme) render(); });
+
+render();
+</script>
+</body>
+</html>
