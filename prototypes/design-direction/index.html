@@ -1,0 +1,798 @@
+<!--
+  PROTOTYPE — throwaway. Answers: what does the single Neves Labs theme look like? Three variants (plus B2/B3 palette variations of B), switchable via ?variant=A|B|B2|B3|C and ?theme=light|dark.
+-->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PROTOTYPE · Client overview design direction</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&family=Outfit:wght@400;500;700;800&display=swap" rel="stylesheet">
+<style id="tokens"></style>
+<style>
+*,*::before,*::after{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{overflow-x:hidden}
+#app{min-height:100vh;background:var(--bg);color:var(--text);font-family:var(--font-body);font-size:var(--fs-base);line-height:1.5;padding-bottom:120px}
+#app a{color:inherit}
+:where(#app) :where(button,input,select,textarea){font:inherit;color:inherit}
+#app .num{font-variant-numeric:tabular-nums}
+#app .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+#app svg.ico{width:1em;height:1em;flex:none;vertical-align:-0.125em}
+
+/* badges shared mechanics; look per variant */
+#app .badge{display:inline-flex;align-items:center;gap:.4em;white-space:nowrap;font-weight:600}
+#app .h-ontrack{--hc:var(--ok);--hb:var(--ok-bg)}
+#app .h-atrisk{--hc:var(--risk);--hb:var(--risk-bg)}
+#app .h-offtrack{--hc:var(--off);--hb:var(--off-bg)}
+#app .h-complete{--hc:var(--done);--hb:var(--done-bg)}
+#app .h-inactive{--hc:var(--idle);--hb:var(--idle-bg)}
+#app .i-open{--hc:var(--text-2);--hb:var(--surface-2)}
+#app .i-paid{--hc:var(--ok);--hb:var(--ok-bg)}
+#app .i-overdue{--hc:var(--off);--hb:var(--off-bg)}
+
+/* user menu */
+#app details.menu{position:relative}
+#app details.menu>summary{list-style:none;cursor:pointer}
+#app details.menu>summary::-webkit-details-marker{display:none}
+#app details.menu .menu-list{position:absolute;right:0;top:calc(100% + 6px);min-width:200px;background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:6px;z-index:20;box-shadow:0 10px 30px rgba(0,0,0,.18)}
+#app .menu-list a{display:block;padding:8px 10px;text-decoration:none;border-radius:calc(var(--radius) - 2px)}
+#app .menu-list a:hover{background:var(--surface-2)}
+#app .menu-list .meta{padding:8px 10px;color:var(--text-2);font-size:.85em;border-bottom:1px solid var(--line);margin-bottom:4px}
+
+/* request form, shared field mechanics */
+#app .form-grid{display:grid;gap:calc(var(--space)*2)}
+#app .field label,#app fieldset legend{display:block;font-weight:600;margin-bottom:6px;font-size:.9em}
+#app fieldset{border:0;padding:0;margin:0}
+#app .field input[type=text],#app .field textarea,#app .field select{width:100%;padding:10px 12px;border:1px solid var(--line-strong);background:var(--bg);border-radius:calc(var(--radius) * .6)}
+#app .field textarea{min-height:96px;resize:vertical}
+#app .kind-opts{display:flex;gap:8px;flex-wrap:wrap}
+#app .kind-opts label{display:flex;align-items:center;gap:6px;padding:8px 12px;border:1px solid var(--line-strong);border-radius:calc(var(--radius) * .6);cursor:pointer;font-weight:500;margin:0}
+#app .kind-opts label:has(input:checked){border-color:var(--accent);box-shadow:inset 0 0 0 1px var(--accent)}
+#app .form-actions{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap}
+#app :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+#app dialog{color:var(--text);background:var(--surface);border:1px solid var(--line);padding:0;max-width:calc(100vw - 32px)}
+#app dialog::backdrop{background:rgba(0,0,0,.45)}
+
+/* ============ VARIANT A — Calm studio ============ */
+[data-variant=A] .a-top{display:flex;align-items:center;gap:calc(var(--space)*4);padding:calc(var(--space)*3) calc(var(--space)*6);border-bottom:1px solid var(--line);flex-wrap:wrap}
+[data-variant=A] .a-brand{font-family:var(--font-display);font-size:1.35rem;font-weight:500;letter-spacing:-.01em}
+[data-variant=A] .a-brand small{display:block;font-family:var(--font-body);font-size:.7rem;color:var(--text-2);letter-spacing:.08em;text-transform:uppercase}
+[data-variant=A] .a-nav{display:flex;gap:calc(var(--space)*1);flex:1;flex-wrap:wrap}
+[data-variant=A] .a-nav a{text-decoration:none;padding:6px 12px;border-radius:999px;color:var(--text-2)}
+[data-variant=A] .a-nav a[aria-current]{background:var(--accent-bg);color:var(--accent-text)}
+[data-variant=A] .a-user{display:flex;align-items:center;gap:10px}
+[data-variant=A] .avatar{width:34px;height:34px;border-radius:50%;background:var(--accent-bg);color:var(--accent-text);display:grid;place-items:center;font-weight:600;font-size:.85rem}
+[data-variant=A] main{max-width:1200px;margin:0 auto;padding:calc(var(--space)*8) calc(var(--space)*6)}
+[data-variant=A] h1{font-family:var(--font-display);font-weight:400;font-size:2.6rem;line-height:1.1;margin:0 0 8px;letter-spacing:-.02em}
+[data-variant=A] .lede{color:var(--text-2);margin:0 0 calc(var(--space)*8);font-size:1.05rem}
+[data-variant=A] h2{font-family:var(--font-display);font-weight:500;font-size:1.35rem;margin:0 0 calc(var(--space)*3)}
+[data-variant=A] .a-layout{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:calc(var(--space)*6);align-items:start}
+[data-variant=A] .a-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:calc(var(--space)*4)}
+[data-variant=A] .card{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:calc(var(--space)*5);box-shadow:0 1px 2px rgba(60,40,20,.04),0 8px 24px rgba(60,40,20,.05)}
+[data-variant=A] .pcard{display:flex;flex-direction:column;gap:calc(var(--space)*3)}
+[data-variant=A] .pcard h3{font-family:var(--font-display);font-weight:500;font-size:1.25rem;margin:0}
+[data-variant=A] .badge{font-size:.8rem;padding:4px 10px 4px 8px;border-radius:999px;background:var(--hb);color:var(--hc)}
+[data-variant=A] .note{margin:0;color:var(--text)}
+[data-variant=A] .muted{color:var(--text-2);font-size:.88rem}
+[data-variant=A] .bar{height:6px;border-radius:999px;background:var(--surface-2);overflow:hidden}
+[data-variant=A] .bar span{display:block;height:100%;background:var(--accent);border-radius:999px}
+[data-variant=A] .ms-row{display:flex;justify-content:space-between;gap:8px;font-size:.88rem;margin-bottom:6px}
+[data-variant=A] .tasks{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;border-top:1px solid var(--line);padding-top:calc(var(--space)*3);text-align:center}
+[data-variant=A] .tasks b{display:block;font-family:var(--font-display);font-size:1.4rem;font-weight:500}
+[data-variant=A] .tasks span{font-size:.75rem;color:var(--text-2)}
+[data-variant=A] .past{margin-top:calc(var(--space)*5);display:flex;gap:12px;align-items:center;flex-wrap:wrap;color:var(--text-2);font-size:.9rem;padding:calc(var(--space)*3) 0;border-top:1px dashed var(--line-strong)}
+[data-variant=A] aside{display:grid;gap:calc(var(--space)*4)}
+[data-variant=A] .inv-total{font-family:var(--font-display);font-size:2.4rem;line-height:1;margin:4px 0 8px}
+[data-variant=A] .overdue-note{display:inline-flex;gap:6px;align-items:center;color:var(--off);font-weight:600;font-size:.9rem}
+[data-variant=A] .list{list-style:none;margin:calc(var(--space)*4) 0 0;padding:0}
+[data-variant=A] .list li{display:grid;grid-template-columns:1fr auto;gap:2px 12px;padding:10px 0;border-top:1px solid var(--line);font-size:.9rem}
+[data-variant=A] .list li .sub{grid-column:1;color:var(--text-2);font-size:.8rem}
+[data-variant=A] .list li .right{grid-row:span 2;text-align:right;display:flex;flex-direction:column;align-items:flex-end;gap:4px}
+[data-variant=A] .btn{border:1px solid var(--line-strong);background:var(--surface);border-radius:999px;padding:8px 16px;cursor:pointer;font-weight:500}
+[data-variant=A] .btn-primary{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}
+[data-variant=A] .row-head{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:4px}
+[data-variant=A] .row-head h2{margin:0}
+[data-variant=A] .kind{font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--text-2)}
+[data-variant=A] dialog{border-radius:var(--radius);width:520px}
+[data-variant=A] dialog form{padding:calc(var(--space)*6)}
+[data-variant=A] dialog h2{font-size:1.6rem}
+@media (max-width:900px){
+  [data-variant=A] .a-layout{grid-template-columns:minmax(0,1fr)}
+}
+@media (max-width:600px){
+  [data-variant=A] .a-top{padding:16px;gap:12px}
+  [data-variant=A] .a-nav{order:3;flex-basis:100%;gap:2px}
+  [data-variant=A] .a-nav a{padding:6px 10px}
+  [data-variant=A] .a-user{margin-left:auto}
+  [data-variant=A] .a-user .uname{display:none}
+  [data-variant=A] main{padding:32px 16px}
+  [data-variant=A] h1{font-size:2rem}
+}
+
+/* ============ VARIANT B — Ops console ============ */
+[data-variant=B]{display:grid;grid-template-columns:220px minmax(0,1fr)}
+[data-variant=B] .b-side{position:sticky;top:0;height:100vh;border-right:1px solid var(--line);background:var(--surface);display:flex;flex-direction:column;padding:12px 8px;gap:4px}
+[data-variant=B] .b-brand{padding:6px 8px 14px;border-bottom:1px solid var(--line);margin-bottom:8px}
+[data-variant=B] .b-brand b{display:block;font-size:.9rem;font-weight:600}
+[data-variant=B] .b-brand span{font-family:var(--font-mono);font-size:.68rem;color:var(--text-2);text-transform:uppercase;letter-spacing:.06em}
+[data-variant=B] .b-nav{display:flex;flex-direction:column;gap:1px}
+[data-variant=B] .b-nav a{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:var(--radius);text-decoration:none;color:var(--text-2);font-size:.85rem}
+[data-variant=B] .b-nav a:hover{background:var(--surface-2);color:var(--text)}
+[data-variant=B] .b-nav a[aria-current]{background:var(--surface-2);color:var(--text);box-shadow:inset 2px 0 0 var(--accent)}
+[data-variant=B] .b-nav .count{margin-left:auto;font-family:var(--font-mono);font-size:.72rem;color:var(--text-2)}
+[data-variant=B] .b-side .menu{margin-top:auto;border-top:1px solid var(--line);padding-top:8px}
+[data-variant=B] .b-side .menu .menu-list{top:auto;bottom:calc(100% + 6px);left:0;right:auto}
+[data-variant=B] .b-userbtn{display:flex;gap:8px;align-items:center;padding:6px 8px;font-size:.82rem}
+[data-variant=B] .avatar{width:24px;height:24px;border-radius:var(--radius);background:var(--accent);color:var(--on-accent);display:grid;place-items:center;font-size:.7rem;font-weight:600}
+[data-variant=B] main{padding:16px 20px;min-width:0}
+[data-variant=B] .b-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px;flex-wrap:wrap}
+[data-variant=B] .crumb{font-family:var(--font-mono);font-size:.72rem;color:var(--text-2);text-transform:uppercase;letter-spacing:.06em}
+[data-variant=B] h1{font-size:1.15rem;font-weight:600;margin:2px 0 0}
+[data-variant=B] .kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));border:1px solid var(--line);border-radius:var(--radius);margin-bottom:16px;background:var(--surface)}
+[data-variant=B] .kpi{padding:10px 12px;border-left:1px solid var(--line)}
+[data-variant=B] .kpi:first-child{border-left:0}
+[data-variant=B] .kpi .k{font-size:.7rem;color:var(--text-2);text-transform:uppercase;letter-spacing:.05em}
+[data-variant=B] .kpi .v{font-family:var(--font-mono);font-size:1.25rem;font-weight:500;margin-top:2px}
+[data-variant=B] .kpi .v.bad{color:var(--off)}
+[data-variant=B] .panel{border:1px solid var(--line);border-radius:var(--radius);background:var(--surface);margin-bottom:16px;min-width:0}
+[data-variant=B] .panel-h{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 12px;border-bottom:1px solid var(--line)}
+[data-variant=B] .panel-h h2{font-size:.78rem;font-weight:600;text-transform:uppercase;letter-spacing:.06em;margin:0;color:var(--text-2)}
+[data-variant=B] .panel-h .meta{font-family:var(--font-mono);font-size:.72rem;color:var(--text-2)}
+[data-variant=B] .tbl{font-size:.82rem}
+[data-variant=B] .tr{display:grid;align-items:center;gap:12px;padding:8px 12px;border-top:1px solid var(--line)}
+[data-variant=B] .tr:first-child{border-top:0}
+[data-variant=B] .th{font-size:.68rem;text-transform:uppercase;letter-spacing:.05em;color:var(--text-2);padding-top:6px;padding-bottom:6px;background:var(--surface-2)}
+[data-variant=B] .tr:not(.th):hover{background:var(--surface-2)}
+[data-variant=B] .p-tbl .tr{grid-template-columns:110px minmax(150px,1.1fr) minmax(200px,2fr) minmax(150px,1.2fr) 150px}
+[data-variant=B] .i-tbl .tr{grid-template-columns:minmax(110px,1.2fr) 90px 90px minmax(90px,1fr) 92px}
+[data-variant=B] .r-tbl .tr{grid-template-columns:70px minmax(140px,2fr) 96px minmax(90px,1fr)}
+[data-variant=B] .mono,[data-variant=B] .num{font-family:var(--font-mono);font-size:.78rem}
+[data-variant=B] .right{text-align:right}
+[data-variant=B] .pname{font-weight:600}
+[data-variant=B] .sub{color:var(--text-2);font-size:.74rem}
+[data-variant=B] .clip{overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+[data-variant=B] .badge{font-size:.72rem;padding:2px 6px;border:1px solid var(--hc);color:var(--hc);border-radius:var(--radius);font-weight:500;background:var(--hb)}
+[data-variant=B] .ms{display:grid;gap:4px}
+[data-variant=B] .ms-top{display:flex;justify-content:space-between;gap:6px}
+[data-variant=B] .bar{height:4px;background:var(--surface-3);border-radius:1px;overflow:hidden}
+[data-variant=B] .bar span{display:block;height:100%;background:var(--hc,var(--accent))}
+[data-variant=B] .tcounts{display:flex;gap:10px;font-family:var(--font-mono);font-size:.75rem;color:var(--text-2)}
+[data-variant=B] .tcounts b{color:var(--text);font-weight:500}
+[data-variant=B] .past-row{opacity:.72}
+[data-variant=B] .grid2{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);gap:16px}
+[data-variant=B] .btn{border:1px solid var(--line-strong);background:var(--surface-2);border-radius:var(--radius);padding:5px 10px;font-size:.8rem;cursor:pointer;font-weight:500}
+[data-variant=B] .btn-primary{background:var(--accent);border-color:var(--accent);color:var(--on-accent)}
+[data-variant=B] .kind{font-family:var(--font-mono);font-size:.7rem;display:inline-flex;gap:4px;align-items:center}
+[data-variant=B] .kind.bug{color:var(--off)}
+[data-variant=B] .kind.feat{color:var(--accent-text)}
+[data-variant=B] .rstat{font-family:var(--font-mono);font-size:.72rem}
+[data-variant=B] dialog{margin:0 0 0 auto;height:100vh;max-height:100vh;width:420px;border-radius:0;border-width:0 0 0 1px}
+[data-variant=B] dialog form{padding:16px}
+[data-variant=B] dialog h2{font-size:.9rem;text-transform:uppercase;letter-spacing:.06em;margin:0 0 12px}
+[data-variant=B] .field label,[data-variant=B] fieldset legend{font-size:.78rem}
+@media (max-width:1100px){
+  [data-variant=B] .grid2{grid-template-columns:minmax(0,1fr)}
+  [data-variant=B] .p-tbl .tr{grid-template-columns:100px minmax(140px,1fr) minmax(160px,1.6fr) 140px}
+  [data-variant=B] .p-tbl .tr>.c-tasks{grid-column:2 / -1}
+  [data-variant=B] .p-tbl .th>.c-tasks{display:none}
+}
+@media (max-width:760px){
+  [data-variant=B]{grid-template-columns:minmax(0,1fr)}
+  [data-variant=B] .b-side{position:sticky;height:auto;flex-direction:row;align-items:center;border-right:0;border-bottom:1px solid var(--line);padding:6px 8px;z-index:10;flex-wrap:wrap}
+  [data-variant=B] .b-brand{border:0;margin:0;padding:4px 6px;flex:1}
+  [data-variant=B] .b-nav{flex-direction:row;order:3;flex-basis:100%;overflow-x:auto}
+  [data-variant=B] .b-nav a{white-space:nowrap}
+  [data-variant=B] .b-nav .count{display:none}
+  [data-variant=B] .b-side .menu{margin:0;border:0;padding:0}
+  [data-variant=B] .b-side .menu .menu-list{top:calc(100% + 6px);bottom:auto;right:0;left:auto}
+  [data-variant=B] .b-userbtn .uname{display:none}
+  [data-variant=B] main{padding:12px}
+  [data-variant=B] .kpis{grid-template-columns:repeat(2,minmax(0,1fr))}
+  [data-variant=B] .kpi:nth-child(3){border-left:0}
+  [data-variant=B] .kpi:nth-child(n+3){border-top:1px solid var(--line)}
+  [data-variant=B] .th{display:none !important}
+  [data-variant=B] .p-tbl .tr{grid-template-columns:minmax(0,1fr) auto;gap:6px 10px}
+  [data-variant=B] .p-tbl .tr>.c-health{grid-column:2;grid-row:1}
+  [data-variant=B] .p-tbl .tr>.c-name{grid-column:1;grid-row:1}
+  [data-variant=B] .p-tbl .tr>.c-upd,[data-variant=B] .p-tbl .tr>.c-ms,[data-variant=B] .p-tbl .tr>.c-tasks{grid-column:1 / -1}
+  [data-variant=B] .i-tbl .tr{grid-template-columns:minmax(0,1fr) auto auto;gap:2px 10px}
+  [data-variant=B] .i-tbl .c-issued{display:none}
+  [data-variant=B] .i-tbl .c-due{grid-column:1;grid-row:2}
+  [data-variant=B] .i-tbl .c-amt{grid-column:2;grid-row:1 / 3}
+  [data-variant=B] .i-tbl .c-st{grid-column:3;grid-row:1 / 3}
+  [data-variant=B] .r-tbl .tr{grid-template-columns:auto minmax(0,1fr) auto;gap:2px 10px}
+  [data-variant=B] .r-tbl .c-by{grid-column:2;grid-row:2}
+  [data-variant=B] .r-tbl .c-rs{grid-column:3;grid-row:1 / 3}
+  [data-variant=B] dialog{width:100vw;max-width:100vw}
+}
+
+/* B3: accent drives progress bars (health stays on badges) */
+#app[data-palette=B3] .bar span{background:var(--accent)}
+
+/* ============ VARIANT C — Status first ============ */
+[data-variant=C] .c-wrap{max-width:760px;margin:0 auto;padding:0 24px}
+[data-variant=C] .c-top{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:24px 0 12px}
+[data-variant=C] .c-brand{font-weight:800;font-size:1.05rem;letter-spacing:-.01em}
+[data-variant=C] .c-userbtn{display:flex;align-items:center;gap:8px;font-weight:500;border:2px solid var(--text);border-radius:var(--radius);padding:6px 12px}
+[data-variant=C] .c-nav{display:flex;gap:20px;flex-wrap:wrap;padding:0 0 24px;border-bottom:2px solid var(--text)}
+[data-variant=C] .c-nav a{text-decoration:none;font-weight:500;color:var(--text-2)}
+[data-variant=C] .c-nav a[aria-current]{color:var(--text);text-decoration:underline;text-decoration-thickness:3px;text-underline-offset:8px}
+[data-variant=C] .eyebrow{font-size:.8rem;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--text-2);margin:0 0 12px}
+[data-variant=C] .hero{padding:56px 0 48px;border-bottom:1px solid var(--line)}
+[data-variant=C] h1{font-size:clamp(2.1rem,6.4vw,3.75rem);line-height:1.05;font-weight:800;letter-spacing:-.03em;margin:0}
+[data-variant=C] h1 .hl{white-space:nowrap}
+[data-variant=C] h1 .dot{color:var(--text-2);font-weight:400}
+[data-variant=C] h1 .c-ok{color:var(--ok)} [data-variant=C] h1 .c-bad{color:var(--off)}
+[data-variant=C] .hero p{font-size:1.15rem;color:var(--text-2);margin:20px 0 0;max-width:36em}
+[data-variant=C] section{padding:48px 0;border-bottom:1px solid var(--line)}
+[data-variant=C] h2{font-size:1.9rem;font-weight:800;letter-spacing:-.02em;margin:0 0 28px}
+[data-variant=C] .feed{display:grid;gap:40px}
+[data-variant=C] .entry{border-left:6px solid var(--hc);padding-left:24px}
+[data-variant=C] .entry-head{display:flex;gap:12px;align-items:baseline;flex-wrap:wrap;margin-bottom:10px}
+[data-variant=C] .badge{color:var(--hc);font-size:.85rem;text-transform:uppercase;letter-spacing:.08em;font-weight:700}
+[data-variant=C] .entry-head time{color:var(--text-2);font-size:.9rem}
+[data-variant=C] .entry h3{font-size:1rem;font-weight:700;margin:0 0 6px;color:var(--text-2);text-transform:none}
+[data-variant=C] .entry blockquote{margin:0 0 18px;font-size:1.55rem;line-height:1.3;font-weight:500;letter-spacing:-.01em}
+[data-variant=C] .facts{display:grid;grid-template-columns:1fr 1fr;gap:16px;font-size:.95rem}
+[data-variant=C] .facts dt{font-size:.75rem;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--text-2);margin-bottom:4px}
+[data-variant=C] .facts dd{margin:0}
+[data-variant=C] .bar{height:8px;background:var(--surface-2);margin-top:8px}
+[data-variant=C] .bar span{display:block;height:100%;background:var(--text)}
+[data-variant=C] .past{margin-top:40px;color:var(--text-2);font-size:1rem}
+[data-variant=C] .past b{color:var(--text)}
+[data-variant=C] .big-sum{font-size:1.5rem;line-height:1.35;font-weight:500;margin:0 0 28px;letter-spacing:-.01em}
+[data-variant=C] .big-sum strong{font-weight:800}
+[data-variant=C] .rows{list-style:none;margin:0;padding:0;border-top:2px solid var(--text)}
+[data-variant=C] .rows li{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:4px 20px;align-items:baseline;padding:16px 0;border-bottom:1px solid var(--line)}
+[data-variant=C] .rows .sub{grid-column:1;color:var(--text-2);font-size:.9rem}
+[data-variant=C] .rows .amt{font-weight:700;font-size:1.1rem}
+[data-variant=C] .rows .st{grid-row:span 2}
+[data-variant=C] .i-overdue.badge,[data-variant=C] .i-paid.badge,[data-variant=C] .i-open.badge{font-size:.78rem}
+[data-variant=C] .i-open{--hc:var(--text)}
+[data-variant=C] .req-rows li{grid-template-columns:minmax(0,1fr) auto}
+[data-variant=C] .req-title{font-weight:700;font-size:1.1rem}
+[data-variant=C] .kind{font-size:.75rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--text-2);margin-right:8px}
+[data-variant=C] .rstat{font-weight:700;font-size:.85rem;text-transform:uppercase;letter-spacing:.08em}
+[data-variant=C] .btn{border:2px solid var(--text);background:transparent;border-radius:var(--radius);padding:12px 22px;cursor:pointer;font-weight:700}
+[data-variant=C] .btn-primary{background:var(--text);color:var(--bg)}
+[data-variant=C] .sec-head{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:28px}
+[data-variant=C] .sec-head h2{margin:0}
+[data-variant=C] .inline-form{border:2px solid var(--text);padding:24px;margin-bottom:28px}
+[data-variant=C] .inline-form[hidden]{display:none}
+[data-variant=C] .inline-form h3{font-size:1.4rem;font-weight:800;margin:0 0 16px}
+[data-variant=C] .field input[type=text],[data-variant=C] .field textarea,[data-variant=C] .field select{border:2px solid var(--line-strong);border-radius:0}
+@media (max-width:600px){
+  [data-variant=C] .c-wrap{padding:0 16px}
+  [data-variant=C] .c-userbtn .uname{display:none}
+  [data-variant=C] .hero{padding:36px 0 32px}
+  [data-variant=C] .entry{padding-left:16px}
+  [data-variant=C] .entry blockquote{font-size:1.25rem}
+  [data-variant=C] .facts{grid-template-columns:1fr}
+  [data-variant=C] .big-sum{font-size:1.2rem}
+  [data-variant=C] .rows li{grid-template-columns:minmax(0,1fr) auto}
+  [data-variant=C] .rows .amt{grid-column:2;grid-row:1}
+  [data-variant=C] .rows .st{grid-column:2;grid-row:2}
+  [data-variant=C] h2{font-size:1.5rem}
+}
+
+/* ============ Prototype chrome (NOT part of the design) ============ */
+#proto{position:fixed;left:50%;bottom:16px;transform:translateX(-50%);z-index:1000;display:flex;flex-direction:column;align-items:center;gap:8px;font:13px/1.3 ui-monospace,SFMono-Regular,Menlo,monospace;max-width:calc(100vw - 16px)}
+#proto .pill{display:flex;align-items:center;gap:2px;background:#111;color:#fff;border:2px solid #ffd400;border-radius:999px;padding:4px;box-shadow:0 6px 24px rgba(0,0,0,.4)}
+#proto button{background:transparent;color:#fff;border:0;font:inherit;cursor:pointer;padding:8px 10px;border-radius:999px;white-space:nowrap;flex:none}
+#proto button:hover{background:#333}
+#proto button:focus-visible{outline:2px solid #ffd400}
+#proto .lbl{padding:0 8px;white-space:nowrap;font-weight:700;min-width:0;overflow:hidden;text-overflow:ellipsis}
+@media (max-width:420px){#proto .tname{display:none}#proto button{padding:8px 8px}}
+#proto .sep{width:1px;height:20px;background:#555;margin:0 2px}
+#proto .tok{background:#111;color:#eee;border:2px solid #ffd400;border-radius:10px;padding:10px 12px;width:340px;max-width:calc(100vw - 16px);box-shadow:0 6px 24px rgba(0,0,0,.4)}
+#proto .tok[hidden]{display:none}
+#proto .tok h4{margin:0 0 6px;font-size:12px;color:#ffd400;text-transform:uppercase;letter-spacing:.08em}
+#proto .tok dl{display:grid;grid-template-columns:auto 1fr;gap:3px 10px;margin:0}
+#proto .tok dt{color:#aaa}
+#proto .tok dd{margin:0;display:flex;align-items:center;gap:6px;word-break:break-word}
+#proto .sw{width:12px;height:12px;border:1px solid #888;border-radius:2px;flex:none}
+#toast{position:fixed;top:16px;left:50%;transform:translateX(-50%);background:#111;color:#fff;border:2px solid #ffd400;padding:8px 14px;border-radius:8px;font:13px ui-monospace,Menlo,monospace;z-index:1001;max-width:calc(100vw - 32px)}
+#toast[hidden]{display:none}
+</style>
+</head>
+<body>
+<div id="app"></div>
+
+<div id="proto" aria-label="Prototype switcher (not part of the design)">
+  <div class="tok" id="tok" hidden></div>
+  <div class="pill">
+    <button id="prev" title="Previous variant (←)" aria-label="Previous variant">←</button>
+    <span class="lbl" id="lbl"></span>
+    <button id="next" title="Next variant (→)" aria-label="Next variant">→</button>
+    <span class="sep"></span>
+    <button id="themeBtn" title="Toggle light/dark"></button>
+    <button id="tokBtn" title="Show tokens" aria-expanded="false">tokens</button>
+  </div>
+</div>
+<div id="toast" hidden></div>
+
+<script>
+// ---------- Tokens (one source: drives CSS vars AND the tokens panel) ----------
+const VARIANTS = {
+  A: {
+    name: 'Calm studio',
+    base: {
+      '--font-display': "'Fraunces', Georgia, serif",
+      '--font-body': "'DM Sans', system-ui, sans-serif",
+      '--font-mono': "ui-monospace, Menlo, monospace",
+      '--fs-base': '16px', '--radius': '16px', '--space': '4px',
+    },
+    light: {
+      '--bg': '#F7F3EE', '--surface': '#FFFDFA', '--surface-2': '#EFE8DF', '--surface-3': '#E4DACD',
+      '--text': '#2B2621', '--text-2': '#6B6157', '--line': '#E6DED3', '--line-strong': '#CFC3B4',
+      '--accent': '#A9502B', '--accent-bg': '#F4E2D7', '--accent-text': '#8A3E1E', '--on-accent': '#FFFFFF',
+      '--ok': '#2F6B3A', '--ok-bg': '#E1EEDF', '--risk': '#8A5A00', '--risk-bg': '#F6EACB',
+      '--off': '#A3282B', '--off-bg': '#F6DEDC', '--done': '#3D5A80', '--done-bg': '#E0E7F0',
+      '--idle': '#5F5A55', '--idle-bg': '#ECE8E3',
+    },
+    dark: {
+      '--bg': '#1C1916', '--surface': '#25211D', '--surface-2': '#322C26', '--surface-3': '#3D362F',
+      '--text': '#F2EBE3', '--text-2': '#B5AA9D', '--line': '#3A332C', '--line-strong': '#54493F',
+      '--accent': '#E0895F', '--accent-bg': '#4A2C1E', '--accent-text': '#F2B08F', '--on-accent': '#1C1916',
+      '--ok': '#8FCB91', '--ok-bg': '#243626', '--risk': '#E8C06A', '--risk-bg': '#3D3218',
+      '--off': '#F09A94', '--off-bg': '#46231F', '--done': '#A9C1E0', '--done-bg': '#25303F',
+      '--idle': '#B8B0A7', '--idle-bg': '#34302B',
+    },
+  },
+  B: {
+    name: 'Ops console',
+    base: {
+      '--font-display': "'IBM Plex Sans', system-ui, sans-serif",
+      '--font-body': "'IBM Plex Sans', system-ui, sans-serif",
+      '--font-mono': "'IBM Plex Mono', ui-monospace, monospace",
+      '--fs-base': '14px', '--radius': '3px', '--space': '4px',
+    },
+    light: {
+      '--bg': '#F3F4F6', '--surface': '#FFFFFF', '--surface-2': '#F0F2F5', '--surface-3': '#DDE1E7',
+      '--text': '#111827', '--text-2': '#5B6474', '--line': '#E2E5EA', '--line-strong': '#C6CCD5',
+      '--accent': '#2563EB', '--accent-bg': '#DBE6FD', '--accent-text': '#1D4FC4', '--on-accent': '#FFFFFF',
+      '--ok': '#047857', '--ok-bg': '#E3F6EE', '--risk': '#B45309', '--risk-bg': '#FDF1DE',
+      '--off': '#C81E1E', '--off-bg': '#FDE7E7', '--done': '#6D28D9', '--done-bg': '#EFE7FD',
+      '--idle': '#4B5563', '--idle-bg': '#EEF0F3',
+    },
+    dark: {
+      '--bg': '#0B0D10', '--surface': '#12151A', '--surface-2': '#1A1E25', '--surface-3': '#2A303A',
+      '--text': '#E6E9EE', '--text-2': '#8B94A3', '--line': '#232832', '--line-strong': '#343B47',
+      '--accent': '#4C8DFF', '--accent-bg': '#16264A', '--accent-text': '#7FAEFF', '--on-accent': '#06101F',
+      '--ok': '#34D399', '--ok-bg': '#0C2A20', '--risk': '#FBBF24', '--risk-bg': '#2E2408',
+      '--off': '#F87171', '--off-bg': '#341313', '--done': '#B794F6', '--done-bg': '#241A3A',
+      '--idle': '#9CA3AF', '--idle-bg': '#1E2229',
+    },
+  },
+  B2: {
+    name: 'Ops / Monochrome', layout: 'B',
+    base: null, // filled from B below
+    light: {
+      '--bg': '#F5F5F5', '--surface': '#FFFFFF', '--surface-2': '#F0F0F0', '--surface-3': '#DCDCDC',
+      '--text': '#0A0A0A', '--text-2': '#5C5C5C', '--line': '#E5E5E5', '--line-strong': '#C7C7C7',
+      '--accent': '#171717', '--accent-bg': '#E5E5E5', '--accent-text': '#171717', '--on-accent': '#FFFFFF',
+      '--ok': '#047857', '--ok-bg': '#E3F6EE', '--risk': '#B45309', '--risk-bg': '#FDF1DE',
+      '--off': '#C81E1E', '--off-bg': '#FDE7E7', '--done': '#6D28D9', '--done-bg': '#EFE7FD',
+      '--idle': '#525252', '--idle-bg': '#EFEFEF',
+    },
+    dark: {
+      '--bg': '#0A0A0A', '--surface': '#141414', '--surface-2': '#1C1C1C', '--surface-3': '#2E2E2E',
+      '--text': '#EDEDED', '--text-2': '#9A9A9A', '--line': '#262626', '--line-strong': '#3A3A3A',
+      '--accent': '#F5F5F5', '--accent-bg': '#262626', '--accent-text': '#E5E5E5', '--on-accent': '#0A0A0A',
+      '--ok': '#34D399', '--ok-bg': '#0C2A20', '--risk': '#FBBF24', '--risk-bg': '#2E2408',
+      '--off': '#F87171', '--off-bg': '#341313', '--done': '#B794F6', '--done-bg': '#241A3A',
+      '--idle': '#A3A3A3', '--idle-bg': '#1F1F1F',
+    },
+  },
+  B3: {
+    name: 'Ops / Graphite + green', layout: 'B',
+    base: null,
+    // On track uses lime (yellow-green), clearly a different hue from the teal accent.
+    light: {
+      '--bg': '#F4F4F2', '--surface': '#FFFFFF', '--surface-2': '#EFEFEC', '--surface-3': '#DBDBD6',
+      '--text': '#161614', '--text-2': '#5E5E58', '--line': '#E3E3DF', '--line-strong': '#C6C6C0',
+      '--accent': '#0F766E', '--accent-bg': '#D5EFEC', '--accent-text': '#0B5F58', '--on-accent': '#FFFFFF',
+      '--ok': '#4D7C0F', '--ok-bg': '#ECF5DA', '--risk': '#B45309', '--risk-bg': '#FDF1DE',
+      '--off': '#C81E1E', '--off-bg': '#FDE7E7', '--done': '#6D28D9', '--done-bg': '#EFE7FD',
+      '--idle': '#57574F', '--idle-bg': '#EEEEEA',
+    },
+    dark: {
+      '--bg': '#0C0C0B', '--surface': '#151513', '--surface-2': '#1D1D1B', '--surface-3': '#2F2F2C',
+      '--text': '#ECECE8', '--text-2': '#9C9C95', '--line': '#272724', '--line-strong': '#3B3B37',
+      '--accent': '#2DD4BF', '--accent-bg': '#0F2E2B', '--accent-text': '#5EEAD4', '--on-accent': '#04201D',
+      '--ok': '#A3E635', '--ok-bg': '#1E2A0B', '--risk': '#FBBF24', '--risk-bg': '#2E2408',
+      '--off': '#F87171', '--off-bg': '#341313', '--done': '#B794F6', '--done-bg': '#241A3A',
+      '--idle': '#A3A39C', '--idle-bg': '#1F1F1C',
+    },
+  },
+  C: {
+    name: 'Status first',
+    base: {
+      '--font-display': "'Outfit', system-ui, sans-serif",
+      '--font-body': "'Outfit', system-ui, sans-serif",
+      '--font-mono': "ui-monospace, Menlo, monospace",
+      '--fs-base': '18px', '--radius': '0px', '--space': '8px',
+    },
+    light: {
+      '--bg': '#FFFFFF', '--surface': '#FFFFFF', '--surface-2': '#EDEDED', '--surface-3': '#DADADA',
+      '--text': '#0A0A0A', '--text-2': '#555555', '--line': '#E2E2E2', '--line-strong': '#9A9A9A',
+      '--accent': '#0A0A0A', '--accent-bg': '#EDEDED', '--accent-text': '#0A0A0A', '--on-accent': '#FFFFFF',
+      '--ok': '#0F7B3E', '--ok-bg': 'transparent', '--risk': '#A15C00', '--risk-bg': 'transparent',
+      '--off': '#C4161C', '--off-bg': 'transparent', '--done': '#3446B8', '--done-bg': 'transparent',
+      '--idle': '#6B6B6B', '--idle-bg': 'transparent',
+    },
+    dark: {
+      '--bg': '#0A0A0A', '--surface': '#0A0A0A', '--surface-2': '#262626', '--surface-3': '#333333',
+      '--text': '#FAFAFA', '--text-2': '#A3A3A3', '--line': '#262626', '--line-strong': '#6B6B6B',
+      '--accent': '#FAFAFA', '--accent-bg': '#262626', '--accent-text': '#FAFAFA', '--on-accent': '#0A0A0A',
+      '--ok': '#4ADE80', '--ok-bg': 'transparent', '--risk': '#FBBF24', '--risk-bg': 'transparent',
+      '--off': '#FF6B6B', '--off-bg': 'transparent', '--done': '#93A5FF', '--done-bg': 'transparent',
+      '--idle': '#A3A3A3', '--idle-bg': 'transparent',
+    },
+  },
+};
+
+VARIANTS.B2.base = VARIANTS.B3.base = VARIANTS.B.base;
+(function emitTokenCss() {
+  const decl = o => Object.entries(o).map(([k, v]) => `${k}:${v};`).join('');
+  let css = '';
+  for (const [id, v] of Object.entries(VARIANTS)) {
+    css += `#app[data-palette="${id}"]{${decl(v.base)}}\n`;
+    css += `#app[data-palette="${id}"][data-theme="light"]{${decl(v.light)}color-scheme:light}\n`;
+    css += `#app[data-palette="${id}"][data-theme="dark"]{${decl(v.dark)}color-scheme:dark}\n`;
+  }
+  document.getElementById('tokens').textContent = css;
+})();
+
+// ---------- Sample data (hard-coded; "today" is Oct 10, 2026) ----------
+const TODAY = '2026-10-10';
+const CLIENT = 'Harbor & Pine Coffee';
+const USER = { name: 'Maya Chen', role: 'Owner', initials: 'MC' };
+const NAV = ['Overview', 'Projects', 'Invoices', 'Requests', 'Team'];
+
+const PROJECTS = [
+  { name: 'Online ordering app', health: 'on track',
+    update: { date: '2026-10-07', note: 'Checkout passed QA on all three stores; loyalty points integration starts Monday.' },
+    milestone: { name: 'Beta launch', progress: 68, target: '2026-11-14' },
+    tasks: { up: 5, prog: 3, done: 17 } },
+  { name: 'Wholesale portal', health: 'at risk',
+    update: { date: '2026-10-06', note: 'Supplier API documentation arrived a week late, so catalog sync may slip to early November.' },
+    milestone: { name: 'Supplier catalog sync', progress: 40, target: '2026-10-24' },
+    tasks: { up: 6, prog: 4, done: 8 } },
+  { name: 'Loyalty card redesign', health: 'off track',
+    update: { date: '2026-10-02', note: 'Work is paused until we receive the final brand assets from your team.' },
+    milestone: { name: 'Print-ready artwork', progress: 25, target: '2026-10-17' },
+    tasks: { up: 4, prog: 1, done: 3 } },
+];
+const PAST = [
+  { name: 'Website refresh', health: 'complete', update: { date: '2026-06-28', note: 'Launched and handed over; analytics dashboard shared with your team.' } },
+];
+// NL-0010-2026 was voided: never shown to clients, leaving a gap.
+const INVOICES = [
+  { no: 'NL-0012-2026', issued: '2026-10-01', due: '2026-10-31', amount: 2400, status: 'Open', project: 'Online ordering app' },
+  { no: 'NL-0011-2026', issued: '2026-09-01', due: '2026-10-01', amount: 1850, status: 'Open', project: 'Wholesale portal' },
+  { no: 'NL-0009-2026', issued: '2026-08-01', due: '2026-08-31', amount: 3200, status: 'Paid', project: 'Online ordering app' },
+  { no: 'NL-0008-2026', issued: '2026-07-01', due: '2026-07-31', amount: 2750, status: 'Paid', project: 'Website refresh' },
+  { no: 'NL-0007-2026', issued: '2026-06-01', due: '2026-06-30', amount: 5100, status: 'Paid', project: 'Website refresh' },
+];
+const REQUESTS = [
+  { kind: 'Bug', title: 'Order confirmation email shows the wrong pickup time', status: 'New', by: 'Maya Chen', date: '2026-10-08', project: 'Online ordering app' },
+  { kind: 'Feature', title: 'Accept gift cards at checkout', status: 'Accepted', by: 'Daniel Ortiz', date: '2026-09-29', project: 'Online ordering app' },
+  { kind: 'Feature', title: 'Export wholesale orders to CSV', status: 'Declined', by: 'Priya Shah', date: '2026-09-18', project: 'Wholesale portal' },
+  { kind: 'Bug', title: 'Menu photos look blurry on iPad', status: 'Done', by: 'Daniel Ortiz', date: '2026-09-10', project: null },
+];
+
+// derived
+const invStatus = i => (i.status === 'Open' && i.due < TODAY) ? 'Overdue' : i.status;
+const openInv = INVOICES.filter(i => i.status === 'Open');
+const openTotal = openInv.reduce((s, i) => s + i.amount, 0);
+const overdue = INVOICES.filter(i => invStatus(i) === 'Overdue');
+const daysBetween = (a, b) => Math.round((new Date(b) - new Date(a)) / 864e5);
+
+// ---------- helpers ----------
+const money = n => n.toLocaleString('en-US', { style: 'currency', currency: 'USD' });
+const date = (s, opts = { month: 'short', day: 'numeric', year: 'numeric' }) => new Date(s + 'T12:00:00').toLocaleDateString('en-US', opts);
+const short = s => date(s, { month: 'short', day: 'numeric' });
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const slug = s => s.replace(/\s+/g, '').toLowerCase();
+
+// Shapes differ per state so health never relies on color alone.
+const ICON = {
+  'on track': '<svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="7" fill="currentColor"/><path d="M4.5 8.2l2.3 2.3 4.7-4.8" stroke="var(--bg)" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  'at risk': '<svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.2L15.2 14.5H.8z" fill="currentColor"/><path d="M8 6v4" stroke="var(--bg)" stroke-width="1.8" stroke-linecap="round"/><circle cx="8" cy="12.2" r="1" fill="var(--bg)"/></svg>',
+  'off track': '<svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M5 1h6l4 4v6l-4 4H5l-4-4V5z" fill="currentColor"/><path d="M5.6 5.6l4.8 4.8M10.4 5.6l-4.8 4.8" stroke="var(--bg)" stroke-width="1.8" stroke-linecap="round"/></svg>',
+  'complete': '<svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><rect x="1.5" y="1.5" width="13" height="13" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M4.5 8.2l2.3 2.3 4.7-4.8" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  'inactive': '<svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-dasharray="3 2.2"/><path d="M5 8h6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>',
+  'Open': '<svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>',
+  'Paid': ICON_PAID(),
+  'Overdue': '<svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="7" fill="currentColor"/><path d="M8 4.2v4.6" stroke="var(--bg)" stroke-width="1.9" stroke-linecap="round"/><circle cx="8" cy="11.6" r="1.1" fill="var(--bg)"/></svg>',
+};
+function ICON_PAID() { return '<svg class="ico" viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 8.5l3.5 3.5 7.5-8" stroke="currentColor" stroke-width="2.2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>'; }
+
+const hBadge = h => `<span class="badge h-${slug(h)}">${ICON[h]}<span>${h[0].toUpperCase() + h.slice(1)}</span></span>`;
+const iBadge = i => { const s = invStatus(i); return `<span class="badge i-${s.toLowerCase()}">${ICON[s]}<span>${s}</span></span>`; };
+const reqMark = { New: '●', Accepted: '✓', Declined: '✕', Done: '✓✓', Withdrawn: '–' };
+
+function requestForm(idPrefix) {
+  return `
+    <div class="form-grid">
+      <fieldset><legend>Kind</legend>
+        <div class="kind-opts">
+          <label><input type="radio" name="${idPrefix}-kind" value="Bug" checked> Bug</label>
+          <label><input type="radio" name="${idPrefix}-kind" value="Feature"> Feature</label>
+        </div>
+      </fieldset>
+      <div class="field"><label for="${idPrefix}-title">Title</label><input type="text" id="${idPrefix}-title" required placeholder="e.g. Receipt PDF is missing the store address"></div>
+      <div class="field"><label for="${idPrefix}-desc">Description</label><textarea id="${idPrefix}-desc" placeholder="What happened, or what would you like? Steps help."></textarea></div>
+      <div class="field"><label for="${idPrefix}-proj">Project <span style="font-weight:400;opacity:.7">(optional)</span></label>
+        <select id="${idPrefix}-proj"><option value="">No specific project</option>${PROJECTS.concat(PAST).map(p => `<option>${esc(p.name)}</option>`).join('')}</select></div>
+      <div class="form-actions"><button type="button" class="btn" data-cancel>Cancel</button><button type="submit" class="btn btn-primary">Submit request</button></div>
+    </div>`;
+}
+
+function userMenu(btnClass, inner) {
+  return `<details class="menu"><summary class="${btnClass}" aria-label="User menu">${inner}</summary>
+    <div class="menu-list"><div class="meta">${USER.name} · ${USER.role}<br>${CLIENT}</div>
+    <a href="#">Profile</a><a href="#">Team</a><a href="#">Sign out</a></div></details>`;
+}
+
+// ---------- Variant A: Calm studio ----------
+function renderA() {
+  const cards = PROJECTS.map(p => `
+    <article class="card pcard">
+      <div>${hBadge(p.health)}</div>
+      <h3>${esc(p.name)}</h3>
+      <div><p class="note">${esc(p.update.note)}</p><div class="muted">Status Update · ${date(p.update.date)}</div></div>
+      <div>
+        <div class="ms-row"><span><span class="muted">Milestone</span> ${esc(p.milestone.name)}</span><span class="num">${p.milestone.progress}%</span></div>
+        <div class="bar" role="progressbar" aria-valuenow="${p.milestone.progress}" aria-valuemin="0" aria-valuemax="100" aria-label="${esc(p.milestone.name)} progress"><span style="width:${p.milestone.progress}%"></span></div>
+        <div class="muted" style="margin-top:6px">Target ${date(p.milestone.target)}</div>
+      </div>
+      <div class="tasks num">
+        <div><b>${p.tasks.up}</b><span>Up next</span></div>
+        <div><b>${p.tasks.prog}</b><span>In progress</span></div>
+        <div><b>${p.tasks.done}</b><span>Done</span></div>
+      </div>
+    </article>`).join('');
+  return `
+  <header class="a-top">
+    <div class="a-brand">${esc(CLIENT)}<small>Neves Labs client portal</small></div>
+    <nav class="a-nav" aria-label="Main">${NAV.map((n, i) => `<a href="#" ${i === 0 ? 'aria-current="page"' : ''}>${n}</a>`).join('')}</nav>
+    <div class="a-user">${userMenu('a-user', `<span class="uname">${USER.name}</span><span class="avatar">${USER.initials}</span>`)}</div>
+  </header>
+  <main>
+    <h1>Good afternoon, Maya.</h1>
+    <p class="lede">Here is where things stand with Neves Labs this week.</p>
+    <div class="a-layout">
+      <section aria-labelledby="a-proj">
+        <h2 id="a-proj">Projects</h2>
+        <div class="a-cards">${cards}</div>
+        <div class="past"><span>Past Projects</span>${PAST.map(p => `<span>${hBadge(p.health)}</span><strong style="color:var(--text);font-weight:500">${esc(p.name)}</strong><span>· ${date(p.update.date)}</span>`).join('')}</div>
+      </section>
+      <aside>
+        <section class="card" aria-labelledby="a-inv">
+          <h2 id="a-inv" style="margin-bottom:8px">Invoices</h2>
+          <div class="muted">Open balance</div>
+          <div class="inv-total num">${money(openTotal)}</div>
+          ${overdue.length ? `<div class="overdue-note">${ICON.Overdue} ${overdue.length} Overdue invoice${overdue.length > 1 ? 's' : ''}</div>` : ''}
+          <ul class="list">${INVOICES.map(i => `
+            <li><span class="num">${i.no}</span>
+              <span class="right"><strong class="num">${money(i.amount)}</strong>${iBadge(i)}</span>
+              <span class="sub">Issued ${short(i.issued)} · Due ${date(i.due)}</span></li>`).join('')}</ul>
+        </section>
+        <section class="card" aria-labelledby="a-req">
+          <div class="row-head"><h2 id="a-req">Requests</h2><button class="btn btn-primary" data-open-form>New request</button></div>
+          <ul class="list">${REQUESTS.map(r => `
+            <li><span><span class="kind">${r.kind}</span><br>${esc(r.title)}</span>
+              <span class="right"><span class="muted">${reqMark[r.status]} ${r.status}</span></span>
+              <span class="sub">${r.by} · ${short(r.date)}</span></li>`).join('')}</ul>
+        </section>
+      </aside>
+    </div>
+  </main>
+  <dialog id="reqDialog" aria-labelledby="a-dlg-h"><form method="dialog" data-req-form><h2 id="a-dlg-h">New request</h2><p class="muted" style="margin-top:-8px">Everyone at ${esc(CLIENT)} can see Requests.</p>${requestForm('a')}</form></dialog>`;
+}
+
+// ---------- Variant B: Ops console ----------
+function renderB() {
+  const navCounts = { Projects: PROJECTS.length, Invoices: openInv.length, Requests: REQUESTS.filter(r => r.status === 'New').length, Team: 3 };
+  const pRow = (p, past) => `
+    <div class="tr ${past ? 'past-row' : ''} h-${slug(p.health)}">
+      <div class="c-health">${hBadge(p.health)}</div>
+      <div class="c-name"><div class="pname">${esc(p.name)}</div><div class="sub mono">${past ? 'Past Project' : 'Updated ' + short(p.update.date)}</div></div>
+      <div class="c-upd"><div class="clip">${esc(p.update.note)}</div></div>
+      <div class="c-ms">${p.milestone ? `<div class="ms"><div class="ms-top"><span class="clip" style="-webkit-line-clamp:1">${esc(p.milestone.name)}</span><span class="num">${p.milestone.progress}%</span></div>
+        <div class="bar"><span style="width:${p.milestone.progress}%"></span></div><div class="sub mono">due ${short(p.milestone.target)}</div></div>` : `<span class="sub mono">${date(p.update.date)}</span>`}</div>
+      <div class="c-tasks">${p.tasks ? `<div class="tcounts" title="Up next / In progress / Done"><span>UP <b>${p.tasks.up}</b></span><span>IP <b>${p.tasks.prog}</b></span><span>DN <b>${p.tasks.done}</b></span></div>` : ''}</div>
+    </div>`;
+  return `
+  <aside class="b-side">
+    <div class="b-brand"><b>${esc(CLIENT)}</b><span>Neves Labs · portal</span></div>
+    <nav class="b-nav" aria-label="Main">${NAV.map((n, i) => `<a href="#" ${i === 0 ? 'aria-current="page"' : ''}><span>${n}</span>${navCounts[n] ? `<span class="count">${navCounts[n]}</span>` : ''}</a>`).join('')}</nav>
+    ${userMenu('b-userbtn', `<span class="avatar">${USER.initials}</span><span class="uname">${USER.name} <span class="sub">${USER.role}</span></span>`)}
+  </aside>
+  <main>
+    <div class="b-head"><div><div class="crumb">${esc(CLIENT)} / overview</div><h1>Overview</h1></div><button class="btn btn-primary" data-open-form>+ New request</button></div>
+    <div class="kpis">
+      <div class="kpi"><div class="k">Active projects</div><div class="v">${PROJECTS.length}</div></div>
+      <div class="kpi"><div class="k">On track</div><div class="v">${PROJECTS.filter(p => p.health === 'on track').length}/${PROJECTS.length}</div></div>
+      <div class="kpi"><div class="k">Open balance</div><div class="v">${money(openTotal)}</div></div>
+      <div class="kpi"><div class="k">Overdue</div><div class="v ${overdue.length ? 'bad' : ''}">${overdue.length}</div></div>
+    </div>
+    <section class="panel">
+      <div class="panel-h"><h2>Projects</h2><span class="meta">${PROJECTS.length} active · ${PAST.length} past</span></div>
+      <div class="tbl p-tbl">
+        <div class="tr th"><div>Health</div><div>Project</div><div>Latest Status Update</div><div>Current Milestone</div><div class="c-tasks">Tasks</div></div>
+        ${PROJECTS.map(p => pRow(p)).join('')}${PAST.map(p => pRow(p, true)).join('')}
+      </div>
+    </section>
+    <div class="grid2">
+      <section class="panel">
+        <div class="panel-h"><h2>Invoices</h2><span class="meta">open ${money(openTotal)}</span></div>
+        <div class="tbl i-tbl">
+          <div class="tr th"><div>Number</div><div class="c-issued">Issued</div><div class="c-due">Due</div><div class="right c-amt">Amount</div><div class="c-st">Status</div></div>
+          ${INVOICES.map(i => `<div class="tr"><div class="mono">${i.no}</div><div class="mono c-issued">${short(i.issued)}</div><div class="mono c-due"><span class="sub" style="display:none"></span>${short(i.due)}</div><div class="num right c-amt">${money(i.amount)}</div><div class="c-st">${iBadge(i)}</div></div>`).join('')}
+        </div>
+      </section>
+      <section class="panel">
+        <div class="panel-h"><h2>Requests</h2><button class="btn" data-open-form>+ New</button></div>
+        <div class="tbl r-tbl">
+          <div class="tr th"><div>Kind</div><div>Title</div><div class="c-rs">Status</div><div class="c-by">Submitter</div></div>
+          ${REQUESTS.map(r => `<div class="tr"><div><span class="kind ${r.kind === 'Bug' ? 'bug' : 'feat'}">${r.kind === 'Bug' ? '■' : '◆'} ${r.kind}</span></div><div class="clip">${esc(r.title)}</div><div class="rstat c-rs">${reqMark[r.status]} ${r.status}</div><div class="sub c-by">${r.by}</div></div>`).join('')}
+        </div>
+      </section>
+    </div>
+  </main>
+  <dialog id="reqDialog" aria-labelledby="b-dlg-h"><form method="dialog" data-req-form><h2 id="b-dlg-h">New request</h2>${requestForm('b')}</form></dialog>`;
+}
+
+// ---------- Variant C: Status first ----------
+function renderC() {
+  const onTrack = PROJECTS.filter(p => p.health === 'on track').length;
+  const od = overdue[0];
+  const entries = PROJECTS.map(p => `
+    <article class="entry h-${slug(p.health)}">
+      <div class="entry-head">${hBadge(p.health)}<time datetime="${p.update.date}">${date(p.update.date)}</time></div>
+      <h3>${esc(p.name)}</h3>
+      <blockquote>${esc(p.update.note)}</blockquote>
+      <dl class="facts">
+        <div><dt>Milestone</dt><dd>${esc(p.milestone.name)} — <strong class="num">${p.milestone.progress}%</strong>, target ${short(p.milestone.target)}
+          <div class="bar" role="progressbar" aria-valuenow="${p.milestone.progress}" aria-valuemin="0" aria-valuemax="100" aria-label="${esc(p.milestone.name)} progress"><span style="width:${p.milestone.progress}%"></span></div></dd></div>
+        <div><dt>Tasks</dt><dd class="num">${p.tasks.up} up next · ${p.tasks.prog} in progress · ${p.tasks.done} done</dd></div>
+      </dl>
+    </article>`).join('');
+  return `
+  <div class="c-wrap">
+    <header>
+      <div class="c-top"><div class="c-brand">${esc(CLIENT)}</div>${userMenu('c-userbtn', `<span class="uname">${USER.name} · ${USER.role}</span><span class="num" style="font-weight:700">${USER.initials}</span><span aria-hidden="true">▾</span>`)}</div>
+      <nav class="c-nav" aria-label="Main">${NAV.map((n, i) => `<a href="#" ${i === 0 ? 'aria-current="page"' : ''}>${n}</a>`).join('')}</nav>
+    </header>
+    <div class="hero">
+      <p class="eyebrow">Overview · ${date(TODAY, { weekday: 'long', month: 'long', day: 'numeric' })}</p>
+      <h1><span class="hl c-ok">${onTrack} of ${PROJECTS.length} projects</span> on track <span class="dot">·</span> <span class="hl c-bad">${overdue.length} invoice</span> overdue</h1>
+      <p>Wholesale portal is at risk and the Loyalty card redesign is waiting on brand assets from your team.</p>
+    </div>
+    <section aria-labelledby="c-proj">
+      <h2 id="c-proj">Projects</h2>
+      <div class="feed">${entries}</div>
+      <p class="past">Past Projects: ${PAST.map(p => `<b>${esc(p.name)}</b> — ${hBadge(p.health)} ${date(p.update.date)}`).join('')}</p>
+    </section>
+    <section aria-labelledby="c-inv">
+      <h2 id="c-inv">Invoices</h2>
+      <p class="big-sum">You have <strong class="num">${money(openTotal)}</strong> open across ${openInv.length} invoices.${od ? ` <strong>${od.no}</strong> is ${daysBetween(od.due, TODAY)} days overdue.` : ''}</p>
+      <ul class="rows">${INVOICES.map(i => `
+        <li><span class="num" style="font-weight:600">${i.no}</span><span class="amt num">${money(i.amount)}</span><span class="st">${iBadge(i)}</span>
+        <span class="sub">Issued ${date(i.issued)} · Due ${date(i.due)}</span></li>`).join('')}</ul>
+    </section>
+    <section aria-labelledby="c-req" style="border-bottom:0">
+      <div class="sec-head"><h2 id="c-req">Requests</h2><button class="btn btn-primary" data-open-form aria-expanded="false" aria-controls="cForm">New request</button></div>
+      <form class="inline-form" id="cForm" hidden data-req-form><h3>New request</h3>${requestForm('c')}</form>
+      <ul class="rows req-rows">${REQUESTS.map(r => `
+        <li><span class="req-title"><span class="kind">${r.kind}</span>${esc(r.title)}</span><span class="rstat st">${reqMark[r.status]} ${r.status}</span>
+        <span class="sub">${r.by} · ${date(r.date)}${r.project ? ' · ' + esc(r.project) : ''}</span></li>`).join('')}</ul>
+    </section>
+  </div>`;
+}
+
+// ---------- Prototype controller ----------
+const ORDER = ['A', 'B', 'B2', 'B3', 'C'];
+const RENDER = { A: renderA, B: renderB, B2: renderB, B3: renderB, C: renderC };
+const app = document.getElementById('app');
+const params = new URLSearchParams(location.search);
+let variant = ORDER.includes((params.get('variant') || '').toUpperCase()) ? params.get('variant').toUpperCase() : 'A';
+let theme = ['light', 'dark'].includes(params.get('theme')) ? params.get('theme')
+  : (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+let tokOpen = false;
+
+function syncUrl() {
+  const p = new URLSearchParams(location.search);
+  p.set('variant', variant); p.set('theme', theme);
+  history.replaceState(null, '', location.pathname + '?' + p.toString() + location.hash);
+}
+
+function toast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.hidden = false;
+  clearTimeout(toast.t); toast.t = setTimeout(() => t.hidden = true, 2200);
+}
+
+function renderTokens() {
+  const v = VARIANTS[variant], cur = v[theme];
+  const fam = s => s.split(',')[0].replace(/'/g, '');
+  const sw = c => `<span class="sw" style="background:${c}"></span>${c}`;
+  document.getElementById('tok').innerHTML = `
+    <h4>${variant} · ${v.name} tokens (${theme})</h4>
+    <dl>
+      <dt>display</dt><dd>${fam(v.base['--font-display'])}</dd>
+      <dt>body</dt><dd>${fam(v.base['--font-body'])}</dd>
+      <dt>figures</dt><dd>${fam(v.base['--font-mono'])}${VARIANTS[variant].layout === 'B' || variant === 'B' ? '' : ' / tabular-nums'}</dd>
+      <dt>base size</dt><dd>${v.base['--fs-base']}</dd>
+      <dt>radius</dt><dd>${v.base['--radius']}</dd>
+      <dt>space unit</dt><dd>${v.base['--space']}</dd>
+      <dt>accent</dt><dd>${sw(cur['--accent'])}</dd>
+      <dt>light bg/surf</dt><dd>${sw(v.light['--bg'])} ${sw(v.light['--surface'])}</dd>
+      <dt>dark bg/surf</dt><dd>${sw(v.dark['--bg'])} ${sw(v.dark['--surface'])}</dd>
+      <dt>text</dt><dd>${sw(cur['--text'])} ${sw(cur['--text-2'])}</dd>
+      <dt>health</dt><dd>${sw(cur['--ok'])} ${sw(cur['--risk'])} ${sw(cur['--off'])}</dd>
+    </dl>`;
+}
+
+function render() {
+  app.dataset.variant = VARIANTS[variant].layout || variant; // layout CSS
+  app.dataset.palette = variant; // token CSS
+  app.dataset.theme = theme;
+  app.innerHTML = RENDER[variant]();
+  document.body.style.background = VARIANTS[variant][theme]['--bg'];
+  document.getElementById('lbl').textContent = `${variant} · ${VARIANTS[variant].name}`;
+  document.getElementById('themeBtn').innerHTML = theme === 'dark' ? '☾<span class="tname"> dark</span>' : '☀<span class="tname"> light</span>';
+  document.title = `PROTOTYPE · ${variant} ${VARIANTS[variant].name} (${theme}) · Client overview`;
+  renderTokens();
+  syncUrl();
+}
+
+function step(d) { variant = ORDER[(ORDER.indexOf(variant) + d + ORDER.length) % ORDER.length]; render(); }
+
+document.getElementById('prev').onclick = () => step(-1);
+document.getElementById('next').onclick = () => step(1);
+document.getElementById('themeBtn').onclick = () => { theme = theme === 'dark' ? 'light' : 'dark'; render(); };
+document.getElementById('tokBtn').onclick = e => {
+  tokOpen = !tokOpen;
+  document.getElementById('tok').hidden = !tokOpen;
+  e.currentTarget.setAttribute('aria-expanded', tokOpen);
+};
+
+document.addEventListener('keydown', e => {
+  if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+  const el = document.activeElement;
+  if (el && (el.matches('input, textarea, select') || el.isContentEditable)) return;
+  if (document.querySelector('#app dialog[open]')) return;
+  step(e.key === 'ArrowLeft' ? -1 : 1);
+});
+
+// request form: open/close (non-functional)
+app.addEventListener('click', e => {
+  if (e.target.closest('[data-open-form]')) {
+    const dlg = app.querySelector('#reqDialog');
+    if (dlg) { dlg.showModal(); dlg.querySelector('input[type=text]').focus(); }
+    const f = app.querySelector('#cForm');
+    if (f) { f.hidden = !f.hidden; e.target.closest('[data-open-form]').setAttribute('aria-expanded', !f.hidden); if (!f.hidden) f.querySelector('input[type=text]').focus(); }
+  }
+  if (e.target.closest('[data-cancel]')) closeForm();
+});
+app.addEventListener('submit', e => {
+  if (!e.target.matches('[data-req-form]')) return;
+  e.preventDefault(); closeForm(); toast('Request submitted (prototype: nothing saved)');
+});
+function closeForm() {
+  const dlg = app.querySelector('#reqDialog'); if (dlg && dlg.open) dlg.close();
+  const f = app.querySelector('#cForm'); if (f) { f.hidden = true; f.reset(); app.querySelector('[aria-controls=cForm]').setAttribute('aria-expanded', 'false'); }
+}
+
+render();
+</script>
+</body>
+</html>
