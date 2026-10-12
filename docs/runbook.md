@@ -63,8 +63,8 @@ Do these in order. The deploy job fails until all of them are done.
 
 1. Create a Neon project: region **AWS us-east-1 (N. Virginia)**, **Postgres 18**, **Free** plan. Keep the default database `neondb` and owner role `neondb_owner`.
 2. Find the two connection strings in the project's **Connect** dialog (branch `main`, database `neondb`, role `neondb_owner`):
-   - With **Connection pooling off**: the **direct** URL. Its host looks like `ep-<name>.us-east-1.aws.neon.tech`. This is `DATABASE_URL_OWNER`.
-   - With **Connection pooling on**: the **pooled** host. It has `-pooler` after the endpoint id, like `ep-<name>-pooler.us-east-1.aws.neon.tech`. Note the host only; the app URLs are built from it in 3.2.
+   - With **Connection pooling off**: the **direct** URL. Its host looks like `ep-<name>.c-<n>.us-east-1.aws.neon.tech`. This is `DATABASE_URL_OWNER`, with the query string replaced by `?sslmode=verify-full` (Neon's copy ends in `?sslmode=require&channel_binding=require`).
+   - With **Connection pooling on**: the **pooled** host. It has `-pooler` after the endpoint id, like `ep-<name>-pooler.c-<n>.us-east-1.aws.neon.tech`. Note the host only; the app URLs are built from it in 3.2.
 3. Choose two strong, different passwords for `app_tenant` and `app_system`, for example `openssl rand -base64 32 | tr -d '/+='`. Letters and digits only keep them URL-safe. Store them in your password manager.
 4. **Never create `app_tenant` or `app_system` in the Neon Console, CLI or API.** The roles migration creates them as `neondb_owner` (ADR 0004). Roles made through Neon's tools join `neon_superuser`, and `app_tenant` must stay subject to RLS.
 5. Check that Postgres won't log the role passwords. The migrate command runs `ALTER ROLE … PASSWORD '<password>'` in cleartext on every deploy, so statement logging must be off. In the Neon **SQL Editor** (as `neondb_owner`), run:
@@ -87,11 +87,12 @@ Do these in order. The deploy job fails until all of them are done.
 3. **Settings → Build and Deployment** (older UI: **General**) **→ Node.js Version**: **24.x** (`engines` in `package.json` also pins it).
 4. **Settings → Git**: turn Git auto-deploys and preview deployments off. `vercel.json` sets `git.deploymentEnabled: false`, which covers both, but check the project shows no deploy for a pushed branch. Deploys come only from the GitHub Actions `deploy` job, so a failed migration blocks the release.
 5. **Settings → Environment Variables**, environment **Production**, each marked **Sensitive**:
-   - `DATABASE_URL_TENANT` = `postgresql://app_tenant:<app_tenant password>@<pooled host>/neondb?sslmode=require`
-   - `DATABASE_URL_SYSTEM` = `postgresql://app_system:<app_system password>@<pooled host>/neondb?sslmode=require`
+   - `DATABASE_URL_TENANT` = `postgresql://app_tenant:<app_tenant password>@<pooled host>/neondb?sslmode=verify-full`
+   - `DATABASE_URL_SYSTEM` = `postgresql://app_system:<app_system password>@<pooled host>/neondb?sslmode=verify-full`
    - `DB_QUERY_TIMEOUT_MS`: leave unset for the 10000 ms default. Set it (not sensitive) only to change the limit; values above `600000` fail at startup.
    - The app uses the **pooled** host (Neon's PgBouncer, transaction mode). The query limit is applied per transaction with `set_config('statement_timeout', …, true)`, which works through the pooler; a session-level `statement_timeout` would be rejected. The `/healthz` check in section 6 proves both pools work through it.
-   - The `pg` driver may log a `SECURITY WARNING` about `sslmode=require`. It's harmless: the current driver treats `require` as full certificate verification.
+   - `<pooled host>` is the real host from 3.1 step 2, never the literal placeholder: a wrong host fails `/healthz` with `getaddrinfo ENOTFOUND`.
+   - Use `sslmode=verify-full`, not `require`: `pg` warns that `require` will drop to libpq's weaker meaning (encrypt, don't verify) in its next major version. Neon's certificates are publicly trusted, so `verify-full` needs no extra setup.
 6. Nothing to set for `VERCEL=1`: `vercel build` sets it itself, and that is what switches on the Vercel preset in `react-router.config.ts`. If a build ever comes out without the preset (a single `build/server/index.js`), look at the CLI version, not the project's system env var settings.
 7. Create an access token under **Account Settings → Tokens**, scoped to the Pro team, for `VERCEL_TOKEN`. Pick an expiry and note it in your calendar: an expired token fails the deploy job at `vercel pull`.
 8. Note the ids for the GitHub environment secrets (3.4): the team id (**Team Settings → General → Team ID**, `team_…`) is `VERCEL_ORG_ID`, and the project id (**Project Settings → General → Project ID**, `prj_…`) is `VERCEL_PROJECT_ID`.
