@@ -129,20 +129,18 @@ GitHub masks secret values in job logs, and the workflow passes them only as env
 
 ### 3.5 Domains (Vercel and GoDaddy)
 
-`portal.neveslabs.dev` is the portal. `www.neveslabs.dev` and the apex `neveslabs.dev` belong to a future, separate business website. Until it exists, both redirect to the portal with a **temporary (307)** redirect. Never use 301 or 308: browsers cache permanent redirects, and the business site couldn't take the domains back from returning visitors.
+`portal.neveslabs.dev` is the portal. `www.neveslabs.dev` and the apex `neveslabs.dev` belong to the separate business website: repo `neveslabs-site`, deployed by its own Vercel project through Vercel's Git integration (a static "Coming soon" placeholder for now). Neither domain is attached to the portal's project.
 
 1. Vercel project **Settings → Domains → Add**: `portal.neveslabs.dev`, connected to Production. This is the project's primary domain.
 2. In GoDaddy **DNS → Manage DNS** for `neveslabs.dev`, add the record Vercel shows for `portal`: type `CNAME`, name `portal`, value as displayed by Vercel.
-3. Vercel **Add**: `www.neveslabs.dev`. Choose **Redirect to Another Domain**, target `portal.neveslabs.dev`, status code **307 Temporary Redirect**.
-4. Vercel **Add**: `neveslabs.dev`, again as a redirect to `portal.neveslabs.dev` with **307**. If Vercel offers to add `www` as well and redirect one to the other, decline: both must point at the portal.
-5. In GoDaddy, add the records Vercel shows: `CNAME` named `www`, and an `A` record named `@` (apex), using the values Vercel displays. Remove GoDaddy's default parking `A` record for `@` and any forwarding on the domain, or they will fight Vercel's.
-6. Wait for Vercel to show each domain as **Valid Configuration**. Vercel issues the TLS certificates itself.
+3. Wait for Vercel to show the domain as **Valid Configuration**. Vercel issues the TLS certificate itself.
 
-**Handing `www` and the apex to the business site later:**
+**Business site domains** (in the `neveslabs-site` Vercel project, not this one):
 
-1. In this project's **Settings → Domains**, remove `www.neveslabs.dev` and `neveslabs.dev`.
-2. In the business site's Vercel project, add both domains. If that site isn't on Vercel, point the GoDaddy `www` and `@` records at its host instead.
-3. Update GoDaddy only if the new project shows different record values. `portal.neveslabs.dev` is untouched.
+1. **Settings → Domains → Add**: `www.neveslabs.dev`, connected to Production. This is the site's primary domain.
+2. **Add**: `neveslabs.dev`. Choose **Redirect to Another Domain**, target `www.neveslabs.dev`, status code **308 Permanent Redirect**.
+3. In GoDaddy, add the records Vercel shows: `CNAME` named `www`, and an `A` record named `@` (apex). Remove GoDaddy's default parking `A` record for `@` and any forwarding on the domain, or they will fight Vercel's.
+4. If either domain is still attached to the portal's project (the Phase 1 setup redirected both to the portal), remove it there first, or Vercel won't let the site's project add it.
 
 ## 4. How a deploy works
 
@@ -198,14 +196,14 @@ For `VERCEL_TOKEN`: create a new token, update the environment secret, then dele
 After the first deploy, check each of these by hand:
 
 1. `https://portal.neveslabs.dev` serves the token-styled placeholder over TLS (valid certificate, no browser warning), in dark tokens on a dark-mode system and light tokens on a light one.
-2. `www.neveslabs.dev` and the apex return **307** to the portal:
+2. `www.neveslabs.dev` serves the business site, and the apex redirects to it:
 
    ```sh
    curl -sI https://www.neveslabs.dev | grep -iE '^(HTTP|location)'
    curl -sI https://neveslabs.dev     | grep -iE '^(HTTP|location)'
    ```
 
-   Each must print `HTTP/2 307` and `location: https://portal.neveslabs.dev/`. A 301 or 308 is wrong: fix it in Vercel's domain settings.
+   The first must print `HTTP/2 200`; the second `HTTP/2 308` and `location: https://www.neveslabs.dev/`. A redirect to the portal means the domain is still attached to the portal's Vercel project: move it per §3.5.
 3. `curl -s https://portal.neveslabs.dev/healthz` returns 200 with `{"ok":true}`. This proves both pooled URLs and role passwords work, and that the per-transaction query limit works through Neon's pooler. A 503 means one pool can't connect: check the Vercel `DATABASE_URL_*` passwords match the `production` environment secrets, then re-run the latest deploy.
 4. In **Actions → CI → latest run on `main` → deploy**, the **Migrate prod database** step succeeded (`db:migrate: migrations applied, role attributes and passwords set`) before **Deploy to Vercel production** ran.
 
