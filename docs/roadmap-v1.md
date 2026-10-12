@@ -61,10 +61,10 @@ Prerequisites come in two buckets per Phase: **before coding** (local dev and te
 - Vercel token, org ID and project ID as GitHub Actions secrets
 - Neon project (`us-east-1`, Free plan)
 - DB secrets: `neondb_owner` direct URL, `app_tenant` and `app_system` passwords
-- GoDaddy DNS: `portal` CNAME to Vercel; until the business site exists, also the `www` CNAME and apex A record to Vercel, both set in Vercel as a temporary (307) redirect to `portal.neveslabs.dev`
+- GoDaddy DNS: `portal` CNAME to Vercel. The `www` CNAME and apex A record point at the business site's own Vercel project (`neveslabs-site`), not the portal's
 - Branch protection on `main` with CI required
 
-**Prod walkthrough:** `portal.neveslabs.dev` serves the token-styled placeholder over TLS; `/healthz` returns 200; `www.neveslabs.dev` and `neveslabs.dev` 307-redirect to the portal; a deploy ran the migrations.
+**Prod walkthrough:** `portal.neveslabs.dev` serves the token-styled placeholder over TLS; `/healthz` returns 200; `www.neveslabs.dev` serves the business site and `neveslabs.dev` 308-redirects to it; a deploy ran the migrations.
 
 ## Phase 2 · Admin access
 
