@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <style>
+    path { fill: none; stroke-width: 3.5; stroke-linecap: square; }
+    .u { stroke: #161614; }
+    .d { stroke: #0f766e; }
+    @media (prefers-color-scheme: dark) {
+      .u { stroke: #ecece8; }
+      .d { stroke: #2dd4bf; }
+    }
+  </style>
+  <path class="u" d="M8 25V7"/>
+  <path class="u" d="M24 25V7"/>
+  <path class="d" d="M8 7l16 18"/>
+</svg>

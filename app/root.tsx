@@ -41,13 +41,19 @@ const GENERIC_ERROR_COPY: ErrorCopy = {
 
 export function links(): Route.LinkDescriptors {
   // Same URLs the @fontsource CSS points at, so the preloads are reused.
-  return [plexSans400Href, plexSans600Href].map((href) => ({
+  const fontPreloads = [plexSans400Href, plexSans600Href].map((href) => ({
     rel: "preload",
     href,
     as: "font",
     type: "font/woff2",
-    crossOrigin: "anonymous",
+    crossOrigin: "anonymous" as const,
   }));
+
+  return [
+    { rel: "icon", href: "/favicon.svg", type: "image/svg+xml" },
+    { rel: "apple-touch-icon", href: "/apple-touch-icon.png" },
+    ...fontPreloads,
+  ];
 }
 
 type LayoutProps = {
