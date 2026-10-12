@@ -1,4 +1,5 @@
 {
+  "framework": "react-router",
   "regions": ["iad1"],
   "git": { "deploymentEnabled": false }
 }
