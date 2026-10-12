@@ -1,0 +1,125 @@
+/*
+ * DESIGN.md tokens (§2.1, §2.2, §3, §5, §8). The only file with raw hex.
+ * Light values live in @theme; dark values override them on :root.
+ */
+
+/* static: emit every token, so dark overrides and var() references always
+   have a light value to override, used by a utility or not. */
+@theme static {
+  /* §2.1 Neutrals and accent */
+  --color-bg: #f4f4f2;
+  --color-surface: #ffffff;
+  --color-surface-2: #efefec;
+  --color-surface-3: #dbdbd6;
+  --color-fg: #161614;
+  --color-fg-2: #5e5e58;
+  --color-line: #e3e3df;
+  --color-line-strong: #c6c6c0;
+  --color-line-input: #85857e;
+  --color-accent: #0f766e;
+  --color-accent-hover: #115e59;
+  --color-accent-subtle: #d5efec;
+  --color-accent-fg: #0b5f58;
+  --color-on-accent: #ffffff;
+
+  /* §2.2 Health */
+  --color-ok: #467210;
+  --color-ok-subtle: #ecf5da;
+  --color-risk: #a84d08;
+  --color-risk-subtle: #fdf1de;
+  --color-off: #c81e1e;
+  --color-off-subtle: #fde7e7;
+  --color-done: #6d28d9;
+  --color-done-subtle: #efe7fd;
+  --color-idle: #57574f;
+  --color-idle-subtle: #eeeeea;
+
+  /* §3 Typography */
+  --font-sans: "IBM Plex Sans", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+
+  /* §5 Radius */
+  --radius: 3px;
+
+  /* §8 Motion */
+  --ease-out: cubic-bezier(0.2, 0, 0, 1);
+  --ease-in: cubic-bezier(0.4, 0, 1, 1);
+  --dur-instant: 100ms;
+  --dur-fast: 150ms;
+  --dur-base: 200ms;
+  --dur-drawer-in: 240ms;
+  --dur-drawer-out: 180ms;
+  --dur-progress: 500ms;
+}
+
+:root {
+  color-scheme: light;
+}
+
+/* The dark values appear twice: once for the OS preference, once for the
+   explicit data-theme="dark" choice. Keep the two blocks identical. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --color-bg: #0c0c0b;
+    --color-surface: #151513;
+    --color-surface-2: #1d1d1b;
+    --color-surface-3: #2f2f2c;
+    --color-fg: #ecece8;
+    --color-fg-2: #9c9c95;
+    --color-line: #272724;
+    --color-line-strong: #3b3b37;
+    --color-line-input: #66665f;
+    --color-accent: #2dd4bf;
+    --color-accent-hover: #5eead4;
+    --color-accent-subtle: #0f2e2b;
+    --color-accent-fg: #5eead4;
+    --color-on-accent: #04201d;
+
+    --color-ok: #a3e635;
+    --color-ok-subtle: #1e2a0b;
+    --color-risk: #fbbf24;
+    --color-risk-subtle: #2e2408;
+    --color-off: #f87171;
+    --color-off-subtle: #341313;
+    --color-done: #b794f6;
+    --color-done-subtle: #241a3a;
+    --color-idle: #a3a39c;
+    --color-idle-subtle: #1f1f1c;
+
+    color-scheme: dark;
+  }
+}
+
+:root[data-theme="dark"] {
+  --color-bg: #0c0c0b;
+  --color-surface: #151513;
+  --color-surface-2: #1d1d1b;
+  --color-surface-3: #2f2f2c;
+  --color-fg: #ecece8;
+  --color-fg-2: #9c9c95;
+  --color-line: #272724;
+  --color-line-strong: #3b3b37;
+  --color-line-input: #66665f;
+  --color-accent: #2dd4bf;
+  --color-accent-hover: #5eead4;
+  --color-accent-subtle: #0f2e2b;
+  --color-accent-fg: #5eead4;
+  --color-on-accent: #04201d;
+
+  --color-ok: #a3e635;
+  --color-ok-subtle: #1e2a0b;
+  --color-risk: #fbbf24;
+  --color-risk-subtle: #2e2408;
+  --color-off: #f87171;
+  --color-off-subtle: #341313;
+  --color-done: #b794f6;
+  --color-done-subtle: #241a3a;
+  --color-idle: #a3a39c;
+  --color-idle-subtle: #1f1f1c;
+
+  color-scheme: dark;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+}

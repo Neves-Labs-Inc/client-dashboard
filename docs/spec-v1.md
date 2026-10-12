@@ -10,7 +10,7 @@ Neves Labs' freelance Clients have no single place to see how their work is goin
 
 ## Solution
 
-A private, invite-only web portal at `www.neveslabs.dev`. Each Client's people (Client Users) sign in and see only their Client's data:
+A private, invite-only web portal at `portal.neveslabs.dev`. Each Client's people (Client Users) sign in and see only their Client's data:
 
 - each **Project**'s health, Status Update timeline and client-visible **Tasks**, mirrored one way from org-owned GitHub Projects v2 boards (the dashboard never authors Project data);
 - their **Invoices**, authored in the dashboard by the Admin and read-only for Client Users;
@@ -314,8 +314,8 @@ Sources: [How do environments, CI and deploy work?][#17], `docs/adr/0004-vercel-
 | CI (GitHub Actions, every PR, required before merge) | Typecheck; tests including the cross-Client RLS integration tests against a Postgres service container (same major version as Neon); Docker build |
 | Deploy | Merge to `main` → CI → `drizzle-kit migrate` as `neondb_owner` against prod Neon (direct URL) → set `app_tenant`/`app_system` passwords from GitHub Actions secrets → `vercel deploy --prod`. A failed migration blocks the deploy. Vercel Git auto-deploy off |
 | Infra as code | None in v1. `docs/runbook.md` records the Vercel, Neon and GoDaddy settings. Terraform returns with the AWS move |
-| Domain + TLS | `www.neveslabs.dev` (CNAME at GoDaddy); apex `neveslabs.dev` redirects to www (A record to Vercel). Vercel issues TLS |
-| Secrets | Vercel sensitive env vars: Gmail app password, GitHub App private key and webhook secret, Better Auth secret, `DATABASE_URL`(s). GitHub Actions secrets: prod `neondb_owner` direct `DATABASE_URL`, `app_tenant` and `app_system` passwords |
+| Domain + TLS | The portal is `portal.neveslabs.dev` (CNAME at GoDaddy). `www.neveslabs.dev` and the apex `neveslabs.dev` are reserved for a separate business website (out of scope for v1); until it exists, both are attached to the portal's Vercel project as a temporary (307) redirect to `portal.neveslabs.dev` (apex A record to Vercel, `www` CNAME). Never a permanent redirect, so the business site can take them over. Vercel issues TLS |
+| Secrets | Vercel sensitive env vars: Gmail app password, GitHub App private key, webhook secret, App ID and installation ID, Better Auth secret, Google OAuth client, Microsoft Entra app, Cron auth secret, `DATABASE_URL`(s). GitHub Actions secrets: prod `neondb_owner` direct `DATABASE_URL`, `app_tenant` and `app_system` passwords, Vercel deploy token, org ID and project ID |
 | Observability | Vercel's built-in logs only, plus the Admin's sync-problem flag. No error tracker or alerting in v1; a failed email shows only in the logs ([#22][#22]) |
 | Coding style | Franklin's `coding-style` skill (TypeScript/React) |
 

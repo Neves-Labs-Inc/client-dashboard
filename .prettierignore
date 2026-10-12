@@ -1,0 +1,8 @@
+build/
+.react-router/
+pnpm-lock.yaml
+.scratch/
+# Written by drizzle-kit; reformatting it only creates churn.
+drizzle/meta/
+# Hand-written docs (DESIGN.md, docs/, ADRs) keep their own layout.
+*.md
