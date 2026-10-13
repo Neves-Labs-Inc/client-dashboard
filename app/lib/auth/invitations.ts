@@ -1,6 +1,9 @@
-import { and, eq, gt, sql } from "drizzle-orm";
+import { and, eq, gt, isNull, sql } from "drizzle-orm";
 import { consumeEmailQuota, type EmailQuota } from "@/lib/auth/email-quota";
-import { buildInvitationEmail } from "@/lib/auth/emails";
+import {
+  buildInvitationEmail,
+  buildMemberInvitationEmail,
+} from "@/lib/auth/emails";
 import { getInviteIneligibility } from "@/lib/auth/invite-eligibility";
 import type { Db, Tx } from "@/lib/db/db";
 import {
@@ -11,14 +14,18 @@ import {
   user,
 } from "@/lib/db/schema";
 import { describeError } from "@/lib/describe-error";
-import type { Mailer } from "@/lib/mailer/mailer";
+import { getDisplayName } from "@/lib/display-name";
+import type { Mailer, MailMessage } from "@/lib/mailer/mailer";
 import { normalizeInviteEmail } from "@/lib/invite-email";
 import type { Result } from "@/lib/result";
 
-// The Admin's first-Owner invitations. The Admin belongs to no Client, and
-// Better Auth's createInvitation needs a member inviter, so the rows are
-// written here, in the organization plugin's exact shape: Phase 3's native
-// acceptInvitation works on them unchanged.
+// Every Invitation the portal sends: the Admin's first-Owner ones and
+// Owners' Member ones. Both are written here, in the organization plugin's
+// exact shape, inside one transaction that holds the Client's row lock and
+// re-checks every rule. Better Auth's createInvitation can't join that
+// transaction (it runs on its own adapter), and the Admin isn't a member it
+// would accept as inviter. The native acceptInvitation works on these rows
+// unchanged.
 
 const DAY_S = 24 * 60 * 60;
 export const INVITATION_EXPIRES_IN_S = 7 * DAY_S;
@@ -27,23 +34,28 @@ const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const OK = 200;
 const CREATED = 201;
+const FORBIDDEN = 403;
 const NOT_FOUND = 404;
 const CONFLICT = 409;
 const UNPROCESSABLE = 422;
 const TOO_MANY_REQUESTS = 429;
 const HOUR_MS = 60 * 60 * 1000;
-// Per address, invites and resends together: a resend loop (or an
-// invite → revoke → invite one) can't flood an inbox or spend the Gmail
-// sending quota that magic links share.
+// Per address, invites and resends together, whoever sends them: a resend
+// loop (or an invite → revoke → invite one) can't flood an inbox or spend
+// the Gmail sending quota that magic links share.
 const INVITATION_EMAIL_QUOTA: EmailQuota = { windowMs: HOUR_MS, max: 5 };
-// Every invitation email, whatever the address: Gmail's dot, plus and
+// The Admin's invitation email, whatever the address: Gmail's dot, plus and
 // googlemail variants each pass the per-address cap, and the SMTP quota
 // that magic-link recovery needs must survive a stolen Admin session.
 // Magic links keep their own `magic-link:` keys.
 const ALL_INVITATIONS_QUOTA: EmailQuota = { windowMs: HOUR_MS, max: 20 };
 const ALL_INVITATIONS_KEY = "invitation:*";
+// One Client's Owners together. Kept apart from the Admin's global cap, so
+// a Client's Owners can't lock the Admin out of inviting.
+const CLIENT_INVITATIONS_QUOTA: EmailQuota = { windowMs: HOUR_MS, max: 20 };
 
-type QuotaRefusal = "too-many-emails" | "too-many-invitations";
+type AdminQuotaRefusal = "too-many-emails" | "too-many-invitations";
+type OwnerQuotaRefusal = "too-many-emails" | "too-many-for-client";
 
 export type Invitation = { id: string; email: string; sentAt: Date };
 
@@ -54,12 +66,34 @@ export type InviteError =
   | "other-client"
   | "not-first-owner"
   | "pending-exists"
-  | QuotaRefusal;
+  | AdminQuotaRefusal;
 
-// not-found: no live (pending, unexpired) Owner invitation of this Client
-// has that id. too-many-emails: its address hit the hourly email cap.
-// too-many-invitations: all invitation email together hit its hourly cap.
-export type InvitationActionError = "not-found" | QuotaRefusal;
+// not-found: no live (pending, unexpired) invitation of this Client has
+// that id. too-many-emails: its address hit the hourly email cap.
+// too-many-invitations: all the Admin's invitation email hit its cap.
+export type InvitationActionError = "not-found" | AdminQuotaRefusal;
+
+// forbidden: the inviter isn't (or is no longer) an Owner of an active
+// Client. ineligible: ADMIN_EMAIL or another Client's user, one code so an
+// Owner can't probe which. too-many-for-client: the Client's Owners hit
+// their hourly cap.
+export type MemberInviteError =
+  | "forbidden"
+  | "invalid-email"
+  | "ineligible"
+  | "already-member"
+  | "pending-exists"
+  | OwnerQuotaRefusal;
+
+export type MemberInvitationActionError =
+  "forbidden" | "not-found" | OwnerQuotaRefusal;
+
+// The Client User acting: a client access (ClientAccess) fits.
+export type ClientActor = {
+  userId: string;
+  clientId: string;
+  role: "owner" | "member";
+};
 
 const INVITE_ERROR_STATUS: Record<InviteError, number> = {
   "invalid-email": UNPROCESSABLE,
@@ -72,6 +106,34 @@ const INVITE_ERROR_STATUS: Record<InviteError, number> = {
   "too-many-invitations": TOO_MANY_REQUESTS,
 };
 
+const MEMBER_INVITE_ERROR_STATUS: Record<MemberInviteError, number> = {
+  forbidden: FORBIDDEN,
+  "invalid-email": UNPROCESSABLE,
+  ineligible: UNPROCESSABLE,
+  "already-member": CONFLICT,
+  "pending-exists": CONFLICT,
+  "too-many-emails": TOO_MANY_REQUESTS,
+  "too-many-for-client": TOO_MANY_REQUESTS,
+};
+
+const ACTION_ERROR_STATUS: Record<
+  InvitationActionError | MemberInvitationActionError,
+  number
+> = {
+  forbidden: FORBIDDEN,
+  "not-found": NOT_FOUND,
+  "too-many-emails": TOO_MANY_REQUESTS,
+  "too-many-invitations": TOO_MANY_REQUESTS,
+  "too-many-for-client": TOO_MANY_REQUESTS,
+};
+
+// Counts one email against the sender's caps: null when it may go out.
+type ConsumeQuota<R extends string> = (
+  tx: Tx,
+  email: string,
+  now: Date,
+) => Promise<R | null>;
+
 type InvitationsDeps = {
   db: Db;
   mailer: Mailer;
@@ -81,10 +143,15 @@ type InvitationsDeps = {
   now: () => Date;
 };
 
-// What a saved row needs to be emailed.
-type SavedInvitation = Invitation & { clientName: string };
+// What a saved row needs to be emailed: the copy follows its role, and a
+// Member invitation names who sent it.
+type SavedInvitation = Invitation & {
+  clientName: string;
+  role: string | null;
+  inviterName: string;
+};
 
-export class FirstOwnerInvitations {
+export class Invitations {
   readonly #db: Db;
   readonly #mailer: Mailer;
   readonly #adminEmail: string;
@@ -99,7 +166,7 @@ export class FirstOwnerInvitations {
     this.#now = deps.now;
   }
 
-  async invite(
+  async inviteFirstOwner(
     clientId: string,
     rawEmail: string,
   ): Promise<Result<Invitation, InviteError>> {
@@ -129,26 +196,17 @@ export class FirstOwnerInvitations {
             this.#adminEmail,
           )) ?? (await getSlotRefusal(tx, clientId, now));
         if (reason !== null) return reason;
-        const quotaRefusal = await consumeInvitationQuota(tx, email, now);
+        const quotaRefusal = await consumeAdminQuota(tx, email, now);
         if (quotaRefusal !== null) return quotaRefusal;
 
-        const [saved] = await tx
-          .insert(invitation)
-          .values({
-            organizationId: clientId,
-            email,
-            role: "owner",
-            status: "pending",
-            expiresAt: new Date(now.getTime() + INVITATION_EXPIRES_IN_MS),
-            createdAt: now,
-            inviterId: await getAdminUserId(tx, this.#adminEmail),
-          })
-          .returning({
-            id: invitation.id,
-            email: invitation.email,
-            sentAt: invitation.createdAt,
-          });
-        return { ...saved, clientName: client.name };
+        const saved = await insertInvitation(tx, {
+          clientId,
+          email,
+          role: "owner",
+          inviterId: await getAdminUserId(tx, this.#adminEmail),
+          now,
+        });
+        return { ...saved, clientName: client.name, inviterName: "" };
       },
     );
     if (typeof outcome === "string") return refuseInvite(outcome, clientId);
@@ -157,7 +215,52 @@ export class FirstOwnerInvitations {
     return { value: toInvitation(outcome), error: null, status: CREATED };
   }
 
-  // Same id, so the same link, with a fresh 7 days.
+  // An Owner's invitation: always a Member, to the Owner's own Client.
+  async inviteMember(
+    actor: ClientActor,
+    rawEmail: string,
+  ): Promise<Result<Invitation, MemberInviteError>> {
+    const { clientId } = actor;
+    if (actor.role !== "owner") return refuseMemberInvite("forbidden", actor);
+    const email = normalizeInviteEmail(rawEmail);
+    if (email === null) return refuseMemberInvite("invalid-email", actor);
+
+    const now = this.#now();
+    // As inviteFirstOwner: the Client's row lock makes racing invites to
+    // one email save one row.
+    const outcome = await this.#db.withSystem(
+      async (tx): Promise<SavedInvitation | MemberInviteError> => {
+        const owner = await lockOwnersClient(tx, actor);
+        if (owner === null) return "forbidden";
+
+        const reason =
+          (await getMemberInviteRefusal(
+            tx,
+            { clientId, email },
+            this.#adminEmail,
+          )) ?? (await getPendingRefusal(tx, clientId, email, now));
+        if (reason !== null) return reason;
+        const quotaRefusal = await consumeOwnerQuota(clientId)(tx, email, now);
+        if (quotaRefusal !== null) return quotaRefusal;
+
+        const saved = await insertInvitation(tx, {
+          clientId,
+          email,
+          role: "member",
+          inviterId: actor.userId,
+          now,
+        });
+        return { ...saved, ...owner };
+      },
+    );
+    if (typeof outcome === "string") return refuseMemberInvite(outcome, actor);
+
+    await this.#email(outcome, clientId);
+    return { value: toInvitation(outcome), error: null, status: CREATED };
+  }
+
+  // The Admin's resend of any live invitation of the Client. Same id, so
+  // the same link, with a fresh 7 days.
   async resend(
     clientId: string,
     invitationId: string,
@@ -166,34 +269,39 @@ export class FirstOwnerInvitations {
       return refuseAction("resend", "not-found");
     }
 
-    const now = this.#now();
-    const outcome = await this.#db.withSystem(
-      async (tx): Promise<SavedInvitation | InvitationActionError> => {
-        const [row] = await tx
-          .select({
-            id: invitation.id,
-            email: invitation.email,
-            sentAt: invitation.createdAt,
-            clientName: organization.name,
-          })
-          .from(invitation)
-          .innerJoin(
-            organization,
-            eq(organization.id, invitation.organizationId),
-          )
-          .where(isLive(clientId, invitationId, now))
-          .for("update", { of: invitation });
-        if (!row) return "not-found";
-        const quotaRefusal = await consumeInvitationQuota(tx, row.email, now);
-        if (quotaRefusal !== null) return quotaRefusal;
+    const outcome = await this.#db.withSystem((tx) =>
+      this.#renew(
+        tx,
+        { clientId, role: null },
+        invitationId,
+        consumeAdminQuota,
+      ),
+    );
+    if (typeof outcome === "string") return refuseAction("resend", outcome);
 
-        await tx
-          .update(invitation)
-          .set({
-            expiresAt: new Date(now.getTime() + INVITATION_EXPIRES_IN_MS),
-          })
-          .where(eq(invitation.id, row.id));
-        return row;
+    await this.#email(outcome, clientId);
+    return { value: toInvitation(outcome), error: null, status: OK };
+  }
+
+  // An Owner's resend of a live Member invitation of their own Client.
+  async resendMember(
+    actor: ClientActor,
+    invitationId: string,
+  ): Promise<Result<Invitation, MemberInvitationActionError>> {
+    const { clientId } = actor;
+    if (actor.role !== "owner") return refuseAction("resend", "forbidden");
+    if (!isUuid(invitationId)) return refuseAction("resend", "not-found");
+
+    const outcome = await this.#db.withSystem(
+      async (tx): Promise<SavedInvitation | MemberInvitationActionError> => {
+        if ((await lockOwnersClient(tx, actor)) === null) return "forbidden";
+
+        return this.#renew(
+          tx,
+          { clientId, role: "member" },
+          invitationId,
+          consumeOwnerQuota(clientId),
+        );
       },
     );
     if (typeof outcome === "string") return refuseAction("resend", outcome);
@@ -202,6 +310,7 @@ export class FirstOwnerInvitations {
     return { value: toInvitation(outcome), error: null, status: OK };
   }
 
+  // The Admin's revoke of any live invitation of the Client.
   async revoke(
     clientId: string,
     invitationId: string,
@@ -210,33 +319,212 @@ export class FirstOwnerInvitations {
       return refuseAction("revoke", "not-found");
     }
 
-    const now = this.#now();
-    const [row] = await this.#db.withSystem((tx) =>
-      tx
-        .update(invitation)
-        .set({ status: "canceled" })
-        .where(isLive(clientId, invitationId, now))
-        .returning({ id: invitation.id }),
+    const isCanceled = await this.#db.withSystem((tx) =>
+      cancelInvitation(tx, { clientId, role: null }, invitationId, this.#now()),
     );
-    if (!row) return refuseAction("revoke", "not-found");
+    if (!isCanceled) return refuseAction("revoke", "not-found");
 
     return { value: null, error: null, status: OK };
   }
 
-  // The row is saved either way: a failed send is logged and the Admin can
-  // resend. The log line carries no address, link or provider message.
+  // An Owner's revoke of a live Member invitation of their own Client.
+  async revokeMember(
+    actor: ClientActor,
+    invitationId: string,
+  ): Promise<Result<null, MemberInvitationActionError>> {
+    if (actor.role !== "owner") return refuseAction("revoke", "forbidden");
+    if (!isUuid(invitationId)) return refuseAction("revoke", "not-found");
+
+    const now = this.#now();
+    const outcome = await this.#db.withSystem(
+      async (tx): Promise<MemberInvitationActionError | null> => {
+        if ((await lockOwnersClient(tx, actor)) === null) return "forbidden";
+
+        const isCanceled = await cancelInvitation(
+          tx,
+          { clientId: actor.clientId, role: "member" },
+          invitationId,
+          now,
+        );
+        return isCanceled ? null : "not-found";
+      },
+    );
+    if (outcome !== null) return refuseAction("revoke", outcome);
+
+    return { value: null, error: null, status: OK };
+  }
+
+  // Locks a live invitation in `scope`, counts the email against the
+  // sender's caps and gives it 7 more days.
+  async #renew<R extends string>(
+    tx: Tx,
+    scope: InvitationScope,
+    invitationId: string,
+    consumeQuota: ConsumeQuota<R>,
+  ): Promise<SavedInvitation | R | "not-found"> {
+    const now = this.#now();
+    const [row] = await tx
+      .select({
+        id: invitation.id,
+        email: invitation.email,
+        sentAt: invitation.createdAt,
+        role: invitation.role,
+        clientName: organization.name,
+        inviterName: user.name,
+        inviterEmail: user.email,
+      })
+      .from(invitation)
+      .innerJoin(organization, eq(organization.id, invitation.organizationId))
+      .innerJoin(user, eq(user.id, invitation.inviterId))
+      .where(isLive(scope, invitationId, now))
+      .for("update", { of: invitation });
+    if (!row) return "not-found";
+    const quotaRefusal = await consumeQuota(tx, row.email, now);
+    if (quotaRefusal !== null) return quotaRefusal;
+
+    await tx
+      .update(invitation)
+      .set({ expiresAt: new Date(now.getTime() + INVITATION_EXPIRES_IN_MS) })
+      .where(eq(invitation.id, row.id));
+    const { inviterName, inviterEmail, ...saved } = row;
+    return { ...saved, inviterName: getDisplayName(inviterName, inviterEmail) };
+  }
+
+  // The row is saved either way: a failed send is logged and the sender
+  // can resend. The log line carries no address, link or provider message.
   async #email(saved: SavedInvitation, clientId: string): Promise<void> {
-    const url = `${this.#baseUrl}/invitations/${saved.id}`;
     try {
-      await this.#mailer.send(
-        buildInvitationEmail(saved.email, saved.clientName, url),
-      );
+      await this.#mailer.send(this.#buildEmail(saved));
     } catch (error) {
       console.error(`auth: invitation email failed (${describeError(error)})`, {
         clientId,
       });
     }
   }
+
+  #buildEmail(saved: SavedInvitation): MailMessage {
+    const url = `${this.#baseUrl}/invitations/${saved.id}`;
+    return saved.role === "owner"
+      ? buildInvitationEmail(saved.email, saved.clientName, url)
+      : buildMemberInvitationEmail(
+          saved.email,
+          saved.clientName,
+          saved.inviterName,
+          url,
+        );
+  }
+}
+
+type NewInvitation = {
+  clientId: string;
+  email: string;
+  role: "owner" | "member";
+  inviterId: string;
+  now: Date;
+};
+
+async function insertInvitation(
+  tx: Tx,
+  { clientId, email, role, inviterId, now }: NewInvitation,
+): Promise<Invitation & { role: string | null }> {
+  const [saved] = await tx
+    .insert(invitation)
+    .values({
+      organizationId: clientId,
+      email,
+      role,
+      status: "pending",
+      expiresAt: new Date(now.getTime() + INVITATION_EXPIRES_IN_MS),
+      createdAt: now,
+      inviterId,
+    })
+    .returning({
+      id: invitation.id,
+      email: invitation.email,
+      sentAt: invitation.createdAt,
+      role: invitation.role,
+    });
+  return saved;
+}
+
+// Locks the actor's Client row when they are still an Owner of it and it's
+// still active (access is read per request, so a demotion or an archive may
+// have landed since). Their Client's name and their display name, or null.
+async function lockOwnersClient(
+  tx: Tx,
+  actor: ClientActor,
+): Promise<{ clientName: string; inviterName: string } | null> {
+  const [row] = await tx
+    .select({
+      clientName: organization.name,
+      name: user.name,
+      email: user.email,
+    })
+    .from(clients)
+    .innerJoin(organization, eq(organization.id, clients.id))
+    .innerJoin(member, eq(member.organizationId, clients.id))
+    .innerJoin(user, eq(user.id, member.userId))
+    .where(
+      and(
+        eq(clients.id, actor.clientId),
+        isNull(clients.archivedAt),
+        eq(member.userId, actor.userId),
+        eq(member.role, "owner"),
+      ),
+    )
+    .for("update", { of: clients });
+  if (!row) return null;
+
+  return {
+    clientName: row.clientName,
+    inviterName: getDisplayName(row.name, row.email),
+  };
+}
+
+// ineligible (ADMIN_EMAIL or another Client's user) before already-member.
+async function getMemberInviteRefusal(
+  tx: Tx,
+  invitee: { clientId: string; email: string },
+  adminEmail: string,
+): Promise<"ineligible" | "already-member" | null> {
+  if ((await getInviteIneligibility(tx, invitee, adminEmail)) !== null) {
+    return "ineligible";
+  }
+
+  const [teammate] = await tx
+    .select({ id: member.id })
+    .from(member)
+    .innerJoin(user, eq(user.id, member.userId))
+    .where(
+      and(
+        eq(member.organizationId, invitee.clientId),
+        eq(sql`lower(${user.email})`, invitee.email),
+      ),
+    )
+    .limit(1);
+  return teammate ? "already-member" : null;
+}
+
+// A live pending invitation to this email for this Client.
+async function getPendingRefusal(
+  tx: Tx,
+  clientId: string,
+  email: string,
+  now: Date,
+): Promise<"pending-exists" | null> {
+  const [live] = await tx
+    .select({ id: invitation.id })
+    .from(invitation)
+    .where(
+      and(
+        eq(invitation.organizationId, clientId),
+        eq(invitation.email, email),
+        eq(invitation.status, "pending"),
+        gt(invitation.expiresAt, now),
+      ),
+    )
+    .limit(1);
+  return live ? "pending-exists" : null;
 }
 
 // not-first-owner when the Client has any member; pending-exists when it
@@ -278,12 +566,31 @@ async function getAdminUserId(tx: Tx, adminEmail: string): Promise<string> {
   return admin.id;
 }
 
-// A live first-Owner invitation of this Client.
-function isLive(clientId: string, invitationId: string, now: Date) {
+// Cancels a live invitation in `scope`; false when there was none.
+async function cancelInvitation(
+  tx: Tx,
+  scope: InvitationScope,
+  invitationId: string,
+  now: Date,
+): Promise<boolean> {
+  const rows = await tx
+    .update(invitation)
+    .set({ status: "canceled" })
+    .where(isLive(scope, invitationId, now))
+    .returning({ id: invitation.id });
+  return rows.length > 0;
+}
+
+// Which live invitations of a Client an action may touch: the Admin's reach
+// every role; an Owner's only Member ones (Franklin, ticket 04 gate).
+type InvitationScope = { clientId: string; role: "member" | null };
+
+// A live invitation in `scope`.
+function isLive(scope: InvitationScope, invitationId: string, now: Date) {
   return and(
     eq(invitation.id, invitationId),
-    eq(invitation.organizationId, clientId),
-    eq(invitation.role, "owner"),
+    eq(invitation.organizationId, scope.clientId),
+    scope.role === null ? undefined : eq(invitation.role, scope.role),
     eq(invitation.status, "pending"),
     gt(invitation.expiresAt, now),
   );
@@ -307,11 +614,21 @@ function refuseInvite(
   return { value: null, error, status };
 }
 
-function refuseAction(
-  action: "resend" | "revoke",
-  error: InvitationActionError,
-): Result<never, InvitationActionError> {
-  const status = error === "not-found" ? NOT_FOUND : TOO_MANY_REQUESTS;
+function refuseMemberInvite(
+  error: MemberInviteError,
+  actor: ClientActor,
+): Result<Invitation, MemberInviteError> {
+  const status = MEMBER_INVITE_ERROR_STATUS[error];
+  console.warn(`auth: refused a Member invitation (${error})`, {
+    clientId: actor.clientId,
+  });
+  return { value: null, error, status };
+}
+
+function refuseAction<
+  E extends InvitationActionError | MemberInvitationActionError,
+>(action: "resend" | "revoke", error: E): Result<never, E> {
+  const status = ACTION_ERROR_STATUS[error];
   console.warn(`auth: refused to ${action} an invitation (${error})`);
   return { value: null, error, status };
 }
@@ -320,27 +637,85 @@ function isUuid(...values: string[]): boolean {
   return values.every((value) => UUID_PATTERN.test(value));
 }
 
-// Counts one invitation email, per address (so a new invitation to the
-// same person shares the cap) and against the global cap. Null when it may
-// go out.
-async function consumeInvitationQuota(
+// Counts one Admin invitation email, per address (so every invitation to
+// the same person, from the Admin or an Owner, shares the cap) and against
+// the Admin's global cap. Null when it may go out.
+function consumeAdminQuota(
   tx: Tx,
   email: string,
   now: Date,
-): Promise<QuotaRefusal | null> {
-  const isAddressUnderCap = await consumeEmailQuota(
-    tx,
-    `invitation:${email}`,
-    now,
-    INVITATION_EMAIL_QUOTA,
-  );
-  if (!isAddressUnderCap) return "too-many-emails";
+): Promise<AdminQuotaRefusal | null> {
+  return consumeQuotas(tx, now, [
+    addressCap(email),
+    {
+      key: ALL_INVITATIONS_KEY,
+      quota: ALL_INVITATIONS_QUOTA,
+      refusal: "too-many-invitations",
+    },
+  ]);
+}
 
-  const isUnderGlobalCap = await consumeEmailQuota(
-    tx,
-    ALL_INVITATIONS_KEY,
-    now,
-    ALL_INVITATIONS_QUOTA,
-  );
-  return isUnderGlobalCap ? null : "too-many-invitations";
+// The same for an Owner's email: per address, then the Client's own cap.
+function consumeOwnerQuota(
+  clientId: string,
+): (tx: Tx, email: string, now: Date) => Promise<OwnerQuotaRefusal | null> {
+  return (tx, email, now) =>
+    consumeQuotas(tx, now, [
+      addressCap(email),
+      {
+        key: `invitation-client:${clientId}`,
+        quota: CLIENT_INVITATIONS_QUOTA,
+        refusal: "too-many-for-client",
+      },
+    ]);
+}
+
+type QuotaCap<R extends string> = {
+  key: string;
+  quota: EmailQuota;
+  refusal: R;
+};
+
+function addressCap(email: string): QuotaCap<"too-many-emails"> {
+  return {
+    key: `invitation:${email}`,
+    quota: INVITATION_EMAIL_QUOTA,
+    refusal: "too-many-emails",
+  };
+}
+
+// Thrown inside the savepoint to roll back the counts it made.
+class QuotaRefused<R extends string> extends Error {
+  constructor(readonly refusal: R) {
+    super(`quota refused (${refusal})`);
+  }
+}
+
+// Counts one email against each cap in order; the first cap it would go
+// over is the refusal. Under a savepoint, so a refused email spends no
+// count on any cap (an Owner at their Client's cap can't use up an
+// address's slots without sending).
+async function consumeQuotas<R extends string>(
+  tx: Tx,
+  now: Date,
+  caps: QuotaCap<R>[],
+): Promise<R | null> {
+  let refusal: R | null = null;
+  try {
+    await tx.transaction(async (savepoint) => {
+      for (const cap of caps) {
+        const isUnderCap = await consumeEmailQuota(
+          savepoint,
+          cap.key,
+          now,
+          cap.quota,
+        );
+        if (!isUnderCap) throw new QuotaRefused(cap.refusal);
+      }
+    });
+  } catch (error) {
+    if (!(error instanceof QuotaRefused)) throw error;
+    refusal = error.refusal as R;
+  }
+  return refusal;
 }

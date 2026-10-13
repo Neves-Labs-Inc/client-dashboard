@@ -30,11 +30,13 @@ import {
   type Joined,
 } from "@/lib/auth/join-invitation";
 import {
-  FirstOwnerInvitations,
   INVITATION_EXPIRES_IN_S,
+  Invitations,
   type Invitation,
   type InvitationActionError,
   type InviteError,
+  type MemberInvitationActionError,
+  type MemberInviteError,
 } from "@/lib/auth/invitations";
 import { getClientNameError, normalizeClientName } from "@/lib/client-name";
 import type { Db } from "@/lib/db/db";
@@ -222,7 +224,10 @@ export type TeamMember = {
   role: "owner" | "member";
 };
 
-export type PendingInvitation = Invitation;
+export type PendingInvitation = Invitation & {
+  // Which role accepting it gives.
+  role: "owner" | "member";
+};
 
 export type Team = {
   clientId: string;
@@ -265,15 +270,16 @@ export type Auth = {
     clientId: string,
     email: string,
   ): Promise<Result<Invitation, InviteError>>;
-  // A live pending first-Owner Invitation of this Client, emailed again
-  // with the same link and 7 more days. Invites and resends share a cap of
-  // 5 emails an hour per address (too-many-emails) and 20 an hour in all
+  // Any live pending Invitation of this Client (an Owner's or a Member's),
+  // emailed again in its role's copy with the same link and 7 more days.
+  // The Admin's invites and resends share a cap of 5 emails an hour per
+  // address with Owners' (too-many-emails), and 20 an hour in all
   // (too-many-invitations).
   resendInvitation(
     clientId: string,
     invitationId: string,
   ): Promise<Result<Invitation, InvitationActionError>>;
-  // A live pending first-Owner Invitation of this Client, canceled.
+  // Any live pending Invitation of this Client, canceled.
   revokeInvitation(
     clientId: string,
     invitationId: string,
@@ -299,9 +305,31 @@ export type Auth = {
     request: Request,
     invitationId: string,
   ): Promise<Result<null, InvitationLinkError>>;
+  // An Owner's Invitation to their own Client, always as a Member, emailed
+  // naming the Owner. The email is normalised as for inviteFirstOwner.
+  // Refusals, in order: forbidden (not an Owner of an active Client),
+  // invalid-email, ineligible (ADMIN_EMAIL or another Client's user),
+  // already-member, pending-exists (to this email), too-many-emails (the
+  // per-address cap shared with the Admin), too-many-for-client (20 an hour
+  // per Client). A failed email still succeeds.
+  inviteMember(
+    access: ClientAccess,
+    email: string,
+  ): Promise<Result<Invitation, MemberInviteError>>;
+  // A live pending Invitation of the Owner's Client, emailed again with the
+  // same link and 7 more days, under the same caps as inviteMember.
+  resendMemberInvitation(
+    access: ClientAccess,
+    invitationId: string,
+  ): Promise<Result<Invitation, MemberInvitationActionError>>;
+  // A live pending Invitation of the Owner's Client, canceled.
+  revokeMemberInvitation(
+    access: ClientAccess,
+    invitationId: string,
+  ): Promise<Result<null, MemberInvitationActionError>>;
 };
 
-type AuthDeps = {
+export type AuthDeps = {
   db: Db;
   mailer: Mailer;
   adminEmail: string;
@@ -340,7 +368,7 @@ class BetterAuthModule implements Auth {
   private readonly baseUrl: string;
   private readonly now: () => Date;
   readonly #providers: ProviderRegistry;
-  readonly #invitations: FirstOwnerInvitations;
+  readonly #invitations: Invitations;
 
   constructor(deps: AuthDeps) {
     this.db = deps.db;
@@ -350,7 +378,7 @@ class BetterAuthModule implements Auth {
     this.baseUrl = deps.baseUrl;
     this.#providers = deps.providers ?? {};
     this.betterAuth = createBetterAuth(deps, this.adminEmail, this.#providers);
-    this.#invitations = new FirstOwnerInvitations({
+    this.#invitations = new Invitations({
       db: deps.db,
       mailer: deps.mailer,
       adminEmail: this.adminEmail,
@@ -519,6 +547,7 @@ class BetterAuthModule implements Auth {
           id: invitation.id,
           email: invitation.email,
           sentAt: invitation.createdAt,
+          role: invitation.role,
         })
         .from(invitation)
         .where(
@@ -540,7 +569,10 @@ class BetterAuthModule implements Auth {
         ...row,
         role: row.role === "owner" ? "owner" : "member",
       })),
-      pendingInvitations: team.pendingInvitations,
+      pendingInvitations: team.pendingInvitations.map((row) => ({
+        ...row,
+        role: row.role === "owner" ? "owner" : "member",
+      })),
       canInviteFirstOwner:
         team.members.length === 0 && team.pendingInvitations.length === 0,
     };
@@ -550,7 +582,7 @@ class BetterAuthModule implements Auth {
     clientId: string,
     email: string,
   ): Promise<Result<Invitation, InviteError>> {
-    return this.#invitations.invite(clientId, email);
+    return this.#invitations.inviteFirstOwner(clientId, email);
   }
 
   resendInvitation(
@@ -658,6 +690,27 @@ class BetterAuthModule implements Auth {
       result = { value: null, error: "failed", status: SERVER_ERROR };
     }
     return result;
+  }
+
+  inviteMember(
+    access: ClientAccess,
+    email: string,
+  ): Promise<Result<Invitation, MemberInviteError>> {
+    return this.#invitations.inviteMember(access, email);
+  }
+
+  resendMemberInvitation(
+    access: ClientAccess,
+    invitationId: string,
+  ): Promise<Result<Invitation, MemberInvitationActionError>> {
+    return this.#invitations.resendMember(access, invitationId);
+  }
+
+  revokeMemberInvitation(
+    access: ClientAccess,
+    invitationId: string,
+  ): Promise<Result<null, MemberInvitationActionError>> {
+    return this.#invitations.revokeMember(access, invitationId);
   }
 
   // Better Auth sees only the client IP this module trusts.

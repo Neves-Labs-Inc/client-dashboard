@@ -6,6 +6,7 @@ import DataTableRow from "@/components/ui/data-table-row";
 import DateText from "@/components/ui/date-text";
 import { useInvitationRow } from "@/hooks/use-invitation-row";
 import type { PendingInvitation } from "@/lib/auth/auth";
+import type { InvitationRowCopy } from "@/lib/team-invitations";
 
 // The table's tracks from md (the rows are subgrids of it). Below md: email
 // over "Sent", then the actions, each on its own line.
@@ -15,7 +16,9 @@ const ROW_GRID_CLASS = `grid-cols-[minmax(0,1fr)] gap-y-2 md:gap-3 ${SUBGRID_ROW
 
 type InvitationRowProps = {
   invitation: PendingInvitation;
-  clientId: string;
+  // The route the row's resend and revoke post to.
+  action: string;
+  copy: InvitationRowCopy;
   isHighlighted: boolean;
   isConfirming: boolean;
   onConfirmingChange: (isConfirming: boolean) => void;
@@ -25,7 +28,8 @@ type InvitationRowProps = {
 
 export default function InvitationRow({
   invitation,
-  clientId,
+  action,
+  copy,
   isHighlighted,
   isConfirming,
   onConfirmingChange,
@@ -35,7 +39,8 @@ export default function InvitationRow({
   const promptId = useId();
   const row = useInvitationRow({
     invitationId: invitation.id,
-    clientId,
+    action,
+    copy,
     isConfirming,
     onConfirmingChange,
     onNotice,

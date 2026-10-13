@@ -38,7 +38,11 @@ export default function ClientLayout({
 
   return (
     <ClientShell {...loaderData}>
-      {isLoadingTeam ? <ClientTeamSkeleton /> : <Outlet />}
+      {isLoadingTeam ? (
+        <ClientTeamSkeleton isOwner={loaderData.role === "owner"} />
+      ) : (
+        <Outlet />
+      )}
     </ClientShell>
   );
 }

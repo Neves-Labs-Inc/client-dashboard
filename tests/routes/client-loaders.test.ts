@@ -8,10 +8,13 @@ import {
   shouldRevalidate as clientLayoutShouldRevalidate,
 } from "@/routes/client/layout";
 import {
+  action as teamAction,
+  clientAction as teamClientAction,
   headers as teamHeaders,
   loader as teamLoader,
   shouldRevalidate as teamShouldRevalidate,
 } from "@/routes/client/team";
+import type { InvitationOutcome } from "@/lib/team-invitations";
 import {
   headers as noAccessHeaders,
   loader as noAccessLoader,
@@ -25,12 +28,23 @@ const RENEWED_COOKIE = "better-auth.session_token=renewed; Path=/; HttpOnly";
 const getAccess = vi.fn<(request: Request) => Promise<AccessResult>>();
 const getTeam = vi.fn<Auth["getTeam"]>();
 const listClients = vi.fn<Auth["listClients"]>();
+const inviteMember = vi.fn<Auth["inviteMember"]>();
+const resendMemberInvitation = vi.fn<Auth["resendMemberInvitation"]>();
+const revokeMemberInvitation = vi.fn<Auth["revokeMemberInvitation"]>();
 
 vi.mock("@/lib/auth/auth.server", () => ({
   auth: {
     getAccess: (request: Request) => getAccess(request),
     getTeam: (clientId: string) => getTeam(clientId),
     listClients: () => listClients(),
+    inviteMember: (...args: Parameters<Auth["inviteMember"]>) =>
+      inviteMember(...args),
+    resendMemberInvitation: (
+      ...args: Parameters<Auth["resendMemberInvitation"]>
+    ) => resendMemberInvitation(...args),
+    revokeMemberInvitation: (
+      ...args: Parameters<Auth["revokeMemberInvitation"]>
+    ) => revokeMemberInvitation(...args),
   },
 }));
 
@@ -38,6 +52,8 @@ const PORTAL_ORIGIN = "http://localhost:5173";
 const CLIENT_ID = "0199d0a4-5b6c-7d8e-9f01-23456789abcd";
 const OTHER_CLIENT_ID = "0199d0a4-5b6c-7d8e-9f01-23456789ffff";
 const INVITEE_EMAIL = "pending.invitee@acme.test";
+const INVITATION_ID = "0199d0a4-5b6c-7d8e-9f01-23456789eeee";
+const ADMIN_SENT_EMAIL = "first.owner@acme.test";
 
 const TEAM: Team = {
   clientId: CLIENT_ID,
@@ -47,7 +63,19 @@ const TEAM: Team = {
     { userId: "u2", email: "jo@acme.test", name: "", role: "member" },
   ],
   pendingInvitations: [
-    { id: "i1", email: INVITEE_EMAIL, sentAt: new Date("2026-10-12") },
+    {
+      id: "i1",
+      email: INVITEE_EMAIL,
+      sentAt: new Date("2026-10-12"),
+      role: "member",
+    },
+    // The Admin's: never on the client page.
+    {
+      id: "i0",
+      email: ADMIN_SENT_EMAIL,
+      sentAt: new Date("2026-10-11"),
+      role: "owner",
+    },
   ],
   canInviteFirstOwner: false,
 };
@@ -123,6 +151,24 @@ beforeEach(() => {
   getTeam.mockResolvedValue(TEAM);
   listClients.mockReset();
   listClients.mockResolvedValue([]);
+  inviteMember.mockReset();
+  inviteMember.mockResolvedValue({
+    value: { id: INVITATION_ID, email: "leo@acme.test", sentAt: new Date() },
+    error: null,
+    status: 201,
+  });
+  resendMemberInvitation.mockReset();
+  resendMemberInvitation.mockResolvedValue({
+    value: { id: INVITATION_ID, email: "leo@acme.test", sentAt: new Date() },
+    error: null,
+    status: 200,
+  });
+  revokeMemberInvitation.mockReset();
+  revokeMemberInvitation.mockResolvedValue({
+    value: null,
+    error: null,
+    status: 200,
+  });
 });
 
 describe("the / redirect", () => {
@@ -211,18 +257,20 @@ describe("the Team loader", () => {
     expect(getTeam).toHaveBeenCalledWith(CLIENT_ID);
   });
 
-  it("gives an Owner the roster and the pending invitations", async () => {
+  it("gives an Owner the roster and only the pending Member invitations", async () => {
     answerAs(OWNER);
 
     const { data } = await settle(() => teamLoader(argsFor("/team")));
 
     expect(data).toEqual({
       clientName: "Acme",
+      role: "owner",
       team: {
         members: TEAM.members,
-        pendingInvitations: TEAM.pendingInvitations,
+        pendingInvitations: [TEAM.pendingInvitations[0]],
       },
     });
+    expect(JSON.stringify(data)).not.toContain(ADMIN_SENT_EMAIL);
   });
 
   it("never sends a Member the pending invitations", async () => {
@@ -232,6 +280,7 @@ describe("the Team loader", () => {
 
     expect(data).toEqual({
       clientName: "Acme",
+      role: "member",
       team: { members: TEAM.members },
     });
     expect(JSON.stringify(data)).not.toContain(INVITEE_EMAIL);
@@ -244,7 +293,7 @@ describe("the Team loader", () => {
 
     const { data } = await settle(() => teamLoader(argsFor("/team")));
 
-    expect(data).toEqual({ clientName: "Acme", team: null });
+    expect(data).toEqual({ clientName: "Acme", role: "owner", team: null });
     expect(errorLog).toHaveBeenCalled();
   });
 
@@ -255,7 +304,7 @@ describe("the Team loader", () => {
 
     const { data } = await settle(() => teamLoader(argsFor("/team")));
 
-    expect(data).toEqual({ clientName: "Acme", team: null });
+    expect(data).toEqual({ clientName: "Acme", role: "owner", team: null });
   });
 });
 
@@ -370,6 +419,200 @@ describe("requireClientMutation", () => {
     );
 
     expect(headers.get("location")).toBe("/admin");
+  });
+});
+
+describe("the Team's invitation actions", () => {
+  function post(
+    fields: Record<string, string>,
+    origin: string = PORTAL_ORIGIN,
+  ): Parameters<typeof teamAction>[0] {
+    const body = new FormData();
+    for (const [name, value] of Object.entries(fields)) body.set(name, value);
+    return argsFor("/team", "POST", origin, body);
+  }
+
+  const posts: Record<string, string>[] = [
+    { intent: "invite", email: "leo@acme.test" },
+    { intent: "resend", invitationId: INVITATION_ID },
+    { intent: "revoke", invitationId: INVITATION_ID },
+  ];
+
+  function expectNothingRan(): void {
+    expect(inviteMember).not.toHaveBeenCalled();
+    expect(resendMemberInvitation).not.toHaveBeenCalled();
+    expect(revokeMemberInvitation).not.toHaveBeenCalled();
+  }
+
+  it("refuses a cross-origin POST with 403 before the body is read", async () => {
+    answerAs(OWNER);
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    for (const fields of posts) {
+      const args = post(fields, "http://www.localhost:5173");
+      const thrown = await teamAction(args).catch((error: unknown) => error);
+      expect(thrown).toMatchObject({ init: { status: 403 } });
+      expect(args.request.bodyUsed).toBe(false);
+    }
+    expectNothingRan();
+  });
+
+  it("refuses a Member's POST as forbidden with 403, running nothing", async () => {
+    answerAs(MEMBER);
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    for (const fields of posts) {
+      const args = post(fields);
+      const { data, headers } = await settle(() => teamAction(args));
+      expect(data).toEqual({ kind: "refused", error: "forbidden" });
+      expect(headers.getSetCookie()).toEqual([RENEWED_COOKIE]);
+      expect(args.request.bodyUsed).toBe(false);
+    }
+    const result = await teamAction(post(posts[0]));
+    expect(result).toMatchObject({ init: { status: 403 } });
+    expectNothingRan();
+  });
+
+  it("sends an anonymous POST to sign in", async () => {
+    answerAs(ANONYMOUS);
+
+    const { headers } = await settle(() => teamAction(post(posts[0])));
+
+    expect(headers.get("location")).toBe("/sign-in");
+    expectNothingRan();
+  });
+
+  it("invites the posted email as the Owner and answers 201", async () => {
+    answerAs(OWNER);
+
+    const result = await teamAction(post(posts[0]));
+
+    expect(inviteMember).toHaveBeenCalledWith(OWNER, "leo@acme.test");
+    expect(result).toMatchObject({
+      data: { kind: "sent", invitationId: INVITATION_ID },
+      init: { status: 201 },
+    });
+  });
+
+  it("passes a refusal on as its code and status", async () => {
+    answerAs(OWNER);
+    inviteMember.mockResolvedValue({
+      value: null,
+      error: "too-many-for-client",
+      status: 429,
+    });
+
+    const result = await teamAction(post(posts[0]));
+
+    expect(result).toMatchObject({
+      data: { kind: "refused", error: "too-many-for-client" },
+      init: { status: 429 },
+    });
+  });
+
+  it("resends and revokes the posted invitation as the Owner", async () => {
+    answerAs(OWNER);
+    revokeMemberInvitation.mockResolvedValue({
+      value: null,
+      error: "not-found",
+      status: 404,
+    });
+
+    const resent = await teamAction(post(posts[1]));
+    const revoked = await teamAction(post(posts[2]));
+
+    expect(resendMemberInvitation).toHaveBeenCalledWith(OWNER, INVITATION_ID);
+    expect(revokeMemberInvitation).toHaveBeenCalledWith(OWNER, INVITATION_ID);
+    expect(resent).toMatchObject({
+      data: { kind: "resent" },
+      init: { status: 200 },
+    });
+    expect(revoked).toMatchObject({
+      data: { kind: "refused", error: "not-found" },
+      init: { status: 404 },
+    });
+  });
+
+  it("answers an unknown intent with 400", async () => {
+    answerAs(OWNER);
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const result = await teamAction(post({ intent: "promote" }));
+
+    expect(result).toMatchObject({
+      data: { kind: "failed" },
+      init: { status: 400 },
+    });
+  });
+
+  it("answers a failure without its details, and logs no invitee email", async () => {
+    answerAs(OWNER);
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+    inviteMember.mockRejectedValue(
+      new Error("Failed query: insert into invitation\nparams: leo@acme.test"),
+    );
+
+    const result = await teamAction(post(posts[0]));
+
+    expect(result).toMatchObject({
+      data: { kind: "failed" },
+      init: { status: 500 },
+    });
+    expect(JSON.stringify(errorLog.mock.calls)).not.toContain("leo");
+  });
+});
+
+describe("the Team's clientAction", () => {
+  type ClientActionArgs = Parameters<typeof teamClientAction>[0];
+
+  function runWith(serverAction: () => Promise<InvitationOutcome>) {
+    return teamClientAction({ serverAction } as ClientActionArgs);
+  }
+
+  it("passes a success through as plain data", async () => {
+    const sent: InvitationOutcome = {
+      kind: "sent",
+      invitationId: INVITATION_ID,
+    };
+
+    expect(await runWith(async () => sent)).toEqual(sent);
+  });
+
+  it("gives a refusal a 4xx status and a failure a 5xx", async () => {
+    const refused = await runWith(async () => ({
+      kind: "refused",
+      error: "forbidden",
+    }));
+    const failed = await runWith(async () => ({ kind: "failed" }));
+
+    expect(refused).toMatchObject({ init: { status: 422 } });
+    expect(failed).toMatchObject({ init: { status: 500 } });
+  });
+
+  it("turns a network failure into the failed outcome with a 5xx status", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const result = await runWith(async () => {
+      throw new TypeError("Failed to fetch");
+    });
+
+    expect(result).toMatchObject({
+      data: { kind: "failed" },
+      init: { status: 503 },
+    });
+  });
+
+  it("lets the guard's redirect through", async () => {
+    const redirect = new Response(null, {
+      status: 302,
+      headers: { location: "/sign-in" },
+    });
+
+    await expect(
+      runWith(async () => {
+        throw redirect;
+      }),
+    ).rejects.toBe(redirect);
   });
 });
 

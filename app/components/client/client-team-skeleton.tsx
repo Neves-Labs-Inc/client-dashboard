@@ -2,6 +2,7 @@ import {
   ROW_GRID_CLASS,
   TABLE_GRID_CLASS,
 } from "@/components/admin/team-members-panel";
+import PendingSkeleton from "@/components/team/pending-skeleton";
 import Skeleton from "@/components/ui/skeleton";
 import SkeletonGroup from "@/components/ui/skeleton-group";
 import { cn } from "@/lib/utils";
@@ -37,19 +38,33 @@ function RowSkeleton(): React.ReactNode {
   );
 }
 
+type ClientTeamSkeletonProps = {
+  // Owners' page also has the invite action and the Pending invitations
+  // panel; a Member's has neither.
+  isOwner: boolean;
+};
+
 // The client Team page in blocks, line box for line box, so nothing shifts
 // when the page arrives.
-export default function ClientTeamSkeleton(): React.ReactNode {
+export default function ClientTeamSkeleton({
+  isOwner,
+}: ClientTeamSkeletonProps): React.ReactNode {
   return (
     <SkeletonGroup label="team">
       <div className="flex flex-col gap-4">
-        <div>
-          <div className="flex h-4 items-center">
-            <Skeleton className="h-3 w-[30%]" />
+        {/* As PageHeader: the action under the h1, bottom-right from md. */}
+        <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+          <div className="min-w-0 md:flex-1">
+            <div className="flex h-4 items-center">
+              <Skeleton className="h-3 w-[30%]" />
+            </div>
+            <div className="mt-1 flex h-6 items-center">
+              <Skeleton className="h-[18px] w-[20%]" />
+            </div>
           </div>
-          <div className="mt-1 flex h-6 items-center">
-            <Skeleton className="h-[18px] w-[20%]" />
-          </div>
+          {isOwner && (
+            <Skeleton className="h-11 w-[160px] shrink-0 md:h-8 md:w-[140px] pointer-coarse:h-11" />
+          )}
         </div>
         <div className="rounded-[3px] border border-line bg-surface">
           <div className="flex min-h-10 items-center border-b border-line px-3 py-2">
@@ -74,6 +89,7 @@ export default function ClientTeamSkeleton(): React.ReactNode {
             ))}
           </div>
         </div>
+        {isOwner && <PendingSkeleton />}
       </div>
     </SkeletonGroup>
   );
