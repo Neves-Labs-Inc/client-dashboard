@@ -166,6 +166,8 @@ export type Access =
 
 export type NoAccessReason = "archived" | "not-invited";
 
+export type ClientAccess = Extract<Access, { kind: "client" }>;
+
 export type AccessResult = {
   access: Access;
   // Set-Cookie headers when the session slid (renewed at most once a day).

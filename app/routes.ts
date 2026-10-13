@@ -15,7 +15,9 @@ export default [
     route("sign-in", "routes/auth/sign-in.tsx"),
     route("sign-in/check-email", "routes/auth/check-email.tsx"),
     route("passkey", "routes/auth/passkey.tsx"),
+    route("no-access", "routes/auth/no-access.tsx"),
   ]),
+  layout("routes/client/layout.tsx", [route("team", "routes/client/team.tsx")]),
   route("admin", "routes/admin/layout.tsx", [
     index("routes/admin/index.tsx"),
     route("clients/:clientId", "routes/admin/client.tsx"),
