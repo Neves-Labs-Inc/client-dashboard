@@ -1,6 +1,7 @@
 import type { PgColumn, PgTable } from "drizzle-orm/pg-core";
 import type { Tx } from "@/lib/db/db";
 import { clients } from "@/lib/db/schema";
+import { insertClients } from "../../support/clients";
 
 export type RlsTableEntry = {
   table: PgTable;
@@ -19,16 +20,20 @@ export type RlsTableEntry = {
 //     table: invoices,
 //     tenantColumn: invoices.clientId,
 //     seed: async (tx, clientId) => {
-//       await tx.insert(clients).values({ id: clientId });
+//       await insertClients(tx, [clientId]);
 //       await tx.insert(invoices).values({ clientId, number: "INV-1" });
 //     },
 //   },
+//
+// Seeds may insert a Client's `organization` row (it has no RLS); the harness
+// deletes those after every registered table.
 export const RLS_REGISTRY: RlsTableEntry[] = [
   {
     table: clients,
     tenantColumn: clients.id,
+    // clients.id references organization.id, so the organization goes first.
     seed: async (tx, clientId) => {
-      await tx.insert(clients).values({ id: clientId });
+      await insertClients(tx, [clientId]);
     },
   },
 ];

@@ -14,9 +14,18 @@ import {
   Outlet,
   Scripts,
   ScrollRestoration,
+  type ShouldRevalidateFunctionArgs,
 } from "react-router";
 
 import CenteredMessage from "@/components/centered-message";
+import Toaster from "@/components/ui/toaster";
+import { useTheme } from "@/hooks/use-theme";
+import {
+  getHtmlTheme,
+  revalidateUnlessThemeFailed,
+  type Theme,
+} from "@/lib/theme";
+import { getThemeFromRequest } from "@/lib/theme.server";
 import type { Route } from "./+types/root";
 
 const NOT_FOUND_STATUS = 404;
@@ -38,6 +47,15 @@ const GENERIC_ERROR_COPY: ErrorCopy = {
   title: "Something went wrong",
   detail: "Try reloading the page.",
 };
+
+export function loader({ request }: Route.LoaderArgs): { theme: Theme } {
+  return { theme: getThemeFromRequest(request) };
+}
+
+// Every route with a loader must do the same (see revalidateUnlessThemeFailed).
+export function shouldRevalidate(args: ShouldRevalidateFunctionArgs): boolean {
+  return revalidateUnlessThemeFailed(args);
+}
 
 export function links(): Route.LinkDescriptors {
   // Same URLs the @fontsource CSS points at, so the preloads are reused.
@@ -61,8 +79,11 @@ type LayoutProps = {
 };
 
 export function Layout({ children }: LayoutProps): React.ReactNode {
+  const { theme } = useTheme();
+
   return (
-    <html lang="en">
+    // No attribute for System: the tokens follow prefers-color-scheme.
+    <html lang="en" data-theme={getHtmlTheme(theme)}>
       <head>
         <meta charSet="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -79,7 +100,12 @@ export function Layout({ children }: LayoutProps): React.ReactNode {
 }
 
 export default function App(): React.ReactNode {
-  return <Outlet />;
+  return (
+    <>
+      <Outlet />
+      <Toaster />
+    </>
+  );
 }
 
 export function ErrorBoundary({

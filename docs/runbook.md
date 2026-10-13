@@ -9,14 +9,17 @@ Prerequisites: Node 24 (the version in `.nvmrc`; `nvm use` picks it up), Docker 
 ```sh
 corepack enable            # provides the pnpm version pinned in package.json
 pnpm install
-docker compose up -d       # Postgres 18 on 127.0.0.1:5432
+docker compose up -d       # Postgres 18 on 127.0.0.1:5432, Mailpit on 1025/8025
 cp .env.example .env       # local-only values that match docker-compose.yml
 pnpm db:migrate            # migrations as neondb_owner, then role passwords
 pnpm dev                   # http://localhost:5173
 ```
 
+- In `.env`, set `ADMIN_EMAIL` to the address you'll sign in with as the Admin. Magic links go only to that address.
+- **Mailpit** catches every email the app sends locally (magic links, Invitations): open `http://localhost:8025` to read them. Nothing leaves your machine. Its SMTP port is `127.0.0.1:1025`, which `.env.example` points `SMTP_HOST` and `SMTP_PORT` at, with no auth.
 - `docker compose up -d` runs `docker/postgres-init.sql` on first start. It creates the `neondb_owner` role (mirrors Neon's owner: `CREATEROLE`, `BYPASSRLS`, not superuser) and two databases: `client_dashboard` (dev) and `client_dashboard_test` (tests). To start from scratch, `docker compose down -v`.
-- `pnpm test` runs Vitest. Its global setup loads `.env.test` (vars already set in the shell win) and migrates `client_dashboard_test` before any suite runs. Postgres must be up.
+- If `pnpm db:migrate` stops with `clients has N row(s) with no organization`, the database holds Clients left over from before Phase 2 (e.g. a crashed test run). Delete them as the owner (`delete from clients;`) and migrate again. Prod has none.
+- `pnpm test` runs Vitest. Its global setup loads `.env.test` (vars already set in the shell win) and migrates `client_dashboard_test` before any suite runs. Postgres and Mailpit must be up (the mailer test sends to Mailpit and reads the message back through its API on `127.0.0.1:8025`), so ports 5432, 1025 and 8025 must be free for compose.
 - Other checks, the same ones CI runs: `pnpm typecheck`, `pnpm lint`, `pnpm format:check`, `pnpm build`.
 
 Roles are cluster-wide, so the dev and test databases share `app_tenant` and `app_system`. The passwords in `.env` and `.env.test` must match, or each migrate resets the other's.
@@ -30,10 +33,18 @@ docker build -t client-dashboard .
 docker run --rm -p 3000:3000 \
   -e DATABASE_URL_TENANT=postgres://app_tenant:app_tenant_local@host.docker.internal:5432/client_dashboard \
   -e DATABASE_URL_SYSTEM=postgres://app_system:app_system_local@host.docker.internal:5432/client_dashboard \
+  -e BETTER_AUTH_SECRET=local-only-better-auth-secret-change-me-0123456789 \
+  -e BETTER_AUTH_URL=http://localhost:3000 \
+  -e ADMIN_EMAIL=admin@example.com \
+  -e SMTP_HOST=host.docker.internal \
+  -e SMTP_PORT=1025 \
+  -e MAIL_FROM=portal@localhost.test \
   client-dashboard
 ```
 
-Then open `http://localhost:3000` and `http://localhost:3000/healthz`. `host.docker.internal` is Docker Desktop's name for the host. On Linux it would reach the bridge IP, but compose binds Postgres to `127.0.0.1` only, so use `--network host` instead and `localhost` in both URLs (then drop `-p`). The container doesn't run migrations; run `pnpm db:migrate` on the host first.
+Then open `http://localhost:3000` and `http://localhost:3000/healthz`. `host.docker.internal` is Docker Desktop's name for the host. On Linux it would reach the bridge IP, but compose binds Postgres and Mailpit to `127.0.0.1` only, so use `--network host` instead and `localhost` in the URLs and `SMTP_HOST` (then drop `-p`). The container doesn't run migrations; run `pnpm db:migrate` on the host first.
+
+Off Vercel the app ignores `X-Forwarded-For` (anyone can set it), so the sign-in rate limits share one bucket per path for every client: 5 magic-link requests a minute in total. That is safe, only tighter. Before self-hosting for real, behind a proxy that overwrites the header, change `trustForwardedFor` in `app/lib/auth/auth.server.ts` through a ticket.
 
 ## 2. Env vars and secrets
 
@@ -44,13 +55,21 @@ Env is read and validated in one place, `app/lib/env.ts`. A missing or malformed
 | `DATABASE_URL_TENANT` | App runtime: tenant pool, logs in as `app_tenant` (subject to RLS). | `.env`, `.env.test`, CI inline (`test` job), Vercel env (prod: Neon **pooled** URL, sensitive) |
 | `DATABASE_URL_SYSTEM` | App runtime: system pool, logs in as `app_system` (`BYPASSRLS`). | `.env`, `.env.test`, CI inline (`test` job), Vercel env (prod: Neon **pooled** URL, sensitive) |
 | `DB_QUERY_TIMEOUT_MS` | App runtime: time limit in ms for every query on both pools. Optional: default `10000`, must be a positive integer, max `600000`. Migrations aren't bound by it. | `.env` (optional), Vercel env (optional; leave unset for the default) |
+| `BETTER_AUTH_SECRET` | App runtime: Better Auth's signing secret (session cookies). At least 32 characters. Rotating it signs everyone out (section 5). | `.env`, `.env.test`, CI inline (`test` job), Vercel env (prod: `openssl rand -base64 32`, sensitive) |
+| `BETTER_AUTH_URL` | App runtime: the portal's public origin, with no trailing slash or path. Must be `https`, except `http` on `localhost` / `127.0.0.1`. Drives cookies, trusted origins, the passkey `rpID` (its hostname) and `origin`, and the links in emails. | `.env`, `.env.test`, CI inline (`test` job), Vercel env (prod: `https://portal.neveslabs.dev`) |
+| `ADMIN_EMAIL` | App runtime: the Admin's email, compared case-insensitively. Magic links are sent only to it, and it is the only account that can exist in Phase 2. | `.env` (your own address), `.env.test`, CI inline (`test` job), Vercel env (sensitive) |
+| `SMTP_HOST` | App runtime: SMTP server for all email. | `.env` / `.env.test` (`localhost`, Mailpit), CI inline (`test` job), Vercel env (prod: `smtp.gmail.com`) |
+| `SMTP_PORT` | App runtime: SMTP port, 1–65535. Port `465` means implicit TLS; any other port is plain. | `.env` / `.env.test` (`1025`, Mailpit), CI inline (`test` job), Vercel env (prod: `465`) |
+| `SMTP_USER` | App runtime: SMTP login. Optional, but set together with `SMTP_PASSWORD` or not at all. | Unset locally and in CI (Mailpit needs no auth). Vercel env (prod: the dedicated Gmail account, sensitive) |
+| `SMTP_PASSWORD` | App runtime: SMTP password. Optional, but set together with `SMTP_USER` or not at all. When set, `SMTP_PORT` must be `465`, so the credentials never cross a plain connection. | Unset locally and in CI. Vercel env (prod: the dedicated Gmail account's app password, sensitive) |
+| `MAIL_FROM` | App runtime: sender address. The display name is always "Neves Labs". | `.env` / `.env.test` (`portal@localhost.test`), CI inline (`test` job), Vercel env (prod: the dedicated Gmail address) |
 | `DATABASE_URL_OWNER` | Migrate command: runs migrations as `neondb_owner`. | `.env`, `.env.test`, CI inline (`test` job), GitHub `production` environment secret (prod: Neon **direct** URL) |
 | `APP_TENANT_PASSWORD` | Migrate command: the password it sets for `app_tenant`. Must match the password in `DATABASE_URL_TENANT`. | `.env`, `.env.test`, CI inline (`test` job), GitHub `production` environment secret |
 | `APP_SYSTEM_PASSWORD` | Migrate command: the password it sets for `app_system`. Must match the password in `DATABASE_URL_SYSTEM`. | `.env`, `.env.test`, CI inline (`test` job), GitHub `production` environment secret |
 | `VERCEL_TOKEN` | Deploy job: Vercel access token for the CLI. | GitHub `production` environment secret |
 | `VERCEL_ORG_ID` | Deploy job: Vercel team (org) id. | GitHub `production` environment secret |
 | `VERCEL_PROJECT_ID` | Deploy job: Vercel project id. | GitHub `production` environment secret |
-| `VERCEL` | Set to `1` by `vercel build` (the CLI sets it itself). When set, the build applies the Vercel React Router preset (`react-router.config.ts`). | Set by Vercel only. Never set it locally or in Docker: the preset's output doesn't run under `react-router-serve`. |
+| `VERCEL` | Set to `1` by `vercel build` (the CLI sets it itself). When set, the build applies the Vercel React Router preset (`react-router.config.ts`). Vercel also sets it at run time, and only then does the auth module trust `X-Forwarded-For` (Vercel overwrites it with the client IP) for rate limits. | Set by Vercel only. Never set it locally or in Docker: the preset's output doesn't run under `react-router-serve`. |
 | `PORT` | Port `react-router-serve` listens on (default `3000`). | `Dockerfile` (`3000`) |
 
 The deploy-only secrets (`VERCEL_*` and the prod `DATABASE_URL_OWNER`) aren't in `.env.example`: they never exist on a dev machine.
@@ -143,6 +162,27 @@ GitHub masks secret values in job logs, and the workflow passes them only as env
 3. In GoDaddy, add the records Vercel shows: `CNAME` named `www`, and an `A` record named `@` (apex). Remove GoDaddy's default parking `A` record for `@` and any forwarding on the domain, or they will fight Vercel's.
 4. If either domain is still attached to the portal's project (the Phase 1 setup redirected both to the portal), remove it there first, or Vercel won't let the site's project add it.
 
+### 3.6 Phase 2 before prod deploy
+
+Phase 2 adds sign-in and email. The app fails at startup until all eight vars below exist, so set them before the first Phase 2 deploy.
+
+1. Generate the Better Auth secret: `openssl rand -base64 32`. Store it in your password manager.
+2. Vercel project **Settings → Environment Variables**, environment **Production**:
+
+   | Var | Value | Sensitive |
+   |---|---|---|
+   | `BETTER_AUTH_SECRET` | the secret from step 1 | yes |
+   | `BETTER_AUTH_URL` | `https://portal.neveslabs.dev` | no |
+   | `ADMIN_EMAIL` | the Admin's email | yes |
+   | `SMTP_HOST` | `smtp.gmail.com` | no |
+   | `SMTP_PORT` | `465` | no |
+   | `SMTP_USER` | the dedicated Gmail account | yes |
+   | `SMTP_PASSWORD` | that account's app password | yes |
+   | `MAIL_FROM` | the dedicated Gmail address | yes |
+
+   `SMTP_PORT` must be `465` (implicit TLS) whenever `SMTP_PASSWORD` is set; the app refuses to start otherwise.
+3. Confirm `neveslabs.dev` receives no mail: `dig MX neveslabs.dev +short` must print nothing. Mail is sent from the Gmail address, never from the domain.
+
 ## 4. How a deploy works
 
 Every push to `main` (a merged PR) runs `.github/workflows/ci.yml`:
@@ -166,7 +206,7 @@ The `deploy` job shows as skipped on PRs.
 
 Until that ships, nothing deploys, which is the safe state.
 
-## 5. Rotating a role password
+## 5. Rotating passwords and secrets
 
 For `app_tenant` or `app_system`:
 
@@ -191,6 +231,27 @@ Between step 4's migrate and the new deploy going live, the old deployment's poo
 For `neondb_owner`: reset its password in the Neon Console (**Roles → neondb_owner → Reset password**), then update the `DATABASE_URL_OWNER` environment secret. Nothing else uses it. If the old password may have leaked, reset first (that revokes it), then terminate its other sessions as above with `usename = 'neondb_owner'`.
 
 For `VERCEL_TOKEN`: create a new token, update the environment secret, then delete the old token. If the old token may have leaked, delete it first, then create and store the new one.
+
+For `BETTER_AUTH_SECRET`: generate a new one (`openssl rand -base64 32`), update the Vercel env var, then redeploy (re-run the latest run on `main`). **Rotating it signs everyone out**: every session cookie was signed with the old secret. The Admin signs in again with the passkey.
+
+For the Gmail app password (`SMTP_PASSWORD`):
+
+1. In the dedicated Gmail account, create a new app password.
+2. Update `SMTP_PASSWORD` in Vercel (Production).
+3. Redeploy (re-run the latest run on `main`), then request a magic link to check mail still arrives.
+4. Revoke the old app password in the Gmail account.
+
+If the old app password may have leaked, revoke it first (mail stops until the redeploy), then do steps 1 to 3.
+
+### Magic links stop arriving: the hourly cap
+
+`ADMIN_EMAIL` gets at most 10 magic links per hour, whatever IPs ask for them. Once the cap is spent, the sign-in screen still says "Check your email" but nothing is sent, and the Vercel function logs show `auth: magic-link email skipped (hourly cap reached)`. That line means someone (you, or anyone who knows the address) burned the 10/hour cap. If you didn't send the requests, someone is trying to mail-bomb the address.
+
+To recover:
+
+- **Sign in with your passkey.** It doesn't use email, so the cap doesn't affect it.
+- Or wait for the window to end: the cap resets an hour after the first link of the window.
+- Or, if you need a link now, clear the counter in the Neon SQL Editor as `neondb_owner`: `delete from email_send_quota where key like 'magic-link:%';`. Do this only once the requests have stopped, or the cap just fills again.
 
 ## 6. Phase 1 prod walkthrough
 

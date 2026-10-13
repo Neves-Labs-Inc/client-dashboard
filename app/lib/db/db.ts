@@ -16,12 +16,16 @@ const QUERY_READ_TIMEOUT_MESSAGE = "Query read timeout";
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-type Database = NodePgDatabase<typeof schema>;
+export type Database = NodePgDatabase<typeof schema>;
 export type Tx = Parameters<Parameters<Database["transaction"]>[0]>[0];
 
 export type Db = {
   withTenant<T>(clientId: string, work: (tx: Tx) => Promise<T>): Promise<T>;
   withSystem<T>(work: (tx: Tx) => Promise<T>): Promise<T>;
+  // Better Auth only: its Drizzle adapter needs a database, not a
+  // transaction. It is the same system pool as withSystem (app_system), with
+  // no bypass flag, bounded by the pool's client-side query timeout.
+  betterAuthDb: Database;
   close(): Promise<void>;
 };
 
@@ -75,6 +79,7 @@ export function createDbFromPools(pools: DbPools): Db {
         { statement_timeout: statementTimeout },
         work,
       ),
+    betterAuthDb: drizzle({ client: pools.systemPool, schema }),
     close: async () => {
       await Promise.all([pools.tenantPool.end(), pools.systemPool.end()]);
     },

@@ -5,9 +5,11 @@ import pg from "pg";
 import { createDb } from "@/lib/db/db";
 import { clients } from "@/lib/db/schema";
 import { getAppEnv, getMigrateEnv } from "@/lib/env";
+import { deleteClients, insertClients } from "../../support/clients";
 import { getPgError } from "../../support/pg-error";
 
 const INSUFFICIENT_PRIVILEGE = "42501";
+const FOREIGN_KEY_VIOLATION = "23503";
 
 const env = getAppEnv();
 const db = createDb({
@@ -18,15 +20,12 @@ const db = createDb({
 const createdIds: string[] = [];
 
 afterAll(async () => {
-  // app_system can't DELETE from clients, so the owner cleans up.
   const owner = new pg.Client({
     connectionString: getMigrateEnv().DATABASE_URL_OWNER,
   });
   await owner.connect();
   try {
-    await owner.query("delete from clients where id = any($1::uuid[])", [
-      createdIds,
-    ]);
+    await deleteClients(owner, createdIds);
   } finally {
     await owner.end();
     await db.close();
@@ -39,7 +38,7 @@ describe("clients as app_system", () => {
     createdIds.push(...ids);
 
     const rows = await db.withSystem(async (tx) => {
-      await tx.insert(clients).values(ids.map((id) => ({ id })));
+      await insertClients(tx, ids);
       return tx.select().from(clients).where(inArray(clients.id, ids));
     });
 
@@ -54,7 +53,7 @@ describe("clients as app_system", () => {
     const archivedAt = new Date("2026-01-02T03:04:05Z");
 
     const row = await db.withSystem(async (tx) => {
-      await tx.insert(clients).values({ id });
+      await insertClients(tx, [id]);
       const [updated] = await tx
         .update(clients)
         .set({ archivedAt })
@@ -69,7 +68,7 @@ describe("clients as app_system", () => {
   it("is refused when deleting a Client", async () => {
     const id = randomUUID();
     createdIds.push(id);
-    await db.withSystem((tx) => tx.insert(clients).values({ id }));
+    await db.withSystem((tx) => insertClients(tx, [id]));
 
     const run = db.withSystem((tx) =>
       tx.delete(clients).where(eq(clients.id, id)),
@@ -91,5 +90,17 @@ describe("clients as app_tenant", () => {
       code: INSUFFICIENT_PRIVILEGE,
       message: expect.stringMatching(/permission denied/),
     });
+  });
+});
+
+describe("clients and organization", () => {
+  it("refuses a Client row with no organization of the same id", async () => {
+    const id = randomUUID();
+
+    const run = db.withSystem((tx) => tx.insert(clients).values({ id }));
+
+    await expect(run.catch((error) => getPgError(error)?.code)).resolves.toBe(
+      FOREIGN_KEY_VIOLATION,
+    );
   });
 });
