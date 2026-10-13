@@ -5,6 +5,7 @@ import pg from "pg";
 import { createDb, createDbFromPools, type Db, type Tx } from "@/lib/db/db";
 import { clients } from "@/lib/db/schema";
 import { getAppEnv, getMigrateEnv } from "@/lib/env";
+import { deleteClients, insertClients } from "../../support/clients";
 import { getPgError } from "../../support/pg-error";
 
 const CLIENT_A = "6f1c2a3e-8b4d-4c5e-9f70-1a2b3c4d5e6f";
@@ -277,22 +278,19 @@ describe("a tx used after its transaction ended", () => {
   const lateInsertId = randomUUID();
 
   afterAll(async () => {
-    // app_system can't DELETE from clients, so the owner cleans up.
     const owner = new pg.Client({
       connectionString: getMigrateEnv().DATABASE_URL_OWNER,
     });
     await owner.connect();
     try {
-      await owner.query("delete from clients where id = any($1::uuid[])", [
-        [CLIENT_B, lateInsertId],
-      ]);
+      await deleteClients(owner, [CLIENT_B, lateInsertId]);
     } finally {
       await owner.end();
     }
   });
 
   it("refuses a stored tenant tx instead of running it in the next Client's transaction", async () => {
-    await db.withSystem((tx) => tx.insert(clients).values({ id: CLIENT_B }));
+    await db.withSystem((tx) => insertClients(tx, [CLIENT_B]));
     const { db: singleDb } = createSingleConnectionDb();
     try {
       const leaked: { tx: Tx | null } = { tx: null };

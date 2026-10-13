@@ -94,6 +94,7 @@ describe("getHealthResponse", () => {
     const hangingDb: Db = {
       withTenant: () => new Promise(() => {}),
       withSystem: (work) => openDb({}).withSystem(work),
+      betterAuthDb: openDb({}).betterAuthDb,
       close: async () => {},
     };
 
@@ -114,6 +115,7 @@ describe("getHealthResponse", () => {
         return undefined as never;
       },
       withSystem: async () => undefined as never,
+      betterAuthDb: undefined as never,
       close: async () => {},
     };
 

@@ -56,6 +56,43 @@
   --radius-xl: var(--radius);
 }
 
+/* DESIGN §7 skeleton pulse and §8 row highlight (1.2s fade after a ~200ms tint). */
+@theme {
+  --animate-skeleton-pulse: skeleton-pulse 1.6s ease-in-out infinite;
+  --animate-row-highlight: row-highlight 1.4s var(--ease-out) both;
+  /* No end keyframe or fill: it fades back to the item's own background
+     (the current entry's surface), not to transparent. */
+  --animate-nav-highlight: nav-highlight 1.2s var(--ease-out);
+
+  @keyframes skeleton-pulse {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.55;
+    }
+  }
+
+  @keyframes nav-highlight {
+    14% {
+      background-color: var(--color-accent-subtle);
+    }
+  }
+
+  @keyframes row-highlight {
+    0% {
+      background-color: transparent;
+    }
+    14% {
+      background-color: var(--color-accent-subtle);
+    }
+    100% {
+      background-color: transparent;
+    }
+  }
+}
+
 @layer base {
   * {
     @apply border-border;

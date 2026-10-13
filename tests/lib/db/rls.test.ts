@@ -5,6 +5,7 @@ import type { PgTable } from "drizzle-orm/pg-core";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import pg from "pg";
 import { createDb } from "@/lib/db/db";
+import { AUTH_TABLES, organization } from "@/lib/db/schema";
 import { getAppEnv, getMigrateEnv } from "@/lib/env";
 import { getPgError } from "../../support/pg-error";
 import { RLS_REGISTRY } from "./rls-registry";
@@ -44,6 +45,10 @@ afterAll(async () => {
         .delete(entry.table)
         .where(inArray(entry.tenantColumn, seededClientIds));
     }
+    // Seeds' Client organizations, parents of every registered table.
+    await ownerDb
+      .delete(organization)
+      .where(inArray(organization.id, seededClientIds));
   } finally {
     await owner.end();
     await db.close();
@@ -252,6 +257,88 @@ describe.each(REGISTERED_TABLES)(
     });
   },
 );
+
+describe("Better Auth tables", () => {
+  const authTableNames = AUTH_TABLES.map((table) => getTableName(table));
+  const inAuthTables = sql.join(
+    authTableNames.map((name) => sql`${name}`),
+    sql`, `,
+  );
+
+  it("give app_tenant no privileges at all", async () => {
+    const granted = await db.withSystem(async (tx) => {
+      const result = await tx.execute<{ table: string; privilege: string }>(
+        sql`select table_name as "table", privilege_type as privilege
+          from information_schema.role_table_grants
+          where grantee = 'app_tenant'
+            and table_schema = 'public'
+            and table_name in (${inAuthTables})`,
+      );
+      return result.rows;
+    });
+
+    expect(granted).toEqual([]);
+  });
+
+  it("refuse app_tenant reading any of them", async () => {
+    const tenant = new pg.Client({
+      connectionString: env.DATABASE_URL_TENANT,
+    });
+    await tenant.connect();
+    try {
+      const outcomes: { name: string; outcome: string | undefined }[] = [];
+      for (const name of authTableNames) {
+        const outcome = await tenant
+          .query(`select 1 from ${tenant.escapeIdentifier(name)} limit 1`)
+          .then(() => "read")
+          .catch((error: unknown) => getPgError(error)?.code);
+        outcomes.push({ name, outcome });
+      }
+
+      expect(outcomes).toEqual(
+        authTableNames.map((name) => ({ name, outcome: "42501" })),
+      );
+    } finally {
+      await tenant.end();
+    }
+  });
+
+  it("give app_system read and write on every one", async () => {
+    const privileges = await db.withSystem(async (tx) => {
+      const result = await tx.execute<{ table: string; privilege: string }>(
+        sql`select table_name as "table", privilege_type as privilege
+          from information_schema.role_table_grants
+          where grantee = 'app_system'
+            and table_schema = 'public'
+            and table_name in (${inAuthTables})
+          order by table_name, privilege_type`,
+      );
+      return result.rows;
+    });
+
+    const expected = authTableNames.toSorted().flatMap((table) =>
+      ["DELETE", "INSERT", "SELECT", "UPDATE"].map((privilege) => ({
+        table,
+        privilege,
+      })),
+    );
+    expect(privileges).toEqual(expected);
+  });
+
+  it("have no RLS", async () => {
+    const withRls = await db.withSystem(async (tx) => {
+      const result = await tx.execute<{ name: string }>(
+        sql`select relname as name from pg_class
+          where relnamespace = 'public'::regnamespace
+            and relname in (${inAuthTables})
+            and relrowsecurity`,
+      );
+      return result.rows;
+    });
+
+    expect(withRls).toEqual([]);
+  });
+});
 
 describe("role guards", () => {
   it("gives app_system BYPASSRLS and app_tenant none", async () => {

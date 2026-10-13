@@ -7,3 +7,4 @@ build/
 .vercel/
 .DS_Store
 .scratch/
+.playwright-mcp/
