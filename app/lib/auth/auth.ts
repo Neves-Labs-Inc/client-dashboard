@@ -6,9 +6,10 @@ import {
   magicLink,
   organization as organizationPlugin,
 } from "better-auth/plugins";
-import { and, asc, eq, gt, isNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, isNull, sql } from "drizzle-orm";
 import { CLIENT_IP_HEADER, withClientIp } from "@/lib/auth/client-ip";
 import { buildMagicLinkEmail } from "@/lib/auth/emails";
+import { getClientNameError, normalizeClientName } from "@/lib/client-name";
 import type { Db } from "@/lib/db/db";
 import {
   account,
@@ -25,6 +26,7 @@ import {
   verification,
 } from "@/lib/db/schema";
 import type { Mailer } from "@/lib/mailer/mailer";
+import type { Result } from "@/lib/result";
 
 // The one module that wraps Better Auth (ADR 0001): nothing else on the
 // server imports it. Better Auth runs on the system pool (ADR 0003).
@@ -46,6 +48,13 @@ const PASSKEY_RATE_LIMIT = { window: 60, max: 10 };
 // than this many links an hour (mail-bombing, Gmail's daily sending cap).
 const MAGIC_LINK_EMAIL_QUOTA = { windowMs: HOUR_MS, max: 10 };
 const PASSKEY_RP_NAME = "Neves Labs portal";
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const UNIQUE_VIOLATION = "23505";
+const CLIENT_NAME_INDEX = "organization_name_lower_key";
+const CREATED = 201;
+const UNPROCESSABLE = 422;
+const CONFLICT = 409;
 
 // Better Auth endpoints the portal never calls over HTTP. Closed so a
 // magic-link session (which may only register a passkey) can't list or
@@ -105,6 +114,28 @@ export type ClientSummary = {
   owner: { email: string } | { pending: true } | null;
 };
 
+export type CreateClientError = "invalid-name" | "duplicate-name";
+
+export type TeamMember = {
+  userId: string;
+  email: string;
+  name: string;
+  role: "owner" | "member";
+};
+
+export type PendingInvitation = { id: string; email: string; sentAt: Date };
+
+export type Team = {
+  clientId: string;
+  name: string;
+  // Oldest first.
+  members: TeamMember[];
+  // Live only (pending and unexpired), newest first.
+  pendingInvitations: PendingInvitation[];
+  // No members and no live pending invitation.
+  canInviteFirstOwner: boolean;
+};
+
 export type Auth = {
   // Better Auth's HTTP handler, mounted at /api/auth/*.
   handler(request: Request): Promise<Response>;
@@ -115,6 +146,13 @@ export type Auth = {
   signOut(request: Request): Promise<Headers>;
   // Active Clients, sorted by name (case-insensitive).
   listClients(): Promise<ClientSummary[]>;
+  // A new Client with no members: the Admin belongs to none. The name is
+  // trimmed and unique case-insensitively, archived Clients included.
+  createClient(
+    name: string,
+  ): Promise<Result<{ clientId: string }, CreateClientError>>;
+  // Null when there is no such Client (or the id isn't a UUID).
+  getTeam(clientId: string): Promise<Team | null>;
 };
 
 type AuthDeps = {
@@ -231,6 +269,97 @@ class BetterAuthModule implements Auth {
       ...row,
       owner: toOwner(ownerEmail, hasLiveInvitation),
     }));
+  }
+
+  async createClient(
+    name: string,
+  ): Promise<Result<{ clientId: string }, CreateClientError>> {
+    if (getClientNameError(name) !== null) {
+      console.warn("auth: refused a Client name (blank or too long)");
+      return { value: null, error: "invalid-name", status: UNPROCESSABLE };
+    }
+
+    // Written directly, in the shape the organization plugin reads: its
+    // createOrganization would make the Admin a member.
+    const createdAt = this.now();
+    try {
+      const clientId = await this.db.withSystem(async (tx) => {
+        const { rows } = await tx.execute<{ id: string }>(
+          sql`select uuidv7() as id`,
+        );
+        const id = rows[0].id;
+        await tx.insert(organization).values({
+          id,
+          name: normalizeClientName(name),
+          slug: id,
+          createdAt,
+        });
+        await tx.insert(clients).values({ id, createdAt });
+        return id;
+      });
+      return { value: { clientId }, error: null, status: CREATED };
+    } catch (error) {
+      // The index, not a pre-check, so two racing creates can't both win.
+      if (!isUniqueViolation(error, CLIENT_NAME_INDEX)) throw error;
+
+      console.warn("auth: refused a Client name (already taken)");
+      return { value: null, error: "duplicate-name", status: CONFLICT };
+    }
+  }
+
+  async getTeam(clientId: string): Promise<Team | null> {
+    if (!UUID_PATTERN.test(clientId)) return null;
+
+    const now = this.now();
+    const team = await this.db.withSystem(async (tx) => {
+      const [client] = await tx
+        .select({ name: organization.name })
+        .from(clients)
+        .innerJoin(organization, eq(organization.id, clients.id))
+        .where(eq(clients.id, clientId));
+      if (!client) return null;
+
+      const members = await tx
+        .select({
+          userId: member.userId,
+          email: user.email,
+          name: user.name,
+          role: member.role,
+        })
+        .from(member)
+        .innerJoin(user, eq(user.id, member.userId))
+        .where(eq(member.organizationId, clientId))
+        .orderBy(asc(member.createdAt), asc(member.id));
+      const pendingInvitations = await tx
+        .select({
+          id: invitation.id,
+          email: invitation.email,
+          sentAt: invitation.createdAt,
+        })
+        .from(invitation)
+        .where(
+          and(
+            eq(invitation.organizationId, clientId),
+            eq(invitation.status, "pending"),
+            gt(invitation.expiresAt, now),
+          ),
+        )
+        .orderBy(desc(invitation.createdAt), desc(invitation.id));
+      return { name: client.name, members, pendingInvitations };
+    });
+    if (team === null) return null;
+
+    return {
+      clientId,
+      name: team.name,
+      members: team.members.map((row) => ({
+        ...row,
+        role: row.role === "owner" ? "owner" : "member",
+      })),
+      pendingInvitations: team.pendingInvitations,
+      canInviteFirstOwner:
+        team.members.length === 0 && team.pendingInvitations.length === 0,
+    };
   }
 
   // Better Auth sees only the client IP this module trusts.
@@ -381,6 +510,19 @@ function toOwner(
   if (email !== null) return { email };
 
   return hasLiveInvitation ? { pending: true } : null;
+}
+
+// Drizzle wraps the driver's error in `cause`.
+function isUniqueViolation(error: unknown, constraint: string): boolean {
+  const source = error instanceof Error ? (error.cause ?? error) : error;
+  if (typeof source !== "object" || source === null) return false;
+
+  return (
+    "code" in source &&
+    source.code === UNIQUE_VIOLATION &&
+    "constraint" in source &&
+    source.constraint === constraint
+  );
 }
 
 function requireUserVerified(isUserVerified: boolean | undefined): void {

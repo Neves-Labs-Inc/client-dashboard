@@ -1,13 +1,28 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { Access, AccessResult, ClientSummary } from "@/lib/auth/auth";
+import type {
+  Access,
+  AccessResult,
+  Auth,
+  ClientSummary,
+  Team,
+} from "@/lib/auth/auth";
+import { loader as clientLoader } from "@/routes/admin/client";
+import {
+  action as teamAction,
+  loader as teamLoader,
+} from "@/routes/admin/client-team";
 import {
   action as adminIndexAction,
+  clientAction as adminIndexClientAction,
   loader as adminIndexLoader,
+  shouldRevalidate as adminIndexShouldRevalidate,
 } from "@/routes/admin/index";
 import {
   action as adminAction,
   loader as adminLoader,
+  shouldRevalidate as adminShouldRevalidate,
 } from "@/routes/admin/layout";
+import type { CreateClientOutcome } from "@/lib/new-client";
 import { loader as checkEmailLoader } from "@/routes/auth/check-email";
 import { loader as passkeyLoader } from "@/routes/auth/passkey";
 import { loader as signInLoader } from "@/routes/auth/sign-in";
@@ -18,13 +33,26 @@ import { loader as indexLoader } from "@/routes/index";
 const RENEWED_COOKIE = "better-auth.session_token=renewed; Path=/; HttpOnly";
 const getAccess = vi.fn<(request: Request) => Promise<AccessResult>>();
 const listClients = vi.fn<() => Promise<ClientSummary[]>>();
+const createClient = vi.fn<Auth["createClient"]>();
+const getTeam = vi.fn<Auth["getTeam"]>();
 
 vi.mock("@/lib/auth/auth.server", () => ({
   auth: {
     getAccess: (request: Request) => getAccess(request),
     listClients: () => listClients(),
+    createClient: (name: string) => createClient(name),
+    getTeam: (clientId: string) => getTeam(clientId),
   },
 }));
+
+const CLIENT_ID = "0199d0a4-5b6c-7d8e-9f01-23456789abcd";
+const TEAM: Team = {
+  clientId: CLIENT_ID,
+  name: "Acme",
+  members: [],
+  pendingInvitations: [],
+  canInviteFirstOwner: true,
+};
 
 const ADMIN_NEEDS_PASSKEY: Access = {
   kind: "admin-needs-passkey",
@@ -34,10 +62,28 @@ const ANONYMOUS: Access = { kind: "anonymous" };
 const ADMIN: Access = { kind: "admin", email: "admin@test.local" };
 
 // Typed by the call site, so it fits each route's own loader or action args.
-function argsFor<Args>(path: string, method = "GET"): Args {
-  const request = new Request(`http://localhost:5173${path}`, { method });
-  // Loaders read only the request; the rest of the args are unused here.
-  return { request, params: {}, context: {} } as Args;
+const PORTAL_ORIGIN = "http://localhost:5173";
+
+function argsFor<Args>(
+  path: string,
+  method = "GET",
+  params: Record<string, string> = {},
+  body?: FormData,
+  origin: string = PORTAL_ORIGIN,
+): Args {
+  const request = new Request(`${PORTAL_ORIGIN}${path}`, {
+    method,
+    body,
+    headers: { origin },
+  });
+  // Loaders read only the request and params; the rest are unused here.
+  return { request, params, context: {} } as Args;
+}
+
+function createArgs<Args>(name: string, origin = PORTAL_ORIGIN): Args {
+  const body = new FormData();
+  body.set("name", name);
+  return argsFor<Args>("/admin?index", "POST", {}, body, origin);
 }
 
 function answerAs(access: Access): void {
@@ -68,6 +114,14 @@ beforeEach(() => {
   getAccess.mockReset();
   listClients.mockReset();
   listClients.mockResolvedValue([]);
+  createClient.mockReset();
+  createClient.mockResolvedValue({
+    value: { clientId: CLIENT_ID },
+    error: null,
+    status: 201,
+  });
+  getTeam.mockReset();
+  getTeam.mockResolvedValue(TEAM);
 });
 
 describe("access loaders forward the session's Set-Cookie", () => {
@@ -115,7 +169,19 @@ describe("the Admin guard", () => {
     loader: () => adminLoader(argsFor("/admin")),
     "index loader": () => adminIndexLoader(argsFor("/admin?_data=index")),
     action: () => adminAction(argsFor("/admin", "POST")),
-    "index action": () => adminIndexAction(argsFor("/admin?index", "POST")),
+    "index action": () => adminIndexAction(createArgs("Acme")),
+    "Team loader": () =>
+      teamLoader(
+        argsFor(`/admin/clients/${CLIENT_ID}/team`, "GET", {
+          clientId: CLIENT_ID,
+        }),
+      ),
+    "Team action": () =>
+      teamAction(
+        argsFor(`/admin/clients/${CLIENT_ID}/team`, "POST", {
+          clientId: CLIENT_ID,
+        }),
+      ),
   };
 
   for (const [use, run] of Object.entries(guarded)) {
@@ -145,6 +211,17 @@ describe("the Admin guard", () => {
       expect(headers.get("location")).toBe("/sign-in");
     });
   }
+
+  it("creates nothing for a magic-link session", async () => {
+    answerAs(ADMIN_NEEDS_PASSKEY);
+
+    const headers = await getResponseHeaders(() =>
+      adminIndexAction(createArgs("Acme")),
+    );
+
+    expect(headers.get("location")).toBe("/passkey");
+    expect(createClient).not.toHaveBeenCalled();
+  });
 
   it("sends a passkey session from /sign-in and /passkey to /admin", async () => {
     answerAs(ADMIN);
@@ -191,4 +268,260 @@ describe("when the roster can't load", () => {
     // The panel shows its error state; the real error stays on the server.
     await expect(result.data.clients).resolves.toBeNull();
   });
+});
+
+describe("creating a Client", () => {
+  beforeEach(() => {
+    answerAs(ADMIN);
+  });
+
+  type Outcome = { data: unknown; init: ResponseInit | null };
+
+  async function create(name: string): Promise<Outcome> {
+    return (await adminIndexAction(createArgs(name))) as unknown as Outcome;
+  }
+
+  it("answers 201 with the new Client's id", async () => {
+    const result = await create("  Acme ");
+
+    expect(createClient).toHaveBeenCalledWith("  Acme ");
+    expect(result.data).toEqual({ kind: "created", clientId: CLIENT_ID });
+    expect(result.init?.status).toBe(201);
+  });
+
+  it("turns a duplicate into the field's copy", async () => {
+    createClient.mockResolvedValue({
+      value: null,
+      error: "duplicate-name",
+      status: 409,
+    });
+
+    const result = await create("acme");
+
+    expect(result.data).toEqual({
+      kind: "invalid",
+      fieldError: "A Client with this name already exists.",
+    });
+    expect(result.init?.status).toBe(409);
+  });
+
+  it("names the bound a refused name broke", async () => {
+    createClient.mockResolvedValue({
+      value: null,
+      error: "invalid-name",
+      status: 422,
+    });
+
+    const blank = await create("  ");
+    const long = await create("x".repeat(101));
+
+    expect(blank.data).toEqual({
+      kind: "invalid",
+      fieldError: "Enter a name.",
+    });
+    expect(long.data).toEqual({
+      kind: "invalid",
+      fieldError: "Use 100 characters or fewer.",
+    });
+  });
+
+  it("answers a failure without its details", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    createClient.mockRejectedValue(new Error("insert into organization ..."));
+
+    const result = await create("Acme");
+
+    expect(result.data).toEqual({ kind: "failed" });
+    expect(result.init?.status).toBe(500);
+  });
+});
+
+describe("the Team loader", () => {
+  beforeEach(() => {
+    answerAs(ADMIN);
+  });
+
+  function loadTeam(clientId: string) {
+    return teamLoader(
+      argsFor(`/admin/clients/${clientId}/team`, "GET", { clientId }),
+    );
+  }
+
+  it("is a 404 for an unknown or malformed Client", async () => {
+    getTeam.mockResolvedValue(null);
+
+    const thrown = await loadTeam("not-a-uuid").catch(
+      (error: unknown) => error,
+    );
+
+    expect(thrown).toMatchObject({ init: { status: 404 } });
+  });
+
+  it("gives the page null, not an error, when the team can't load", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    getTeam.mockRejectedValue(new Error("connection lost"));
+
+    const result = (await loadTeam(CLIENT_ID)) as unknown as {
+      data: { team: Team | null };
+    };
+
+    expect(result.data.team).toBeNull();
+  });
+
+  it("redirects a Client's workspace to its Team tab", async () => {
+    const headers = await getResponseHeaders(() =>
+      clientLoader(
+        argsFor(`/admin/clients/${CLIENT_ID}`, "GET", { clientId: CLIENT_ID }),
+      ),
+    );
+
+    expect(headers.get("location")).toBe(`/admin/clients/${CLIENT_ID}/team`);
+    expect(headers.getSetCookie()).toEqual([RENEWED_COOKIE]);
+  });
+
+  it("guards the workspace redirect", async () => {
+    answerAs(ADMIN_NEEDS_PASSKEY);
+
+    const headers = await getResponseHeaders(() =>
+      clientLoader(
+        argsFor(`/admin/clients/${CLIENT_ID}`, "GET", { clientId: CLIENT_ID }),
+      ),
+    );
+
+    expect(headers.get("location")).toBe("/passkey");
+  });
+});
+
+describe("a cross-origin create", () => {
+  it("is refused with 403 and creates nothing, even from a sibling subdomain", async () => {
+    answerAs(ADMIN);
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const thrown = await adminIndexAction(
+      createArgs("Acme", "http://www.localhost:5173"),
+    ).catch((error: unknown) => error);
+
+    expect(thrown).toMatchObject({ init: { status: 403 } });
+    expect(createClient).not.toHaveBeenCalled();
+  });
+});
+
+describe("the create's clientAction", () => {
+  type ClientActionArgs = Parameters<typeof adminIndexClientAction>[0];
+
+  function runWith(serverAction: () => Promise<CreateClientOutcome>) {
+    return adminIndexClientAction({ serverAction } as ClientActionArgs);
+  }
+
+  it("passes a create through as plain data", async () => {
+    const created: CreateClientOutcome = {
+      kind: "created",
+      clientId: CLIENT_ID,
+    };
+
+    expect(await runWith(async () => created)).toEqual(created);
+  });
+
+  // RR skips revalidation only for a >= 400 status; offline, a revalidation
+  // would replace the page with the root error boundary.
+  it("gives a refused name a 4xx status", async () => {
+    const result = await runWith(async () => ({
+      kind: "invalid",
+      fieldError: "Enter a name.",
+    }));
+
+    expect(result).toMatchObject({
+      data: { kind: "invalid" },
+      init: { status: 422 },
+    });
+  });
+
+  it("turns a network failure into the banner outcome with a 5xx status", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const result = await runWith(async () => {
+      throw new TypeError("Failed to fetch");
+    });
+
+    expect(result).toMatchObject({
+      data: { kind: "failed" },
+      init: { status: 503 },
+    });
+  });
+
+  it("lets the guard's redirect through", async () => {
+    const redirect = new Response(null, {
+      status: 302,
+      headers: { location: "/passkey" },
+    });
+
+    await expect(
+      runWith(async () => {
+        throw redirect;
+      }),
+    ).rejects.toBe(redirect);
+  });
+});
+
+describe("Admin revalidation", () => {
+  type RevalidateArgs = Parameters<typeof adminShouldRevalidate>[0];
+
+  function argsBetween(
+    current: string,
+    next: string,
+    extra: Partial<RevalidateArgs> = {},
+  ): RevalidateArgs {
+    return {
+      currentUrl: new URL(current, PORTAL_ORIGIN),
+      nextUrl: new URL(next, PORTAL_ORIGIN),
+      defaultShouldRevalidate: true,
+      ...extra,
+    } as RevalidateArgs;
+  }
+
+  const routes = {
+    layout: adminShouldRevalidate,
+    Home: adminIndexShouldRevalidate,
+  };
+
+  for (const [name, shouldRevalidate] of Object.entries(routes)) {
+    it(`skips the ${name} loader when only the drawer opens or closes`, () => {
+      expect(shouldRevalidate(argsBetween("/admin", "/admin?new=client"))).toBe(
+        false,
+      );
+      expect(shouldRevalidate(argsBetween("/admin?new=client", "/admin"))).toBe(
+        false,
+      );
+    });
+
+    it(`runs the ${name} loader for any other navigation or a create`, () => {
+      expect(
+        shouldRevalidate(
+          argsBetween("/admin/clients/x/team", "/admin?new=client"),
+        ),
+      ).toBe(true);
+      expect(
+        shouldRevalidate(argsBetween("/admin?new=client", "/admin?q=1")),
+      ).toBe(true);
+      expect(
+        shouldRevalidate(
+          argsBetween("/admin?new=client", "/admin?new=client", {
+            formMethod: "POST",
+            formAction: "/admin?index",
+          }),
+        ),
+      ).toBe(true);
+    });
+
+    it(`keeps the ${name} loader still after a failed theme change`, () => {
+      expect(
+        shouldRevalidate(
+          argsBetween("/admin", "/admin", {
+            formAction: "/theme",
+            actionResult: { ok: false },
+          }),
+        ),
+      ).toBe(false);
+    });
+  }
 });

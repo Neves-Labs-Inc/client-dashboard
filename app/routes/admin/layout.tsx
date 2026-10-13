@@ -1,6 +1,19 @@
-import { data, Outlet, type ShouldRevalidateFunctionArgs } from "react-router";
+import {
+  data,
+  matchPath,
+  Outlet,
+  useLocation,
+  useNavigation,
+  type ShouldRevalidateFunctionArgs,
+} from "react-router";
 import AdminShell from "@/components/admin/admin-shell";
+import TeamSkeleton from "@/components/admin/team-skeleton";
 import { auth } from "@/lib/auth/auth.server";
+import {
+  getCreatedClientId,
+  isNewClientDrawerToggle,
+  TEAM_ROUTE_PATTERN,
+} from "@/lib/new-client";
 import { getNoStoreHeaders } from "@/lib/no-store-headers";
 import { requireAdmin } from "@/lib/auth/require-access.server";
 import { revalidateUnlessThemeFailed } from "@/lib/theme";
@@ -32,15 +45,36 @@ export async function action({ request }: Route.ActionArgs): Promise<never> {
 export const headers = getNoStoreHeaders;
 
 export function shouldRevalidate(args: ShouldRevalidateFunctionArgs): boolean {
-  return revalidateUnlessThemeFailed(args);
+  return revalidateUnlessThemeFailed(args) && !isNewClientDrawerToggle(args);
 }
 
 export default function AdminLayout({
   loaderData,
 }: Route.ComponentProps): React.ReactNode {
+  const isLoadingTeam = useIsNavigatingToTeam();
+
   return (
     <AdminShell email={loaderData.email} clients={loaderData.clients}>
-      <Outlet />
+      {isLoadingTeam ? <TeamSkeleton /> : <Outlet />}
     </AdminShell>
   );
+}
+
+// The Team loader is awaited, so a client-side navigation into another
+// Client's Team tab shows its skeleton meanwhile. Not after a create: the
+// drawer's "Creating…" covers that wait.
+function useIsNavigatingToTeam(): boolean {
+  const navigation = useNavigation();
+  const { pathname } = useLocation();
+  const target = navigation.location;
+  if (
+    navigation.state !== "loading" ||
+    !target ||
+    target.pathname === pathname
+  ) {
+    return false;
+  }
+  if (getCreatedClientId(target.state) !== null) return false;
+
+  return matchPath(TEAM_ROUTE_PATTERN, target.pathname) !== null;
 }

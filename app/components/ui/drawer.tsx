@@ -28,6 +28,9 @@ type DrawerProps = {
   error?: string | null;
   isDirty?: boolean;
   dirtyConfirm?: DirtyConfirm;
+  // False when the caller moves focus itself on close (e.g. navigating to a
+  // page that focuses its heading), so the opener doesn't take it back.
+  shouldReturnFocus?: boolean;
 };
 
 export default function Drawer({
@@ -39,6 +42,7 @@ export default function Drawer({
   error,
   isDirty = false,
   dirtyConfirm,
+  shouldReturnFocus = true,
 }: DrawerProps): React.ReactNode {
   const [isConfirming, setIsConfirming] = useState(false);
   const bodyRef = useRef<HTMLDivElement>(null);
@@ -118,6 +122,10 @@ export default function Drawer({
   }
 
   function handleCloseAutoFocus(event: Event): void {
+    if (!shouldReturnFocus) {
+      event.preventDefault();
+      return;
+    }
     const opener = returnFocusRef.current;
     if (opener?.isConnected) {
       event.preventDefault();
@@ -160,7 +168,12 @@ export default function Drawer({
             ref={bodyRef}
             className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto overscroll-contain p-4"
           >
-            {error && <FormError variant="banner">{error}</FormError>}
+            {/* Instant, per DESIGN: no motion or layout animation. */}
+            {error && (
+              <FormError variant="banner" isAnimated={false}>
+                {error}
+              </FormError>
+            )}
             {children}
           </div>
           <div className="flex flex-wrap items-center justify-end gap-2 border-t border-line px-4 pt-3 pb-[max(1rem,env(safe-area-inset-bottom))]">

@@ -1,10 +1,8 @@
 import { Plus } from "lucide-react";
 import { Link } from "react-router";
 import { buttonStyles } from "@/components/ui/button-styles";
+import { NEW_CLIENT_HREF } from "@/lib/new-client";
 import { cn } from "@/lib/utils";
-
-// Ticket 06 turns this target into the create-Client drawer.
-export const NEW_CLIENT_HREF = "/admin?new=client";
 
 type NewClientLinkProps = {
   variant?: "primary" | "secondary";

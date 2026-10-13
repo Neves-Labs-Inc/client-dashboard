@@ -1,4 +1,4 @@
-import { redirect } from "react-router";
+import { data, redirect } from "react-router";
 import {
   getAccessHome,
   getAccessRedirect,
@@ -6,6 +6,10 @@ import {
 } from "@/lib/auth/access";
 import type { AccessResult } from "@/lib/auth/auth";
 import { auth } from "@/lib/auth/auth.server";
+import { getAppEnv } from "@/lib/env";
+import { isSameOrigin } from "@/lib/same-origin";
+
+const FORBIDDEN = 403;
 
 // For loaders: the request's access when the page allows it, otherwise a
 // thrown redirect to where that access belongs. Either way the session's
@@ -35,4 +39,21 @@ export async function requireAdmin(request: Request): Promise<AdminAccess> {
   }
 
   return { email: access.email, headers };
+}
+
+// The guard for every /admin action that changes data: requireAdmin, then a
+// same-origin check that throws a 403. A sibling subdomain is same-site, so
+// SameSite=Lax still sends the session cookie with its POST.
+export async function requireAdminMutation(
+  request: Request,
+): Promise<AdminAccess> {
+  const access = await requireAdmin(request);
+  if (!isSameOrigin(request, getAppEnv().BETTER_AUTH_URL)) {
+    console.warn("admin: refused a cross-origin mutation", {
+      path: new URL(request.url).pathname,
+    });
+    throw data(null, { status: FORBIDDEN, headers: access.headers });
+  }
+
+  return access;
 }

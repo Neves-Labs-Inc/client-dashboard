@@ -11,6 +11,8 @@ type NavItemProps = {
   variant?: "sidebar" | "tab";
   // Overrides NavLink's route matching (the gallery's hash links).
   active?: boolean;
+  // The DESIGN §7 highlight fade, for an entry that just appeared.
+  isHighlighted?: boolean;
 };
 
 const BASE_CLASS = {
@@ -33,9 +35,14 @@ export default function NavItem({
   count,
   variant = "sidebar",
   active,
+  isHighlighted = false,
 }: NavItemProps): React.ReactNode {
   const getClassName = (isActive: boolean): string =>
-    cn(BASE_CLASS[variant], isActive && ACTIVE_CLASS[variant]);
+    cn(
+      BASE_CLASS[variant],
+      isActive && ACTIVE_CLASS[variant],
+      isHighlighted && "animate-nav-highlight motion-reduce:animate-none",
+    );
 
   const content = (
     <>

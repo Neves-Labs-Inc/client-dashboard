@@ -785,7 +785,8 @@ describe("signOut", () => {
   });
 });
 
-describe("listClients", () => {
+// Shared by the Client tests: rows they insert are cleaned up after each.
+describe("Clients", () => {
   const NOW = new Date("2026-10-12T12:00:00Z");
   // Names are unique per run: other test files insert Clients concurrently.
   const prefix = `lc-${randomUUID().slice(0, 8)}`;
@@ -871,18 +872,27 @@ describe("listClients", () => {
 
   async function addInvitation(
     organizationId: string,
-    options: { status?: string; expiresAt: Date },
-  ): Promise<void> {
+    options: {
+      status?: string;
+      expiresAt: Date;
+      createdAt?: Date;
+      email?: string;
+    },
+  ): Promise<string> {
     const inviterId = await addUser(`-inviter-${randomUUID()}@example.test`);
-    await db.withSystem((tx) =>
-      tx.insert(invitation).values({
-        organizationId,
-        email: "invitee@example.test",
-        role: "owner",
-        inviterId,
-        ...options,
-      }),
+    const [row] = await db.withSystem((tx) =>
+      tx
+        .insert(invitation)
+        .values({
+          organizationId,
+          email: "invitee@example.test",
+          role: "owner",
+          inviterId,
+          ...options,
+        })
+        .returning({ id: invitation.id }),
     );
+    return row.id;
   }
 
   async function listMine() {
@@ -890,102 +900,356 @@ describe("listClients", () => {
     return all.filter((client) => client.name.startsWith(prefix));
   }
 
-  it("sorts by name, ignoring case", async () => {
-    await addClient("banana");
-    await addClient("Cherry");
-    await addClient("Apple");
+  describe("listClients", () => {
+    it("sorts by name, ignoring case", async () => {
+      await addClient("banana");
+      await addClient("Cherry");
+      await addClient("Apple");
 
-    const names = (await listMine()).map((client) => client.name);
+      const names = (await listMine()).map((client) => client.name);
 
-    expect(names).toEqual([
-      `${prefix} Apple`,
-      `${prefix} banana`,
-      `${prefix} Cherry`,
-    ]);
-  });
-
-  it("counts every member of the Client", async () => {
-    const id = await addClient("Acme");
-    await addMember(id, "-a@example.test", "owner");
-    await addMember(id, "-b@example.test", "member");
-    await addMember(id, "-c@example.test", "member");
-
-    const [acme] = await listMine();
-
-    expect(acme).toMatchObject({ id, userCount: 3, createdAt: NOW });
-  });
-
-  it("shows the Owner's email, the earliest when there are several", async () => {
-    const id = await addClient("Acme");
-    await addMember(id, "-late@example.test", "owner", new Date("2026-10-02"));
-    await addMember(id, "-early@example.test", "owner", new Date("2026-10-01"));
-    await addMember(
-      id,
-      "-plain@example.test",
-      "member",
-      new Date("2026-09-01"),
-    );
-
-    const [acme] = await listMine();
-
-    expect(acme.owner).toEqual({ email: `${prefix}-early@example.test` });
-  });
-
-  it("marks the Owner pending while an invitation is live", async () => {
-    const id = await addClient("Acme");
-    await addInvitation(id, { expiresAt: new Date(NOW.getTime() + DAY_MS) });
-
-    const [acme] = await listMine();
-
-    expect(acme.owner).toEqual({ pending: true });
-  });
-
-  it("has no Owner once the invitation expires", async () => {
-    const id = await addClient("Acme");
-    await addInvitation(id, { expiresAt: new Date(NOW.getTime() + DAY_MS) });
-    now = new Date(NOW.getTime() + 2 * DAY_MS);
-
-    const [acme] = await listMine();
-
-    expect(acme.owner).toBeNull();
-  });
-
-  it("ignores invitations that are no longer pending", async () => {
-    const id = await addClient("Acme");
-    await addInvitation(id, {
-      status: "accepted",
-      expiresAt: new Date(NOW.getTime() + DAY_MS),
+      expect(names).toEqual([
+        `${prefix} Apple`,
+        `${prefix} banana`,
+        `${prefix} Cherry`,
+      ]);
     });
 
-    const [acme] = await listMine();
+    it("counts every member of the Client", async () => {
+      const id = await addClient("Acme");
+      await addMember(id, "-a@example.test", "owner");
+      await addMember(id, "-b@example.test", "member");
+      await addMember(id, "-c@example.test", "member");
 
-    expect(acme.owner).toBeNull();
+      const [acme] = await listMine();
+
+      expect(acme).toMatchObject({ id, userCount: 3, createdAt: NOW });
+    });
+
+    it("shows the Owner's email, the earliest when there are several", async () => {
+      const id = await addClient("Acme");
+      await addMember(
+        id,
+        "-late@example.test",
+        "owner",
+        new Date("2026-10-02"),
+      );
+      await addMember(
+        id,
+        "-early@example.test",
+        "owner",
+        new Date("2026-10-01"),
+      );
+      await addMember(
+        id,
+        "-plain@example.test",
+        "member",
+        new Date("2026-09-01"),
+      );
+
+      const [acme] = await listMine();
+
+      expect(acme.owner).toEqual({ email: `${prefix}-early@example.test` });
+    });
+
+    it("marks the Owner pending while an invitation is live", async () => {
+      const id = await addClient("Acme");
+      await addInvitation(id, { expiresAt: new Date(NOW.getTime() + DAY_MS) });
+
+      const [acme] = await listMine();
+
+      expect(acme.owner).toEqual({ pending: true });
+    });
+
+    it("has no Owner once the invitation expires", async () => {
+      const id = await addClient("Acme");
+      await addInvitation(id, { expiresAt: new Date(NOW.getTime() + DAY_MS) });
+      now = new Date(NOW.getTime() + 2 * DAY_MS);
+
+      const [acme] = await listMine();
+
+      expect(acme.owner).toBeNull();
+    });
+
+    it("ignores invitations that are no longer pending", async () => {
+      const id = await addClient("Acme");
+      await addInvitation(id, {
+        status: "accepted",
+        expiresAt: new Date(NOW.getTime() + DAY_MS),
+      });
+
+      const [acme] = await listMine();
+
+      expect(acme.owner).toBeNull();
+    });
+
+    it("prefers the Owner over a pending invitation", async () => {
+      const id = await addClient("Acme");
+      await addMember(id, "-owner@example.test", "owner");
+      await addInvitation(id, { expiresAt: new Date(NOW.getTime() + DAY_MS) });
+
+      const [acme] = await listMine();
+
+      expect(acme.owner).toEqual({ email: `${prefix}-owner@example.test` });
+    });
+
+    it("has no Owner and no users for a new Client", async () => {
+      await addClient("Acme");
+
+      const [acme] = await listMine();
+
+      expect(acme).toMatchObject({ userCount: 0, owner: null });
+    });
+
+    it("leaves out archived Clients", async () => {
+      await addClient("Active");
+      await addClient("Gone", { archivedAt: NOW });
+
+      const names = (await listMine()).map((client) => client.name);
+
+      expect(names).toEqual([`${prefix} Active`]);
+    });
   });
 
-  it("prefers the Owner over a pending invitation", async () => {
-    const id = await addClient("Acme");
-    await addMember(id, "-owner@example.test", "owner");
-    await addInvitation(id, { expiresAt: new Date(NOW.getTime() + DAY_MS) });
+  describe("createClient", () => {
+    async function create(name: string) {
+      const result = await clock.createClient(name);
+      if (result.value) clientIds.push(result.value.clientId);
+      return result;
+    }
 
-    const [acme] = await listMine();
+    async function countNamed(name: string): Promise<number> {
+      const rows = await db.withSystem((tx) =>
+        tx
+          .select({ id: organization.id })
+          .from(organization)
+          .where(sql`lower(${organization.name}) = lower(${name})`),
+      );
+      return rows.length;
+    }
 
-    expect(acme.owner).toEqual({ email: `${prefix}-owner@example.test` });
+    it("creates the organization and clients rows with one UUIDv7, and no member", async () => {
+      const result = await create(`${prefix} Acme`);
+
+      const id = result.value?.clientId ?? "";
+      const [org] = await db.withSystem((tx) =>
+        tx.select().from(organization).where(eq(organization.id, id)),
+      );
+      const clientRows = await db.withSystem((tx) =>
+        tx.select().from(clients).where(eq(clients.id, id)),
+      );
+      const members = await db.withSystem((tx) =>
+        tx.select().from(member).where(eq(member.organizationId, id)),
+      );
+      expect(result).toMatchObject({ error: null, status: 201 });
+      expect(id).toMatch(UUID_V7);
+      expect(org).toMatchObject({ name: `${prefix} Acme`, slug: id });
+      expect(clientRows).toHaveLength(1);
+      expect(members).toEqual([]);
+    });
+
+    it("trims the name", async () => {
+      const result = await create(`   ${prefix} Acme  `);
+
+      const [acme] = (await clock.listClients()).filter(
+        (client) => client.id === result.value?.clientId,
+      );
+      expect(acme.name).toBe(`${prefix} Acme`);
+    });
+
+    it("accepts a 1-character and a 100-character name", async () => {
+      // The prefix keeps the long one unique across concurrent runs.
+      const longName = `${prefix} `.padEnd(100, "x");
+
+      const short = await create("Z");
+      const long = await create(longName);
+
+      expect(short).toMatchObject({ error: null, status: 201 });
+      expect(long).toMatchObject({ error: null, status: 201 });
+    });
+
+    it("refuses a blank or 101-character name, creating nothing", async () => {
+      const tooLong = `${prefix} `.padEnd(101, "x");
+
+      const blank = await create("   ");
+      const long = await create(tooLong);
+
+      expect(blank).toEqual({
+        value: null,
+        error: "invalid-name",
+        status: 422,
+      });
+      expect(long).toEqual({ value: null, error: "invalid-name", status: 422 });
+      expect(await countNamed(tooLong)).toBe(0);
+    });
+
+    it("refuses a name another Client has in any letter case, creating nothing", async () => {
+      await create(`${prefix} Acme`);
+
+      const spaced = await create(`  ${prefix} acme `);
+      const upper = await create(`${prefix} ACME`);
+
+      expect(spaced).toEqual({
+        value: null,
+        error: "duplicate-name",
+        status: 409,
+      });
+      expect(upper.error).toBe("duplicate-name");
+      expect(await countNamed(`${prefix} Acme`)).toBe(1);
+    });
+
+    it("stores the name in NFC with whitespace runs collapsed", async () => {
+      // "e" + combining acute, and a run of spaces (one a no-break space).
+      const result = await create(`${prefix}  Cafe\u0301 \u00a0 Co`);
+
+      const [cafe] = (await clock.listClients()).filter(
+        (client) => client.id === result.value?.clientId,
+      );
+      expect(cafe.name).toBe(`${prefix} Caf\u00e9 Co`);
+    });
+
+    it("refuses a name that differs from another only in Unicode form", async () => {
+      await create(`${prefix} Caf\u00e9`);
+
+      const decomposed = await create(`${prefix} Cafe\u0301`);
+
+      expect(decomposed.error).toBe("duplicate-name");
+    });
+
+    it("refuses line breaks, zero-width and bidi characters, creating nothing", async () => {
+      const names = [
+        `${prefix} Acme\r\nBcc: x`,
+        `${prefix} Ac\u200bme`,
+        `${prefix} \u202eemcA`,
+        `${prefix} Acme\tCo`,
+        // Hangul filler: renders blank.
+        `${prefix} \u3164`,
+        // Private use.
+        `${prefix} Acme\ue000`,
+      ];
+
+      const results = [];
+      for (const name of names) results.push(await create(name));
+
+      expect(results.map((result) => result.error)).toEqual(
+        names.map(() => "invalid-name"),
+      );
+      expect(await countNamed(`${prefix} Ac\u200bme`)).toBe(0);
+    });
+
+    it("accepts the joiners real names need: an emoji ZWJ sequence and Persian ZWNJ", async () => {
+      // Family emoji (man ZWJ woman ZWJ girl); "Mi\u200cravad" style ZWNJ.
+      const emoji = await create(
+        `${prefix} \u{1f468}\u200d\u{1f469}\u200d\u{1f467} Co`,
+      );
+      const persian = await create(
+        `${prefix} \u0645\u06cc\u200c\u0631\u0648\u0645`,
+      );
+
+      expect(emoji).toMatchObject({ error: null, status: 201 });
+      expect(persian).toMatchObject({ error: null, status: 201 });
+    });
+
+    it("refuses an archived Client's name", async () => {
+      await addClient("Gone", { archivedAt: NOW });
+
+      const result = await create(`${prefix} gone`);
+
+      expect(result.error).toBe("duplicate-name");
+    });
   });
 
-  it("has no Owner and no users for a new Client", async () => {
-    await addClient("Acme");
+  describe("getTeam", () => {
+    it("is null for an unknown id", async () => {
+      expect(await clock.getTeam(randomUUID())).toBeNull();
+    });
 
-    const [acme] = await listMine();
+    it("is null for an id that isn't a UUID", async () => {
+      expect(await clock.getTeam("not-a-uuid")).toBeNull();
+    });
 
-    expect(acme).toMatchObject({ userCount: 0, owner: null });
-  });
+    it("lets a new Client invite its first Owner", async () => {
+      const id = await addClient("Acme");
 
-  it("leaves out archived Clients", async () => {
-    await addClient("Active");
-    await addClient("Gone", { archivedAt: NOW });
+      const team = await clock.getTeam(id);
 
-    const names = (await listMine()).map((client) => client.name);
+      expect(team).toEqual({
+        clientId: id,
+        name: `${prefix} Acme`,
+        members: [],
+        pendingInvitations: [],
+        canInviteFirstOwner: true,
+      });
+    });
 
-    expect(names).toEqual([`${prefix} Active`]);
+    it("lists the members, oldest first", async () => {
+      const id = await addClient("Acme");
+      await addMember(id, "-b@example.test", "member", new Date("2026-10-02"));
+      await addMember(id, "-a@example.test", "owner", new Date("2026-10-01"));
+
+      const team = await clock.getTeam(id);
+
+      expect(team?.members).toEqual([
+        {
+          userId: expect.any(String),
+          email: `${prefix}-a@example.test`,
+          name: "-a@example.test",
+          role: "owner",
+        },
+        {
+          userId: expect.any(String),
+          email: `${prefix}-b@example.test`,
+          name: "-b@example.test",
+          role: "member",
+        },
+      ]);
+      expect(team?.canInviteFirstOwner).toBe(false);
+    });
+
+    it("lists only live pending invitations, newest first", async () => {
+      const id = await addClient("Acme");
+      const live = new Date(NOW.getTime() + DAY_MS);
+      const older = await addInvitation(id, {
+        expiresAt: live,
+        createdAt: new Date("2026-10-10"),
+        email: "older@example.test",
+      });
+      const newer = await addInvitation(id, {
+        expiresAt: live,
+        createdAt: new Date("2026-10-11"),
+        email: "newer@example.test",
+      });
+      await addInvitation(id, { expiresAt: new Date(NOW.getTime() - 1) });
+      await addInvitation(id, { expiresAt: live, status: "canceled" });
+
+      const team = await clock.getTeam(id);
+
+      expect(team?.pendingInvitations).toEqual([
+        {
+          id: newer,
+          email: "newer@example.test",
+          sentAt: new Date("2026-10-11"),
+        },
+        {
+          id: older,
+          email: "older@example.test",
+          sentAt: new Date("2026-10-10"),
+        },
+      ]);
+      expect(team?.canInviteFirstOwner).toBe(false);
+    });
+
+    it("lets the Client invite again once its invitation expires", async () => {
+      const id = await addClient("Acme");
+      await addInvitation(id, { expiresAt: new Date(NOW.getTime() + DAY_MS) });
+      now = new Date(NOW.getTime() + 2 * DAY_MS);
+
+      const team = await clock.getTeam(id);
+
+      expect(team).toMatchObject({
+        pendingInvitations: [],
+        canInviteFirstOwner: true,
+      });
+    });
   });
 });

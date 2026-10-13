@@ -1,8 +1,12 @@
 import { House, Plus } from "lucide-react";
 import { Link, useLocation } from "react-router";
-import { NEW_CLIENT_HREF } from "@/components/admin/new-client-link";
 import NavItem from "@/components/ui/nav-item";
 import type { ClientSummary } from "@/lib/auth/auth";
+import {
+  getCreatedClientId,
+  getTeamPath,
+  NEW_CLIENT_HREF,
+} from "@/lib/new-client";
 
 const LIST_CLASS = "flex flex-col gap-px";
 const LABEL_ID = "nav-clients";
@@ -16,7 +20,9 @@ type AdminSidebarNavProps = {
 export default function AdminSidebarNav({
   clients,
 }: AdminSidebarNavProps): React.ReactNode {
-  const { pathname } = useLocation();
+  const { pathname, state } = useLocation();
+  // Arriving from a create: that Client's entry gets the highlight fade.
+  const createdClientId = getCreatedClientId(state);
 
   return (
     <>
@@ -40,9 +46,10 @@ export default function AdminSidebarNav({
         {(clients ?? []).map((client) => (
           <li key={client.id}>
             <NavItem
-              to={`/admin/clients/${client.id}/team`}
+              to={getTeamPath(client.id)}
               label={client.name}
               active={pathname.startsWith(`/admin/clients/${client.id}/`)}
+              isHighlighted={client.id === createdClientId}
             />
           </li>
         ))}
