@@ -11,6 +11,7 @@ import TeamSkeleton from "@/components/admin/team-skeleton";
 import { auth } from "@/lib/auth/auth.server";
 import {
   getCreatedClientId,
+  isInviteFlagRemoval,
   isNewClientDrawerToggle,
   TEAM_ROUTE_PATTERN,
 } from "@/lib/new-client";
@@ -45,7 +46,11 @@ export async function action({ request }: Route.ActionArgs): Promise<never> {
 export const headers = getNoStoreHeaders;
 
 export function shouldRevalidate(args: ShouldRevalidateFunctionArgs): boolean {
-  return revalidateUnlessThemeFailed(args) && !isNewClientDrawerToggle(args);
+  return (
+    revalidateUnlessThemeFailed(args) &&
+    !isNewClientDrawerToggle(args) &&
+    !isInviteFlagRemoval(args)
+  );
 }
 
 export default function AdminLayout({

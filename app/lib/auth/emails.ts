@@ -15,6 +15,22 @@ export function buildMagicLinkEmail(to: string, url: string): MailMessage {
   };
 }
 
+export function buildInvitationEmail(
+  to: string,
+  clientName: string,
+  url: string,
+): MailMessage {
+  const before = `Neves Labs invited you to join ${clientName} on the Neves Labs client portal as its Owner. Accept the invitation: `;
+  const after = ". It expires in 7 days.";
+  const link = escapeHtml(url);
+  return {
+    to,
+    subject: `You're invited to ${clientName} on the Neves Labs portal`,
+    text: `${before}${url}${after}`,
+    html: `<p>${escapeHtml(before)}<a href="${link}">${link}</a>${escapeHtml(after)}</p>`,
+  };
+}
+
 const HTML_ESCAPES: Record<string, string> = {
   "&": "&amp;",
   "<": "&lt;",

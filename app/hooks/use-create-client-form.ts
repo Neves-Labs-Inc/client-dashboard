@@ -7,7 +7,6 @@ import {
   toCreatedClientState,
   type CreateClientOutcome,
 } from "@/lib/new-client";
-import { toast } from "@/lib/toast";
 
 export const CREATE_CLIENT_FAILED = "Couldn't create the Client. Try again.";
 
@@ -66,16 +65,11 @@ export function useCreateClientForm(isOpen: boolean): CreateClientForm {
     if (outcome.kind === "created") {
       setIsCreated(true);
       // Replace: Back mustn't reopen an empty drawer at /admin?new=client.
-      // The toast waits for the navigation to Team, so it never covers the
-      // footer. navigate() is typed void | Promise; in a data router it's a
-      // Promise that settles when the router state updates, which can be a
-      // frame before React renders the Team page.
-      void Promise.resolve(
-        navigate(getCreatedTeamHref(outcome.clientId), {
-          replace: true,
-          state: toCreatedClientState(outcome.clientId),
-        }),
-      ).then(() => toast("Client created"));
+      // No toast here: the Team tab's invite drawer opening confirms it.
+      void navigate(getCreatedTeamHref(outcome.clientId), {
+        replace: true,
+        state: toCreatedClientState(outcome.clientId),
+      });
     } else if (outcome.kind === "invalid") {
       setFieldError(outcome.fieldError);
       inputRef.current?.focus();

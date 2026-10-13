@@ -2,6 +2,10 @@
 
 Auth.js was chosen at charting, but since September 2025 Better Auth maintains it in security-fix-only mode and tells new projects to use Better Auth. Its v5 has also never left beta. We use Better Auth. It covers every sign-in method we chose (Google, Microsoft, magic link, and passkeys for the Admin) without third-party code. Its organization plugin handles each Client's roster roles and Invitations, so we don't build them ourselves. In exchange, the plugin's schema shapes those tables, so every roster and auth call goes through one module of ours, which keeps a future swap contained.
 
+## Amendment (Phase 2)
+
+The Admin belongs to no Client, but Better Auth's `createOrganization` makes its caller a member and `createInvitation` needs a member inviter. So our auth module writes the Admin's organization rows (one per Client) and each Client's first-Owner Invitation itself, in the organization plugin's exact shapes, and the plugin's native acceptance works on them unchanged. Owners' own invitations and every acceptance stay native, and share our invite-eligibility rule through the plugin's `beforeCreateInvitation` hook.
+
 ## Considered options
 
 - **Auth.js v5 (beta)**: it supports OAuth and magic links, but passkeys are experimental, there are no orgs or invitations, and the project is being wound down.

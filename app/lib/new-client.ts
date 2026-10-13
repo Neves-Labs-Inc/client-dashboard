@@ -7,7 +7,8 @@ export const NEW_CLIENT_VALUE = "client";
 export const NEW_CLIENT_HREF = `/admin?${NEW_CLIENT_PARAM}=${NEW_CLIENT_VALUE}`;
 // The drawer posts to Admin Home's index action.
 export const CREATE_CLIENT_ACTION = "/admin?index";
-// Set on the redirect after a create; ticket 07 opens "Invite first Owner".
+// Set on the redirect after a create: the Team tab opens "Invite first
+// Owner", then drops it.
 export const INVITE_PARAM = "invite";
 export const TEAM_ROUTE_PATTERN = "/admin/clients/:clientId/team";
 
@@ -52,12 +53,32 @@ export function isNewClientDrawerToggle({
   if (currentUrl.pathname !== nextUrl.pathname) return false;
   if (currentUrl.search === nextUrl.search) return false;
 
-  return withoutDrawerParam(currentUrl) === withoutDrawerParam(nextUrl);
+  return (
+    withoutParam(currentUrl, NEW_CLIENT_PARAM) ===
+    withoutParam(nextUrl, NEW_CLIENT_PARAM)
+  );
 }
 
-function withoutDrawerParam(url: URL): string {
+// True when a navigation only drops INVITE_PARAM, once the Team tab has
+// opened its invite drawer. Loaders needn't run for it.
+export function isInviteFlagRemoval({
+  currentUrl,
+  nextUrl,
+}: Pick<ShouldRevalidateFunctionArgs, "currentUrl" | "nextUrl">): boolean {
+  if (currentUrl.pathname !== nextUrl.pathname) return false;
+  if (!currentUrl.searchParams.has(INVITE_PARAM)) return false;
+  if (nextUrl.searchParams.has(INVITE_PARAM)) return false;
+
+  return (
+    withoutParam(currentUrl, INVITE_PARAM) ===
+    withoutParam(nextUrl, INVITE_PARAM)
+  );
+}
+
+// The URL's search without `param`, in a stable order.
+function withoutParam(url: URL, param: string): string {
   const params = new URLSearchParams(url.search);
-  params.delete(NEW_CLIENT_PARAM);
+  params.delete(param);
   params.sort();
   return params.toString();
 }

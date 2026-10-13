@@ -269,6 +269,20 @@ After the first deploy, check each of these by hand:
 3. `curl -s https://portal.neveslabs.dev/healthz` returns 200 with `{"ok":true}`. This proves both pooled URLs and role passwords work, and that the per-transaction query limit works through Neon's pooler. A 503 means one pool can't connect: check the Vercel `DATABASE_URL_*` passwords match the `production` environment secrets, then re-run the latest deploy.
 4. In **Actions → CI → latest run on `main` → deploy**, the **Migrate prod database** step succeeded (`db:migrate: migrations applied, role attributes and passwords set`) before **Deploy to Vercel production** ran.
 
-## 7. Adding to this runbook
+## 7. Phase 2 prod walkthrough
+
+After the first Phase 2 deploy, on `https://portal.neveslabs.dev` (not a preview or `*.vercel.app` URL: there, sign-out answers 403 by design, because the Origin check compares against `BETTER_AUTH_URL`):
+
+1. On `/sign-in`, request a magic link for `ADMIN_EMAIL`, and check it **arrives in Gmail** within a minute. The email is sent in the background after the response (`waitUntil`), so a dropped send shows only here and in the Vercel function logs (`auth: magic-link email failed (…)`). Open the link.
+2. Register a passkey on the "Register a passkey" screen. You land on Admin Home, signed in with it.
+3. Sign out from the user menu, then on `/sign-in` choose **Sign in with a passkey**. You're back on Admin Home.
+4. Create a Client with **New client**. You land on its Team tab with the "Invite first Owner" drawer open.
+5. Invite a first Owner at one of your own test addresses (never a real client's). The toast says "Invitation sent", the row shows under Pending invitations, Home's Owner column says "Invitation pending", and the email "You're invited to <Client> on the Neves Labs portal" arrives.
+6. Open the email's link (`https://portal.neveslabs.dev/invitations/<id>`). It shows "Page not found": acceptance arrives in Phase 3.
+7. **Resend**: a second, identical email arrives with the same link. **Revoke** (then confirm): the row disappears and "Invite first Owner" returns.
+
+If an invitation email doesn't arrive, the action still reports success (the Invitation is saved, so you can resend). The Vercel function logs show `auth: invitation email failed (<error name and code>)`, with the Client's id but no address or link; check the `SMTP_*` vars, then resend.
+
+## 8. Adding to this runbook
 
 Every Phase adds its settings here and to `.env.example` (roadmap gate 3): new env vars and secrets in section 2, new manual setup in section 3, new checks in a Phase walkthrough.

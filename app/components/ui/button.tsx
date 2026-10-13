@@ -23,15 +23,27 @@ export default function Button({
   children,
   disabled,
   type = "button",
+  onClick,
   ...rest
 }: ButtonProps): React.ReactNode {
   const contentClass = "inline-flex items-center justify-center gap-1.5";
 
   return (
+    // Pending is aria-disabled plus a click guard, not `disabled`: a
+    // disabled button drops keyboard focus to <body>.
     <button
       type={type}
-      disabled={disabled || isPending}
+      disabled={disabled}
+      aria-disabled={isPending || undefined}
       aria-busy={isPending || undefined}
+      onClick={(event) => {
+        if (isPending) {
+          // Also stops a pending submit button from submitting again.
+          event.preventDefault();
+          return;
+        }
+        onClick?.(event);
+      }}
       className={cn(
         buttonStyles({ variant }),
         "h-11 px-4 text-sm md:h-8 md:px-2.5 md:text-[13px] pointer-coarse:h-11 pointer-coarse:px-4",

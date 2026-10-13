@@ -1,26 +1,33 @@
-import { useEffect, useRef } from "react";
-import {
-  data,
-  useLocation,
-  type ShouldRevalidateFunctionArgs,
-} from "react-router";
-import PendingInvitationsPanel from "@/components/admin/pending-invitations-panel";
-import TeamMembersPanel from "@/components/admin/team-members-panel";
+import { data, type ShouldRevalidateFunctionArgs } from "react-router";
+import TeamView, { CLIENTS_CRUMB } from "@/components/admin/team-view";
 import PageHeader from "@/components/ui/page-header";
 import Panel from "@/components/ui/panel";
 import PanelError from "@/components/ui/panel-error";
-import TabNav from "@/components/ui/tab-nav";
 import { auth } from "@/lib/auth/auth.server";
+import { describeError } from "@/lib/describe-error";
 import type { Team } from "@/lib/auth/auth";
-import { requireAdmin } from "@/lib/auth/require-access.server";
-import { getCreatedClientId, getTeamPath } from "@/lib/new-client";
+import {
+  requireAdmin,
+  requireAdminMutation,
+} from "@/lib/auth/require-access.server";
+import { isInviteFlagRemoval } from "@/lib/new-client";
+import {
+  INVITATION_ID_FIELD,
+  INVITATION_INTENT_FIELD,
+  INVITE_EMAIL_FIELD,
+  type InvitationOutcome,
+} from "@/lib/team-invitations";
 import { getNoStoreHeaders } from "@/lib/no-store-headers";
 import { revalidateUnlessThemeFailed } from "@/lib/theme";
 import type { Route } from "./+types/client-team";
 
+const BAD_REQUEST = 400;
 const NOT_FOUND = 404;
-const METHOD_NOT_ALLOWED = 405;
-const CLIENTS_CRUMB = { label: "Clients", href: "/admin" };
+const UNPROCESSABLE = 422;
+const SERVER_ERROR = 500;
+const SERVICE_UNAVAILABLE = 503;
+
+type OutcomeResponse = ReturnType<typeof data<InvitationOutcome>>;
 
 export function meta({ loaderData }: Route.MetaArgs): Route.MetaDescriptors {
   const name = loaderData?.team?.name;
@@ -42,15 +49,109 @@ export async function loader({ request, params }: Route.LoaderArgs) {
   return data({ team }, { headers });
 }
 
-export async function action({ request }: Route.ActionArgs): Promise<never> {
-  const { headers } = await requireAdmin(request);
-  throw data(null, { status: METHOD_NOT_ALLOWED, headers });
+// Invite, resend and revoke post here. The guard comes first, before the
+// body is read: server-side auth calls skip Better Auth's origin check, so
+// it is the only CSRF protection.
+export async function action({
+  request,
+  params,
+}: Route.ActionArgs): Promise<OutcomeResponse> {
+  const { headers } = await requireAdminMutation(request);
+  const form = await request.formData().catch(() => null);
+  const intent = readField(form, INVITATION_INTENT_FIELD);
+  try {
+    const answer = await runIntent(intent, params.clientId, form);
+    return data(answer.outcome, { status: answer.status, headers });
+  } catch (error) {
+    // The UI shows its notice or banner. Name and code only: a driver
+    // error's message lists its bound parameters (the invitee's email).
+    console.error(
+      `admin: an invitation action failed (${describeError(error)})`,
+      { intent, clientId: params.clientId },
+    );
+    return data<InvitationOutcome>(
+      { kind: "failed" },
+      { status: SERVER_ERROR, headers },
+    );
+  }
+}
+
+// A network failure (or a crash) becomes the outcome the UI shows instead
+// of the route's error page; the guard's redirects still go through.
+// Anything but a success carries a 4xx/5xx status, so no loader
+// revalidates: offline, a revalidation would throw the page to the root
+// error boundary.
+export async function clientAction({
+  serverAction,
+}: Route.ClientActionArgs): Promise<InvitationOutcome | OutcomeResponse> {
+  try {
+    const outcome = await serverAction();
+    if (outcome.kind === "refused") {
+      return data(outcome, { status: UNPROCESSABLE });
+    }
+    if (outcome.kind === "failed") {
+      return data(outcome, { status: SERVER_ERROR });
+    }
+
+    return outcome;
+  } catch (error) {
+    if (error instanceof Response) throw error;
+
+    console.error("admin: the invitation request failed", error);
+    return data<InvitationOutcome>(
+      { kind: "failed" },
+      { status: SERVICE_UNAVAILABLE },
+    );
+  }
+}
+
+type IntentAnswer = { outcome: InvitationOutcome; status: number };
+
+async function runIntent(
+  intent: string,
+  clientId: string,
+  form: FormData | null,
+): Promise<IntentAnswer> {
+  let answer: IntentAnswer = {
+    outcome: { kind: "failed" },
+    status: BAD_REQUEST,
+  };
+  if (intent === "invite") {
+    const result = await auth.inviteFirstOwner(
+      clientId,
+      readField(form, INVITE_EMAIL_FIELD),
+    );
+    const outcome: InvitationOutcome =
+      result.error === null
+        ? { kind: "sent", invitationId: result.value.id }
+        : { kind: "refused", error: result.error };
+    answer = { outcome, status: result.status };
+  } else if (intent === "resend" || intent === "revoke") {
+    const invitationId = readField(form, INVITATION_ID_FIELD);
+    const result =
+      intent === "resend"
+        ? await auth.resendInvitation(clientId, invitationId)
+        : await auth.revokeInvitation(clientId, invitationId);
+    const outcome: InvitationOutcome =
+      result.error === null
+        ? { kind: intent === "resend" ? "resent" : "revoked" }
+        : { kind: "refused", error: result.error };
+    answer = { outcome, status: result.status };
+  } else {
+    console.warn("admin: refused an unknown Team action");
+  }
+  return answer;
+}
+
+function readField(form: FormData | null, name: string): string {
+  const value = form?.get(name);
+  return typeof value === "string" ? value : "";
 }
 
 export const headers = getNoStoreHeaders;
 
 export function shouldRevalidate(args: ShouldRevalidateFunctionArgs): boolean {
-  return revalidateUnlessThemeFailed(args);
+  return revalidateUnlessThemeFailed(args) && !isInviteFlagRemoval(args);
 }
 
 async function loadTeam(clientId: string): Promise<Team | "not-found" | null> {
@@ -69,53 +170,8 @@ export default function ClientTeam({
   const { team } = loaderData;
   if (team === null) return <TeamError />;
 
-  return <TeamView team={team} />;
-}
-
-function TeamView({ team }: { team: Team }): React.ReactNode {
-  const { state } = useLocation();
-  const titleRef = useRef<HTMLHeadingElement>(null);
-  const isJustCreated = getCreatedClientId(state) === team.clientId;
-
-  // Arriving from create, the drawer's trigger may be gone: focus the h1.
-  useEffect(() => {
-    if (!isJustCreated) return;
-
-    titleRef.current?.focus();
-    clearCreatedClientState();
-  }, [isJustCreated, team.clientId]);
-
-  return (
-    <>
-      <PageHeader
-        breadcrumb={[CLIENTS_CRUMB, { label: team.name }]}
-        title={team.name}
-        titleRef={titleRef}
-      />
-      <TabNav
-        label="Client sections"
-        items={[
-          { label: "Team", to: getTeamPath(team.clientId), current: true },
-        ]}
-      />
-      <TeamMembersPanel members={team.members} />
-      <PendingInvitationsPanel invitations={team.pendingInvitations} />
-    </>
-  );
-}
-
-// Drops the "just created" marker from this history entry, so a reload or
-// Back/Forward doesn't replay the focus and highlight. Through the History
-// API, not navigate(): that would rerun the loaders. React Router keeps the
-// location state under `usr`; the in-memory location (and the highlight
-// already running) is unaffected.
-function clearCreatedClientState(): void {
-  const current: unknown = window.history.state;
-  const next =
-    typeof current === "object" && current !== null
-      ? { ...current, usr: null }
-      : current;
-  window.history.replaceState(next, "");
+  // Keyed, so another Client's tab starts with fresh drawer and panel state.
+  return <TeamView key={team.clientId} team={team} />;
 }
 
 function TeamError(): React.ReactNode {

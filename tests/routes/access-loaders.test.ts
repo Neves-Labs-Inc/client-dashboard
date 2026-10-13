@@ -9,7 +9,9 @@ import type {
 import { loader as clientLoader } from "@/routes/admin/client";
 import {
   action as teamAction,
+  clientAction as teamClientAction,
   loader as teamLoader,
+  shouldRevalidate as teamShouldRevalidate,
 } from "@/routes/admin/client-team";
 import {
   action as adminIndexAction,
@@ -23,6 +25,7 @@ import {
   shouldRevalidate as adminShouldRevalidate,
 } from "@/routes/admin/layout";
 import type { CreateClientOutcome } from "@/lib/new-client";
+import type { InvitationOutcome } from "@/lib/team-invitations";
 import { loader as checkEmailLoader } from "@/routes/auth/check-email";
 import { loader as passkeyLoader } from "@/routes/auth/passkey";
 import { loader as signInLoader } from "@/routes/auth/sign-in";
@@ -35,6 +38,9 @@ const getAccess = vi.fn<(request: Request) => Promise<AccessResult>>();
 const listClients = vi.fn<() => Promise<ClientSummary[]>>();
 const createClient = vi.fn<Auth["createClient"]>();
 const getTeam = vi.fn<Auth["getTeam"]>();
+const inviteFirstOwner = vi.fn<Auth["inviteFirstOwner"]>();
+const resendInvitation = vi.fn<Auth["resendInvitation"]>();
+const revokeInvitation = vi.fn<Auth["revokeInvitation"]>();
 
 vi.mock("@/lib/auth/auth.server", () => ({
   auth: {
@@ -42,6 +48,12 @@ vi.mock("@/lib/auth/auth.server", () => ({
     listClients: () => listClients(),
     createClient: (name: string) => createClient(name),
     getTeam: (clientId: string) => getTeam(clientId),
+    inviteFirstOwner: (clientId: string, email: string) =>
+      inviteFirstOwner(clientId, email),
+    resendInvitation: (clientId: string, invitationId: string) =>
+      resendInvitation(clientId, invitationId),
+    revokeInvitation: (clientId: string, invitationId: string) =>
+      revokeInvitation(clientId, invitationId),
   },
 }));
 
@@ -52,6 +64,13 @@ const TEAM: Team = {
   members: [],
   pendingInvitations: [],
   canInviteFirstOwner: true,
+};
+
+const INVITATION_ID = "0199d0a4-5b6c-7d8e-9f01-23456789abce";
+const INVITATION = {
+  id: INVITATION_ID,
+  email: "maya@example.test",
+  sentAt: new Date("2026-10-12"),
 };
 
 const ADMIN_NEEDS_PASSKEY: Access = {
@@ -84,6 +103,21 @@ function createArgs<Args>(name: string, origin = PORTAL_ORIGIN): Args {
   const body = new FormData();
   body.set("name", name);
   return argsFor<Args>("/admin?index", "POST", {}, body, origin);
+}
+
+function teamArgs<Args>(
+  fields: Record<string, string>,
+  origin = PORTAL_ORIGIN,
+): Args {
+  const body = new FormData();
+  for (const [name, value] of Object.entries(fields)) body.set(name, value);
+  return argsFor<Args>(
+    `/admin/clients/${CLIENT_ID}/team`,
+    "POST",
+    { clientId: CLIENT_ID },
+    body,
+    origin,
+  );
 }
 
 function answerAs(access: Access): void {
@@ -122,6 +156,20 @@ beforeEach(() => {
   });
   getTeam.mockReset();
   getTeam.mockResolvedValue(TEAM);
+  inviteFirstOwner.mockReset();
+  inviteFirstOwner.mockResolvedValue({
+    value: INVITATION,
+    error: null,
+    status: 201,
+  });
+  resendInvitation.mockReset();
+  resendInvitation.mockResolvedValue({
+    value: INVITATION,
+    error: null,
+    status: 200,
+  });
+  revokeInvitation.mockReset();
+  revokeInvitation.mockResolvedValue({ value: null, error: null, status: 200 });
 });
 
 describe("access loaders forward the session's Set-Cookie", () => {
@@ -182,6 +230,8 @@ describe("the Admin guard", () => {
           clientId: CLIENT_ID,
         }),
       ),
+    "Team invite action": () =>
+      teamAction(teamArgs({ intent: "invite", email: "maya@example.test" })),
   };
 
   for (const [use, run] of Object.entries(guarded)) {
@@ -221,6 +271,25 @@ describe("the Admin guard", () => {
 
     expect(headers.get("location")).toBe("/passkey");
     expect(createClient).not.toHaveBeenCalled();
+  });
+
+  it("invites, resends and revokes nothing for a magic-link session", async () => {
+    answerAs(ADMIN_NEEDS_PASSKEY);
+
+    const posts: Record<string, string>[] = [
+      { intent: "invite", email: "maya@example.test" },
+      { intent: "resend", invitationId: INVITATION_ID },
+      { intent: "revoke", invitationId: INVITATION_ID },
+    ];
+    for (const fields of posts) {
+      const headers = await getResponseHeaders(() =>
+        teamAction(teamArgs(fields)),
+      );
+      expect(headers.get("location")).toBe("/passkey");
+    }
+    expect(inviteFirstOwner).not.toHaveBeenCalled();
+    expect(resendInvitation).not.toHaveBeenCalled();
+    expect(revokeInvitation).not.toHaveBeenCalled();
   });
 
   it("sends a passkey session from /sign-in and /passkey to /admin", async () => {
@@ -406,6 +475,174 @@ describe("a cross-origin create", () => {
   });
 });
 
+describe("a cross-origin invitation action", () => {
+  it("is refused with 403 before anything runs, even from a sibling subdomain", async () => {
+    answerAs(ADMIN);
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const posts: Record<string, string>[] = [
+      { intent: "invite", email: "maya@example.test" },
+      { intent: "resend", invitationId: INVITATION_ID },
+      { intent: "revoke", invitationId: INVITATION_ID },
+    ];
+    for (const fields of posts) {
+      const thrown = await teamAction(
+        teamArgs(fields, "http://www.localhost:5173"),
+      ).catch((error: unknown) => error);
+      expect(thrown).toMatchObject({ init: { status: 403 } });
+    }
+    expect(inviteFirstOwner).not.toHaveBeenCalled();
+    expect(resendInvitation).not.toHaveBeenCalled();
+    expect(revokeInvitation).not.toHaveBeenCalled();
+  });
+});
+
+describe("the Team's invitation actions", () => {
+  beforeEach(() => answerAs(ADMIN));
+
+  it("invites the posted email to this Client and answers 201", async () => {
+    const result = await teamAction(
+      teamArgs({ intent: "invite", email: "maya@example.test" }),
+    );
+
+    expect(inviteFirstOwner).toHaveBeenCalledWith(
+      CLIENT_ID,
+      "maya@example.test",
+    );
+    expect(result).toMatchObject({
+      data: { kind: "sent", invitationId: INVITATION_ID },
+      init: { status: 201 },
+    });
+  });
+
+  it("passes a refusal on as its code and status", async () => {
+    inviteFirstOwner.mockResolvedValue({
+      value: null,
+      error: "pending-exists",
+      status: 409,
+    });
+
+    const result = await teamAction(
+      teamArgs({ intent: "invite", email: "maya@example.test" }),
+    );
+
+    expect(result).toMatchObject({
+      data: { kind: "refused", error: "pending-exists" },
+      init: { status: 409 },
+    });
+  });
+
+  it("resends and revokes the posted invitation", async () => {
+    revokeInvitation.mockResolvedValue({
+      value: null,
+      error: "not-found",
+      status: 404,
+    });
+
+    const resent = await teamAction(
+      teamArgs({ intent: "resend", invitationId: INVITATION_ID }),
+    );
+    const revoked = await teamAction(
+      teamArgs({ intent: "revoke", invitationId: INVITATION_ID }),
+    );
+
+    expect(resendInvitation).toHaveBeenCalledWith(CLIENT_ID, INVITATION_ID);
+    expect(revokeInvitation).toHaveBeenCalledWith(CLIENT_ID, INVITATION_ID);
+    expect(resent).toMatchObject({
+      data: { kind: "resent" },
+      init: { status: 200 },
+    });
+    expect(revoked).toMatchObject({
+      data: { kind: "refused", error: "not-found" },
+      init: { status: 404 },
+    });
+  });
+
+  it("answers an unknown intent with 400", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const result = await teamAction(teamArgs({ intent: "delete" }));
+
+    expect(result).toMatchObject({
+      data: { kind: "failed" },
+      init: { status: 400 },
+    });
+  });
+
+  it("answers a failure without its details, and logs no invitee email", async () => {
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+    inviteFirstOwner.mockRejectedValue(
+      new Error(
+        "Failed query: insert into invitation\nparams: maya@example.test",
+      ),
+    );
+
+    const result = await teamAction(
+      teamArgs({ intent: "invite", email: "maya@example.test" }),
+    );
+
+    expect(result).toMatchObject({
+      data: { kind: "failed" },
+      init: { status: 500 },
+    });
+    expect(JSON.stringify(errorLog.mock.calls)).not.toContain("maya");
+  });
+});
+
+describe("the Team's clientAction", () => {
+  type ClientActionArgs = Parameters<typeof teamClientAction>[0];
+
+  function runWith(serverAction: () => Promise<InvitationOutcome>) {
+    return teamClientAction({ serverAction } as ClientActionArgs);
+  }
+
+  it("passes a success through as plain data", async () => {
+    const sent: InvitationOutcome = {
+      kind: "sent",
+      invitationId: INVITATION_ID,
+    };
+
+    expect(await runWith(async () => sent)).toEqual(sent);
+  });
+
+  it("gives a refusal a 4xx status and a failure a 5xx", async () => {
+    const refused = await runWith(async () => ({
+      kind: "refused",
+      error: "not-found",
+    }));
+    const failed = await runWith(async () => ({ kind: "failed" }));
+
+    expect(refused).toMatchObject({ init: { status: 422 } });
+    expect(failed).toMatchObject({ init: { status: 500 } });
+  });
+
+  it("turns a network failure into the failed outcome with a 5xx status", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const result = await runWith(async () => {
+      throw new TypeError("Failed to fetch");
+    });
+
+    expect(result).toMatchObject({
+      data: { kind: "failed" },
+      init: { status: 503 },
+    });
+  });
+
+  it("lets the guard's redirect through", async () => {
+    const redirect = new Response(null, {
+      status: 302,
+      headers: { location: "/passkey" },
+    });
+
+    await expect(
+      runWith(async () => {
+        throw redirect;
+      }),
+    ).rejects.toBe(redirect);
+  });
+});
+
 describe("the create's clientAction", () => {
   type ClientActionArgs = Parameters<typeof adminIndexClientAction>[0];
 
@@ -483,6 +720,37 @@ describe("Admin revalidation", () => {
     layout: adminShouldRevalidate,
     Home: adminIndexShouldRevalidate,
   };
+
+  const teamPath = `/admin/clients/${CLIENT_ID}/team`;
+  const teamRoutes = {
+    layout: adminShouldRevalidate,
+    Team: teamShouldRevalidate,
+  };
+
+  for (const [name, shouldRevalidate] of Object.entries(teamRoutes)) {
+    it(`skips the ${name} loader when the Team tab drops its invite flag`, () => {
+      expect(
+        shouldRevalidate(argsBetween(`${teamPath}?invite=1`, teamPath)),
+      ).toBe(false);
+    });
+
+    it(`runs the ${name} loader for any other Team navigation`, () => {
+      expect(
+        shouldRevalidate(argsBetween(teamPath, `${teamPath}?invite=1`)),
+      ).toBe(true);
+      expect(
+        shouldRevalidate(argsBetween(`${teamPath}?invite=1`, "/admin")),
+      ).toBe(true);
+      expect(
+        shouldRevalidate(
+          argsBetween(teamPath, teamPath, {
+            formMethod: "POST",
+            formAction: teamPath,
+          }),
+        ),
+      ).toBe(true);
+    });
+  }
 
   for (const [name, shouldRevalidate] of Object.entries(routes)) {
     it(`skips the ${name} loader when only the drawer opens or closes`, () => {

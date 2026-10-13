@@ -31,6 +31,9 @@ type DrawerProps = {
   // False when the caller moves focus itself on close (e.g. navigating to a
   // page that focuses its heading), so the opener doesn't take it back.
   shouldReturnFocus?: boolean;
+  // Where focus goes on close instead of the opener, asked at close time:
+  // for a drawer opened without a click, or one whose opener goes away.
+  getReturnFocusTarget?: () => HTMLElement | null;
 };
 
 export default function Drawer({
@@ -43,6 +46,7 @@ export default function Drawer({
   isDirty = false,
   dirtyConfirm,
   shouldReturnFocus = true,
+  getReturnFocusTarget,
 }: DrawerProps): React.ReactNode {
   const [isConfirming, setIsConfirming] = useState(false);
   const bodyRef = useRef<HTMLDivElement>(null);
@@ -126,7 +130,7 @@ export default function Drawer({
       event.preventDefault();
       return;
     }
-    const opener = returnFocusRef.current;
+    const opener = getReturnFocusTarget?.() ?? returnFocusRef.current;
     if (opener?.isConnected) {
       event.preventDefault();
       opener.focus();

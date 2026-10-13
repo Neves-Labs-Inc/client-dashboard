@@ -9,6 +9,9 @@ type PanelProps = {
   action?: React.ReactNode;
   id?: string;
   className?: string;
+  // Makes the h2 a programmatic focus target (tabIndex -1), for a panel
+  // that takes focus after its trigger goes away.
+  titleRef?: React.Ref<HTMLHeadingElement>;
   children: React.ReactNode;
 };
 
@@ -19,6 +22,7 @@ export default function Panel({
   action,
   id,
   className,
+  titleRef,
   children,
 }: PanelProps): React.ReactNode {
   const headingId = useId();
@@ -34,8 +38,10 @@ export default function Panel({
     >
       <header className="flex min-h-10 items-center justify-between gap-3 border-b border-line px-3 py-2">
         <h2
+          ref={titleRef}
           id={headingId}
-          className="text-xs/4 font-semibold tracking-[0.06em] text-fg-2 uppercase"
+          tabIndex={titleRef ? -1 : undefined}
+          className="text-xs/4 font-semibold tracking-[0.06em] text-fg-2 uppercase outline-hidden"
         >
           {titleHref ? (
             <Link to={titleHref} className="hover:text-fg">
