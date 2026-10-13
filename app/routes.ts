@@ -16,6 +16,7 @@ export default [
     route("sign-in/check-email", "routes/auth/check-email.tsx"),
     route("passkey", "routes/auth/passkey.tsx"),
     route("no-access", "routes/auth/no-access.tsx"),
+    route("invitations/:invitationId", "routes/auth/invitation.tsx"),
   ]),
   layout("routes/client/layout.tsx", [route("team", "routes/client/team.tsx")]),
   route("admin", "routes/admin/layout.tsx", [

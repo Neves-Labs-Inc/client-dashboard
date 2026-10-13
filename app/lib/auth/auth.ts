@@ -25,6 +25,11 @@ import { getStanding, type Standing } from "@/lib/auth/standing";
 import { describeError } from "@/lib/describe-error";
 import { createInvitationEligibilityHook } from "@/lib/auth/invite-eligibility";
 import {
+  joinInvitation,
+  type JoinError,
+  type Joined,
+} from "@/lib/auth/join-invitation";
+import {
   FirstOwnerInvitations,
   INVITATION_EXPIRES_IN_S,
   type Invitation,
@@ -75,10 +80,24 @@ const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const UNIQUE_VIOLATION = "23505";
 const CLIENT_NAME_INDEX = "organization_name_lower_key";
+const OK = 200;
 const CREATED = 201;
+const FORBIDDEN = 403;
 const UNPROCESSABLE = 422;
 const CONFLICT = 409;
 const NOT_FOUND = 404;
+const TOO_MANY_REQUESTS = 429;
+const SERVER_ERROR = 500;
+const MAGIC_LINK_PATH = "/sign-in/magic-link";
+const INVITATION_PAGE_PREFIX = "/invitations/";
+// A bad or reused emailed link lands here with ?error= (Phase 2's banner).
+const MAGIC_LINK_ERROR_PATH = "/sign-in";
+const JOIN_ERROR_STATUS: Record<JoinError, number> = {
+  "not-found": NOT_FOUND,
+  "email-mismatch": FORBIDDEN,
+  ineligible: CONFLICT,
+  archived: FORBIDDEN,
+};
 // Better Auth's OAuth callback: `context.path` is this pattern, and the
 // provider id is `context.params.id`.
 const CALLBACK_PATH = "/callback/:id";
@@ -168,6 +187,14 @@ export type NoAccessReason = "archived" | "not-invited";
 
 export type ClientAccess = Extract<Access, { kind: "client" }>;
 
+export type { JoinError, Joined };
+
+// What the Invitation page may show the link holder, for a live one only.
+export type LiveInvitation = { email: string; clientName: string };
+
+// failed: Better Auth answered anything but a send or a rate limit.
+export type InvitationLinkError = "not-found" | "rate-limited" | "failed";
+
 export type AccessResult = {
   access: Access;
   // Set-Cookie headers when the session slid (renewed at most once a day).
@@ -251,6 +278,27 @@ export type Auth = {
     clientId: string,
     invitationId: string,
   ): Promise<Result<null, InvitationActionError>>;
+  // Joins the request's session to the Client of Invitation `invitationId`
+  // (or of the newest live Invitation for its email when null): the member
+  // row with the Invitation's role, and the Invitation accepted. Bound to
+  // the session's own email, so it's safe to run from a GET loader, and
+  // idempotent: the member re-opening their accepted Invitation gets their
+  // Client back. Status 201 when this call joined, 200 when they already
+  // were a member. Malformed ids and anonymous requests are not-found.
+  joinInvitation(
+    request: Request,
+    invitationId: string | null,
+  ): Promise<Result<Joined, JoinError>>;
+  // A live (pending, unexpired) Invitation's email and Client name; null for
+  // any other id, malformed ones included.
+  getLiveInvitation(invitationId: string): Promise<LiveInvitation | null>;
+  // Emails a magic link to the live Invitation's own address (never one the
+  // browser names) that returns to its page. Rate-limited per IP as the
+  // sign-in screen's request is; who is mailed follows the same rules.
+  requestInvitationLink(
+    request: Request,
+    invitationId: string,
+  ): Promise<Result<null, InvitationLinkError>>;
 };
 
 type AuthDeps = {
@@ -289,6 +337,7 @@ class BetterAuthModule implements Auth {
   private readonly db: Db;
   private readonly adminEmail: string;
   private readonly trustForwardedFor: boolean;
+  private readonly baseUrl: string;
   private readonly now: () => Date;
   readonly #providers: ProviderRegistry;
   readonly #invitations: FirstOwnerInvitations;
@@ -298,6 +347,7 @@ class BetterAuthModule implements Auth {
     this.now = deps.now ?? (() => new Date());
     this.adminEmail = deps.adminEmail.toLowerCase();
     this.trustForwardedFor = deps.trustForwardedFor;
+    this.baseUrl = deps.baseUrl;
     this.#providers = deps.providers ?? {};
     this.betterAuth = createBetterAuth(deps, this.adminEmail, this.#providers);
     this.#invitations = new FirstOwnerInvitations({
@@ -517,13 +567,109 @@ class BetterAuthModule implements Auth {
     return this.#invitations.revoke(clientId, invitationId);
   }
 
+  async joinInvitation(
+    request: Request,
+    invitationId: string | null,
+  ): Promise<Result<Joined, JoinError>> {
+    if (invitationId !== null && !UUID_PATTERN.test(invitationId)) {
+      return refuseJoin("not-found", null);
+    }
+
+    // Read only: getAccess has already slid the session for this request.
+    const current = await this.betterAuth.api.getSession({
+      headers: this.trustedHeaders(request),
+      query: { disableRefresh: true },
+    });
+    const email = current?.user.email.normalize("NFC").toLowerCase();
+    // The Admin belongs to no Client.
+    if (!current || !email || email === this.adminEmail) {
+      return refuseJoin("not-found", null);
+    }
+
+    const joiner = { userId: current.user.id, email };
+    const outcome = await this.db.withSystem((tx) =>
+      joinInvitation(tx, joiner, invitationId, this.now(), this.adminEmail),
+    );
+    if (typeof outcome === "string") return refuseJoin(outcome, invitationId);
+
+    const { isNew, ...joined } = outcome;
+    return { value: joined, error: null, status: isNew ? CREATED : OK };
+  }
+
+  async getLiveInvitation(
+    invitationId: string,
+  ): Promise<LiveInvitation | null> {
+    if (!UUID_PATTERN.test(invitationId)) return null;
+
+    const [row] = await this.db.withSystem((tx) =>
+      tx
+        .select({ email: invitation.email, clientName: organization.name })
+        .from(invitation)
+        .innerJoin(organization, eq(organization.id, invitation.organizationId))
+        .where(
+          and(
+            eq(invitation.id, invitationId),
+            eq(invitation.status, "pending"),
+            gt(invitation.expiresAt, this.now()),
+          ),
+        ),
+    );
+    return row ?? null;
+  }
+
+  async requestInvitationLink(
+    request: Request,
+    invitationId: string,
+  ): Promise<Result<null, InvitationLinkError>> {
+    const live = await this.getLiveInvitation(invitationId);
+    if (live === null) return refuseInvitationLink("not-found");
+
+    // Through the HTTP handler, as the sign-in screen's request goes, so the
+    // per-IP rate limit and the send rules apply unchanged. The caller has
+    // already checked the browser's request is same-origin.
+    // The form POST's body headers don't describe the JSON body sent here.
+    const headers = this.trustedHeaders(request);
+    headers.delete("content-length");
+    headers.set("origin", this.baseUrl);
+    headers.set("content-type", "application/json");
+    const response = await this.betterAuth.handler(
+      new Request(`${this.baseUrl}${BASE_PATH}${MAGIC_LINK_PATH}`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          email: live.email,
+          callbackURL: `${INVITATION_PAGE_PREFIX}${invitationId}`,
+          errorCallbackURL: MAGIC_LINK_ERROR_PATH,
+        }),
+      }),
+    );
+
+    let result: Result<null, InvitationLinkError> = {
+      value: null,
+      error: null,
+      status: OK,
+    };
+    if (response.status === TOO_MANY_REQUESTS) {
+      result = refuseInvitationLink("rate-limited");
+    } else if (!response.ok) {
+      console.error(
+        `auth: invitation sign-in link request failed (${response.status})`,
+      );
+      result = { value: null, error: "failed", status: SERVER_ERROR };
+    }
+    return result;
+  }
+
   // Better Auth sees only the client IP this module trusts.
   private trustedHeaders(request: Request): Headers {
     return withClientIp(request.headers, this.trustForwardedFor);
   }
 }
 
-function createBetterAuth(
+// Exported for tests only: /organization/* is closed over HTTP, so the
+// native plugin endpoints (and the hooks wired to them) are reached through
+// this instance's `api`. App code uses createAuth.
+export function createBetterAuth(
   deps: AuthDeps,
   adminEmail: string,
   providers: ProviderRegistry,
@@ -535,6 +681,7 @@ function createBetterAuth(
     deps.db.withSystem((tx) => getStanding(tx, email, now(), adminEmail));
   const refuse = (reason: NoAccessReason): APIError =>
     createRefusal(deps.baseUrl, reason);
+  const requireEligible = createInvitationEligibilityHook(deps.db, adminEmail);
 
   return betterAuth({
     appName: PASSKEY_RP_NAME,
@@ -753,11 +900,12 @@ function createBetterAuth(
       organizationPlugin({
         allowUserToCreateOrganization: false,
         invitationExpiresIn: INVITATION_EXPIRES_IN_S,
+        // The module joins through joinInvitation (its own rows, under the
+        // Client's lock); should the native acceptance ever run, it refuses
+        // by the same rule.
         organizationHooks: {
-          beforeCreateInvitation: createInvitationEligibilityHook(
-            deps.db,
-            adminEmail,
-          ),
+          beforeCreateInvitation: requireEligible,
+          beforeAcceptInvitation: requireEligible,
         },
         teams: { enabled: false },
       }),
@@ -937,6 +1085,23 @@ function isOrganizationPath(url: string): boolean {
   return (
     path === ORGANIZATION_PREFIX || path.startsWith(`${ORGANIZATION_PREFIX}/`)
   );
+}
+
+// `invitationId` is logged only once it's known to be a UUID.
+function refuseJoin(
+  error: JoinError,
+  invitationId: string | null,
+): Result<never, JoinError> {
+  console.warn(`auth: refused a join (${error})`, { invitationId });
+  return { value: null, error, status: JOIN_ERROR_STATUS[error] };
+}
+
+function refuseInvitationLink(
+  error: Exclude<InvitationLinkError, "failed">,
+): Result<never, InvitationLinkError> {
+  const status = error === "not-found" ? NOT_FOUND : TOO_MANY_REQUESTS;
+  console.warn(`auth: refused an invitation sign-in link (${error})`);
+  return { value: null, error, status };
 }
 
 function toOwner(

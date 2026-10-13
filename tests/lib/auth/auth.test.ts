@@ -3,7 +3,12 @@ import { and, eq, sql } from "drizzle-orm";
 import pg from "pg";
 import { APIError } from "better-auth/api";
 import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
-import { type Access, type Auth, createAuth } from "@/lib/auth/auth";
+import {
+  type Access,
+  type Auth,
+  createAuth,
+  createBetterAuth,
+} from "@/lib/auth/auth";
 import type { OAuthProfile, RegisteredProvider } from "@/lib/auth/providers";
 import { createInvitationEligibilityHook } from "@/lib/auth/invite-eligibility";
 import { createDb } from "@/lib/db/db";
@@ -896,6 +901,7 @@ describe("Clients", () => {
       expiresAt: Date;
       createdAt?: Date;
       email?: string;
+      role?: string;
     },
   ): Promise<string> {
     const inviterId = await addUser(`-inviter-${randomUUID()}@example.test`);
@@ -2035,11 +2041,12 @@ describe("Clients", () => {
       profile: Omit<OAuthProfile, "id" | "name"> & { name?: string },
       ip: string,
       via: Auth = portal,
+      callbackURL = "/",
     ): Promise<Response> {
       const start = await via.handler(
         apiRequest("/sign-in/social", "", ip, {
           provider: "google",
-          callbackURL: "/",
+          callbackURL,
           errorCallbackURL: "/sign-in",
         }),
       );
@@ -2795,6 +2802,438 @@ describe("Clients", () => {
         expect(statuses).toEqual(outside.map(() => 403));
         expect(getSession.status).toBe(200);
         expect(registration.response.status).toBe(200);
+      });
+    });
+
+    // Joining runs from the /invitations/:id and / loaders, with the
+    // signed-in browser's request.
+    describe("joinInvitation", () => {
+      const LIVE = { expiresAt: WEEK_AFTER };
+
+      // An invitee's browser after following their emailed magic link.
+      async function signInByLink(email: string): Promise<Request> {
+        const ip = createIp();
+        await requestLink(email, ip);
+        return pageRequest(getCookieHeader(await followLastLink(ip)));
+      }
+
+      async function readMembers(email: string) {
+        return db.withSystem((tx) =>
+          tx
+            .select({ clientId: member.organizationId, role: member.role })
+            .from(member)
+            .innerJoin(user, eq(user.id, member.userId))
+            .where(eq(user.email, email)),
+        );
+      }
+
+      async function readStatus(invitationId: string): Promise<string> {
+        const [row] = await db.withSystem((tx) =>
+          tx
+            .select({ status: invitation.status })
+            .from(invitation)
+            .where(eq(invitation.id, invitationId)),
+        );
+        return row.status;
+      }
+
+      it("joins the linked Invitation's Client with its role and uses it up", async () => {
+        const clientId = await addClient("Acme");
+        const email = `${prefix}-leo@example.test`;
+        const invitationId = await addInvitation(clientId, {
+          ...LIVE,
+          email,
+          role: "member",
+        });
+        const request = await signInByLink(email);
+
+        const result = await portal.joinInvitation(request, invitationId);
+
+        expect(result).toEqual({
+          value: { clientId, clientName: `${prefix} Acme` },
+          error: null,
+          status: 201,
+        });
+        expect(await readMembers(email)).toEqual([
+          { clientId, role: "member" },
+        ]);
+        expect(await readStatus(invitationId)).toBe("accepted");
+        const { access } = await portal.getAccess(request);
+        expect(access).toMatchObject({ kind: "client", clientId });
+      });
+
+      it("joins the newest live Invitation when no id is given", async () => {
+        const older = await addClient("Older");
+        const newer = await addClient("Newer");
+        const email = `${prefix}-leo@example.test`;
+        await addInvitation(older, {
+          ...LIVE,
+          email,
+          createdAt: new Date(NOW.getTime() - DAY_MS),
+        });
+        await addInvitation(newer, { ...LIVE, email, createdAt: NOW });
+        const request = await signInByLink(email);
+
+        const result = await portal.joinInvitation(request, null);
+
+        expect(result.value).toEqual({
+          clientId: newer,
+          clientName: `${prefix} Newer`,
+        });
+        expect(await readMembers(email)).toEqual([
+          { clientId: newer, role: "owner" },
+        ]);
+      });
+
+      it("returns the same Client when its member re-opens their accepted Invitation", async () => {
+        const clientId = await addClient("Acme");
+        const email = `${prefix}-leo@example.test`;
+        const invitationId = await addInvitation(clientId, { ...LIVE, email });
+        const request = await signInByLink(email);
+        await portal.joinInvitation(request, invitationId);
+
+        const again = await portal.joinInvitation(request, invitationId);
+
+        expect(again).toEqual({
+          value: { clientId, clientName: `${prefix} Acme` },
+          error: null,
+          status: 200,
+        });
+        expect(await readMembers(email)).toHaveLength(1);
+      });
+
+      it("is not-found for an unknown, malformed, expired, canceled or someone else's accepted Invitation", async () => {
+        silenceWarnings();
+        const clientId = await addClient("Acme");
+        const email = `${prefix}-leo@example.test`;
+        // Keeps the session an invitee's.
+        await addInvitation(clientId, { ...LIVE, email });
+        const expired = await addInvitation(clientId, {
+          email,
+          expiresAt: new Date(NOW.getTime() - MINUTE_MS),
+        });
+        const canceled = await addInvitation(clientId, {
+          ...LIVE,
+          email,
+          status: "canceled",
+        });
+        const usedByOther = await addInvitation(clientId, {
+          ...LIVE,
+          email: `${prefix}-ana@example.test`,
+          status: "accepted",
+        });
+        const request = await signInByLink(email);
+
+        const ids = [
+          randomUUID(),
+          "not-a-uuid",
+          "'; drop table member; --",
+          expired,
+          canceled,
+          usedByOther,
+        ];
+        const errors: (string | null)[] = [];
+        for (const id of ids) {
+          const result = await portal.joinInvitation(request, id);
+          errors.push(result.error);
+        }
+
+        expect(errors).toEqual(ids.map(() => "not-found"));
+        expect(await readMembers(email)).toEqual([]);
+      });
+
+      it("is not-found without a session, or with no live Invitation for the email", async () => {
+        silenceWarnings();
+        const clientId = await addClient("Acme");
+        const email = `${prefix}-leo@example.test`;
+        const invitationId = await addInvitation(clientId, {
+          email,
+          expiresAt: DAY_AFTER,
+        });
+        const request = await signInByLink(email);
+        now = new Date(DAY_AFTER.getTime() + MINUTE_MS);
+
+        const anonymous = await portal.joinInvitation(pageRequest(null), null);
+        const lapsed = await portal.joinInvitation(request, null);
+        const lapsedById = await portal.joinInvitation(request, invitationId);
+
+        expect([anonymous, lapsed, lapsedById]).toEqual(
+          [1, 2, 3].map(() => ({
+            value: null,
+            error: "not-found",
+            status: 404,
+          })),
+        );
+      });
+
+      it("is email-mismatch for a live Invitation to another email, and joins nothing", async () => {
+        silenceWarnings();
+        const clientId = await addClient("Acme");
+        const email = `${prefix}-leo@example.test`;
+        await addInvitation(clientId, { ...LIVE, email });
+        const othersId = await addInvitation(clientId, {
+          ...LIVE,
+          email: `${prefix}-ana@example.test`,
+        });
+        const request = await signInByLink(email);
+
+        const result = await portal.joinInvitation(request, othersId);
+
+        expect(result).toEqual({
+          value: null,
+          error: "email-mismatch",
+          status: 403,
+        });
+        expect(await readStatus(othersId)).toBe("pending");
+        expect(await readMembers(email)).toEqual([]);
+      });
+
+      it("is ineligible for a second Client's Invitation once the email joined one", async () => {
+        silenceWarnings();
+        const first = await addClient("First");
+        const second = await addClient("Second");
+        const email = `${prefix}-leo@example.test`;
+        const firstId = await addInvitation(first, { ...LIVE, email });
+        const secondId = await addInvitation(second, { ...LIVE, email });
+        const request = await signInByLink(email);
+        await portal.joinInvitation(request, firstId);
+
+        const result = await portal.joinInvitation(request, secondId);
+
+        expect(result).toEqual({
+          value: null,
+          error: "ineligible",
+          status: 409,
+        });
+        expect(await readMembers(email)).toEqual([
+          { clientId: first, role: "owner" },
+        ]);
+        expect(await readStatus(secondId)).toBe("pending");
+      });
+
+      it("is archived for a live Invitation of an archived Client", async () => {
+        silenceWarnings();
+        const clientId = await addClient("Acme");
+        const email = `${prefix}-leo@example.test`;
+        const invitationId = await addInvitation(clientId, { ...LIVE, email });
+        const request = await signInByLink(email);
+        await archive(clientId);
+
+        const result = await portal.joinInvitation(request, invitationId);
+
+        expect(result).toEqual({
+          value: null,
+          error: "archived",
+          status: 403,
+        });
+        expect(await readMembers(email)).toEqual([]);
+      });
+
+      it("writes one member row for racing joins of the same Invitation", async () => {
+        const clientId = await addClient("Acme");
+        const email = `${prefix}-leo@example.test`;
+        const invitationId = await addInvitation(clientId, { ...LIVE, email });
+        const request = await signInByLink(email);
+
+        const results = await Promise.all([
+          portal.joinInvitation(request, invitationId),
+          portal.joinInvitation(request, invitationId),
+          portal.joinInvitation(request, null),
+        ]);
+
+        expect(results.map((result) => result.value?.clientId)).toEqual([
+          clientId,
+          clientId,
+          clientId,
+        ]);
+        expect(results.map((result) => result.status).sort()).toEqual([
+          200, 200, 201,
+        ]);
+        expect(await readMembers(email)).toHaveLength(1);
+      });
+
+      it("returns the joiner's Client when no id is given and they already joined another", async () => {
+        const older = await addClient("Older");
+        const newer = await addClient("Newer");
+        const email = `${prefix}-leo@example.test`;
+        await addInvitation(older, {
+          ...LIVE,
+          email,
+          createdAt: new Date(NOW.getTime() - DAY_MS),
+        });
+        const newerId = await addInvitation(newer, { ...LIVE, email });
+        const request = await signInByLink(email);
+        // As a racing tab would: it joined the newer one first.
+        await portal.joinInvitation(request, newerId);
+
+        const result = await portal.joinInvitation(request, null);
+
+        expect(result).toEqual({
+          value: { clientId: newer, clientName: `${prefix} Newer` },
+          error: null,
+          status: 200,
+        });
+        expect(await readMembers(email)).toHaveLength(1);
+      });
+
+      // /organization/* is closed over HTTP, so this calls Better Auth's
+      // native acceptInvitation directly, as the invitee's session.
+      it("registers the eligibility check as Better Auth's beforeAcceptInvitation hook", async () => {
+        silenceWarnings();
+        const first = await addClient("First");
+        const second = await addClient("Second");
+        const email = `${prefix}-leo@example.test`;
+        const firstId = await addInvitation(first, { ...LIVE, email });
+        const secondId = await addInvitation(second, { ...LIVE, email });
+        const request = await signInByLink(email);
+        await portal.joinInvitation(request, firstId);
+        const native = createBetterAuth(
+          { ...authDeps, trustForwardedFor: true },
+          env.ADMIN_EMAIL,
+          {},
+        );
+
+        const refusal = native.api.acceptInvitation({
+          headers: request.headers,
+          body: { invitationId: secondId },
+        });
+
+        await expect(refusal).rejects.toBeInstanceOf(APIError);
+        await expect(refusal).rejects.toMatchObject({
+          body: { message: "This email can't be invited." },
+        });
+        expect(await readMembers(email)).toEqual([
+          { clientId: first, role: "owner" },
+        ]);
+        expect(await readStatus(secondId)).toBe("pending");
+      });
+
+      it("joins one Client only when two Clients' Invitations race", async () => {
+        silenceWarnings();
+        const first = await addClient("First");
+        const second = await addClient("Second");
+        const email = `${prefix}-leo@example.test`;
+        const firstId = await addInvitation(first, { ...LIVE, email });
+        const secondId = await addInvitation(second, { ...LIVE, email });
+        const request = await signInByLink(email);
+
+        const results = await Promise.all([
+          portal.joinInvitation(request, firstId),
+          portal.joinInvitation(request, secondId),
+        ]);
+
+        expect(results.map((result) => result.error).sort()).toEqual([
+          "ineligible",
+          null,
+        ]);
+        expect(await readMembers(email)).toHaveLength(1);
+      });
+
+      it("joins after a Google sign-in that returns to the Invitation page", async () => {
+        const clientId = await addClient("Acme");
+        const email = `${prefix}-leo@example.test`;
+        const invitationId = await addInvitation(clientId, { ...LIVE, email });
+        const invitationPath = `/invitations/${invitationId}`;
+
+        const callback = await signInWithGoogle(
+          { email, isEmailVerified: true },
+          createIp(),
+          portal,
+          invitationPath,
+        );
+        const location = callback.headers.get("location") ?? "";
+        const pageId = new URL(location, baseUrl).pathname.split("/").at(-1);
+        // What the /invitations/:id loader then runs.
+        const result = await portal.joinInvitation(
+          pageRequest(getCookieHeader(callback)),
+          pageId ?? null,
+        );
+
+        expect(new URL(location, baseUrl).pathname).toBe(invitationPath);
+        expect(result.value?.clientId).toBe(clientId);
+        expect(await readMembers(email)).toEqual([{ clientId, role: "owner" }]);
+      });
+    });
+
+    describe("Invitation page", () => {
+      const LIVE = { expiresAt: WEEK_AFTER };
+
+      it("reads a live Invitation's email and Client name, and nothing for a dead one", async () => {
+        const clientId = await addClient("Acme");
+        const email = `${prefix}-leo@example.test`;
+        const live = await addInvitation(clientId, { ...LIVE, email });
+        const canceled = await addInvitation(clientId, {
+          ...LIVE,
+          email,
+          status: "canceled",
+        });
+        const expired = await addInvitation(clientId, {
+          email,
+          expiresAt: new Date(NOW.getTime() - MINUTE_MS),
+        });
+
+        const found = await portal.getLiveInvitation(live);
+        const dead = await Promise.all(
+          [canceled, expired, randomUUID(), "nope"].map((id) =>
+            portal.getLiveInvitation(id),
+          ),
+        );
+
+        expect(found).toEqual({ email, clientName: `${prefix} Acme` });
+        expect(dead).toEqual([null, null, null, null]);
+      });
+
+      it("emails the invited address a link back to the Invitation page", async () => {
+        const clientId = await addClient("Acme");
+        const email = `${prefix}-leo@example.test`;
+        const invitationId = await addInvitation(clientId, { ...LIVE, email });
+        const ip = createIp();
+        // The page's own form POST: an empty urlencoded body, whose length
+        // header must not travel with the JSON request.
+        const page = new Request(`${baseUrl}/invitations/${invitationId}`, {
+          method: "POST",
+          headers: {
+            "x-forwarded-for": ip,
+            "content-type": "application/x-www-form-urlencoded",
+            "content-length": "0",
+          },
+          body: "",
+        });
+
+        const result = await portal.requestInvitationLink(page, invitationId);
+        await settleBackgroundTasks();
+        const verify = await followLastLink(ip);
+
+        expect(result).toEqual({ value: null, error: null, status: 200 });
+        expect(mailer.sent.map((message) => message.to)).toEqual([email]);
+        expect(verify.headers.get("location")).toBe(
+          `${baseUrl}/invitations/${invitationId}`,
+        );
+      });
+
+      it("refuses a dead Invitation's link, and caps requests per IP", async () => {
+        silenceWarnings();
+        const clientId = await addClient("Acme");
+        const email = `${prefix}-leo@example.test`;
+        const invitationId = await addInvitation(clientId, { ...LIVE, email });
+        const ip = createIp();
+        const page = new Request(`${baseUrl}/invitations/${invitationId}`, {
+          method: "POST",
+          headers: { "x-forwarded-for": ip },
+        });
+
+        const dead = await portal.requestInvitationLink(page, randomUUID());
+        const statuses: (string | null)[] = [];
+        for (let attempt = 0; attempt <= MAGIC_LINK_LIMIT; attempt += 1) {
+          const result = await portal.requestInvitationLink(page, invitationId);
+          statuses.push(result.error);
+        }
+
+        expect(dead).toEqual({ value: null, error: "not-found", status: 404 });
+        expect(statuses).toEqual([
+          ...Array.from({ length: MAGIC_LINK_LIMIT }, () => null),
+          "rate-limited",
+        ]);
       });
     });
   });

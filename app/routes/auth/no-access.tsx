@@ -1,11 +1,11 @@
-import { ArrowLeft, LogOut } from "lucide-react";
+import { LogOut } from "lucide-react";
 import {
   data,
   Form,
-  Link,
   useNavigation,
   type ShouldRevalidateFunctionArgs,
 } from "react-router";
+import BackToSignInLink from "@/components/auth/back-to-sign-in-link";
 import Button from "@/components/ui/button";
 import type { NoAccessReason } from "@/lib/auth/auth";
 import { requireAccess } from "@/lib/auth/require-access.server";
@@ -78,13 +78,7 @@ export default function NoAccess({
           </Button>
         </Form>
       ) : (
-        <Link
-          to="/sign-in"
-          className="inline-flex h-11 items-center gap-1.5 self-start rounded-[3px] text-sm font-medium text-accent-fg underline-offset-2 transition-[color,text-decoration-color] duration-(--dur-instant) hover:underline md:h-auto pointer-coarse:h-11"
-        >
-          <ArrowLeft size={14} aria-hidden="true" />
-          Back to sign in
-        </Link>
+        <BackToSignInLink />
       )}
     </>
   );

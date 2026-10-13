@@ -7,6 +7,7 @@ import {
 } from "react-router";
 import ClientShell from "@/components/client/client-shell";
 import ClientTeamSkeleton from "@/components/client/client-team-skeleton";
+import { useWelcomeToast } from "@/hooks/use-welcome-toast";
 import { requireClientUser } from "@/lib/auth/require-access.server";
 import { getNoStoreHeaders } from "@/lib/no-store-headers";
 import { revalidateUnlessThemeFailed } from "@/lib/theme";
@@ -33,6 +34,7 @@ export default function ClientLayout({
   loaderData,
 }: Route.ComponentProps): React.ReactNode {
   const isLoadingTeam = useIsNavigatingToTeam();
+  useWelcomeToast(loaderData.clientName);
 
   return (
     <ClientShell {...loaderData}>

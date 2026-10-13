@@ -54,6 +54,7 @@ vi.mock("@/lib/auth/auth.server", () => ({
       resendInvitation(clientId, invitationId),
     revokeInvitation: (clientId: string, invitationId: string) =>
       revokeInvitation(clientId, invitationId),
+    listSocialProviders: () => [],
   },
 }));
 

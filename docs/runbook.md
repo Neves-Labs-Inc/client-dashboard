@@ -304,7 +304,7 @@ After the first Phase 2 deploy, on `https://portal.neveslabs.dev` (not a preview
 3. Sign out from the user menu, then on `/sign-in` choose **Sign in with a passkey**. You're back on Admin Home.
 4. Create a Client with **New client**. You land on its Team tab with the "Invite first Owner" drawer open.
 5. Invite a first Owner at one of your own test addresses (never a real client's). The toast says "Invitation sent", the row shows under Pending invitations, Home's Owner column says "Invitation pending", and the email "You're invited to <Client> on the Neves Labs portal" arrives.
-6. Open the email's link (`https://portal.neveslabs.dev/invitations/<id>`). It shows "Page not found": acceptance arrives in Phase 3.
+6. Open the email's link (`https://portal.neveslabs.dev/invitations/<id>`). It showed "Page not found" in Phase 2; from Phase 3 it opens the acceptance page ("Join <Client>"), where signing in as the invited email joins.
 7. **Resend**: a second, identical email arrives with the same link. **Revoke** (then confirm): the row disappears and "Invite first Owner" returns.
 
 If an invitation email doesn't arrive, the action still reports success (the Invitation is saved, so you can resend). The Vercel function logs show `auth: invitation email failed (<error name and code>)`, with the Client's id but no address or link; check the `SMTP_*` vars, then resend.

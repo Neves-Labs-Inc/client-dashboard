@@ -129,11 +129,6 @@ describe("the / redirect", () => {
   const homes: [string, Access, string][] = [
     ["a Client User", OWNER, "/team"],
     ["a no-access session", ARCHIVED, "/no-access"],
-    [
-      "an invitee (until joining lands)",
-      INVITEE,
-      "/no-access?reason=not-invited",
-    ],
     ["a visitor", ANONYMOUS, "/sign-in"],
   ];
 

@@ -1,4 +1,3 @@
-import type { LucideIcon } from "lucide-react";
 import Spinner from "@/components/ui/spinner";
 import {
   buttonStyles,
@@ -6,10 +5,17 @@ import {
 } from "@/components/ui/button-styles";
 import { cn } from "@/lib/utils";
 
+// A lucide icon, or a logo with the same props (GoogleMark).
+type ButtonIcon = React.ComponentType<{
+  size?: number;
+  "aria-hidden"?: boolean | "true" | "false";
+  className?: string;
+}>;
+
 type ButtonProps = Omit<React.ComponentProps<"button">, "children"> & {
   children: React.ReactNode;
   variant?: ButtonVariant;
-  icon?: LucideIcon;
+  icon?: ButtonIcon;
   isPending?: boolean;
   pendingLabel?: string;
 };
