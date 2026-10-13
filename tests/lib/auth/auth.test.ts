@@ -1,12 +1,14 @@
 import { randomInt, randomUUID } from "node:crypto";
-import { eq, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import pg from "pg";
 import { APIError } from "better-auth/api";
 import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import { type Access, type Auth, createAuth } from "@/lib/auth/auth";
+import type { OAuthProfile, RegisteredProvider } from "@/lib/auth/providers";
 import { createInvitationEligibilityHook } from "@/lib/auth/invite-eligibility";
 import { createDb } from "@/lib/db/db";
 import {
+  account,
   clients,
   invitation,
   member,
@@ -27,6 +29,7 @@ const SESSION_DAYS = 90;
 const MAGIC_LINK_LIMIT = 5;
 const MAGIC_LINK_HOURLY_CAP = 10;
 const PASSKEY_OPTIONS_LIMIT = 10;
+const SOCIAL_LIMIT = 10;
 const SESSION_MAX_AGE_S = SESSION_DAYS * 24 * 60 * 60;
 // Better Auth's fallback when no client IP is trusted (test and dev mode).
 const FALLBACK_IP = "127.0.0.1";
@@ -89,6 +92,10 @@ async function deleteAuthRows(): Promise<void> {
     // Passkey challenges are keyed by a random token, not an identifier.
     await owner.query(
       `delete from verification where value like '%"expectedChallenge"%'`,
+    );
+    // OAuth sign-ins' state, keyed by a random value.
+    await owner.query(
+      "delete from verification where identifier like 'auth-state:%'",
     );
     await owner.query("delete from email_send_quota");
     await owner.query(
@@ -728,7 +735,7 @@ describe("passkey", () => {
     expect((await getAccessFor(secondSignIn.cookie)).kind).toBe("admin");
   });
 
-  it("gives a passkey session for any other email no access", async () => {
+  it("refuses a passkey sign-in for any other email, creating no session", async () => {
     const ip = createIp();
     const authenticator = createAuthenticator();
     await registerPasskey(authenticator, await signInWithMagicLink(ip), ip);
@@ -742,10 +749,20 @@ describe("passkey", () => {
       await tx.update(passkey).set({ userId: other.id });
     });
 
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+
     const signIn = await signInWithPasskey(authenticator, "", ip);
 
-    expect(signIn.response.status).toBe(200);
+    expect(signIn.response.status).toBe(403);
     expect(await getAccessFor(signIn.cookie)).toEqual({ kind: "anonymous" });
+    const sessions = await db.withSystem((tx) =>
+      tx
+        .select({ id: session.id })
+        .from(session)
+        .innerJoin(user, eq(user.id, session.userId))
+        .where(eq(user.email, "other@test.local")),
+    );
+    expect(sessions).toEqual([]);
   });
 });
 
@@ -1949,58 +1966,836 @@ describe("Clients", () => {
       ).resolves.toBeUndefined();
       await expect(inviteVia(id, "leo@example.test")).resolves.toBeUndefined();
     });
+  });
 
-    // Through Better Auth's own invite endpoint, as a Phase 3 Owner would
-    // call it: proves the hook is registered, not just that it works.
-    it("runs on Better Auth's native invite-member", async () => {
-      const ip = createIp();
-      const cookie = await signInWithMagicLink(ip);
-      const id = await addClient("Acme");
-      const other = await addClient("Other");
-      await addMember(other, "-maya@example.test", "owner");
-      const [admin] = await db.withSystem((tx) =>
+  // Client Users and invitees signing in, through the HTTP handler, with a
+  // fake OAuth provider registered as "google" (Better Auth's generic OAuth
+  // serves it on the same /sign-in/social and /callback/:id endpoints).
+  describe("Client User sign-in", () => {
+    const profiles = new Map<string, OAuthProfile>();
+    const fakeGoogle: RegisteredProvider = {
+      clientId: "fake-client-id",
+      clientSecret: "fake-client-secret",
+      signInMethod: "google",
+      custom: {
+        authorizationUrl: "https://oauth.fake.test/authorize",
+        // The code is the access token, and names the profile.
+        getToken: async (code) => ({ accessToken: code }),
+        getProfile: async (accessToken) => profiles.get(accessToken) ?? null,
+      },
+    };
+    const portal = createAuth({
+      ...authDeps,
+      trustForwardedFor: true,
+      now: () => now,
+      providers: { google: fakeGoogle },
+    });
+    const DAY_AFTER = new Date(NOW.getTime() + DAY_MS);
+    const WEEK_AFTER = new Date(NOW.getTime() + 7 * DAY_MS);
+    const NO_ACCESS = {
+      notInvited: `${baseUrl}/no-access?reason=not-invited`,
+      archived: `${baseUrl}/no-access?reason=archived`,
+    };
+
+    afterEach(() => {
+      profiles.clear();
+    });
+
+    // A member as a magic-link sign-in leaves one: the email verified.
+    async function addVerifiedMember(
+      organizationId: string,
+      email: string,
+      role = "owner",
+    ): Promise<string> {
+      const [row] = await db.withSystem((tx) =>
         tx
-          .select({ id: user.id })
-          .from(user)
-          .where(eq(user.email, env.ADMIN_EMAIL)),
+          .insert(user)
+          .values({ name: "Maya", email, emailVerified: true })
+          .returning({ id: user.id }),
       );
       await db.withSystem((tx) =>
-        tx.insert(member).values({
-          organizationId: id,
-          userId: admin.id,
-          role: "owner",
-          createdAt: NOW,
+        tx
+          .insert(member)
+          .values({ organizationId, userId: row.id, role, createdAt: NOW }),
+      );
+      return row.id;
+    }
+
+    async function archive(clientId: string): Promise<void> {
+      await db.withSystem((tx) =>
+        tx
+          .update(clients)
+          .set({ archivedAt: NOW })
+          .where(eq(clients.id, clientId)),
+      );
+    }
+
+    // The whole redirect flow, as a browser runs it against the provider.
+    async function signInWithGoogle(
+      profile: Omit<OAuthProfile, "id" | "name"> & { name?: string },
+      ip: string,
+      via: Auth = portal,
+    ): Promise<Response> {
+      const start = await via.handler(
+        apiRequest("/sign-in/social", "", ip, {
+          provider: "google",
+          callbackURL: "/",
+          errorCallbackURL: "/sign-in",
         }),
       );
+      expect(start.status).toBe(200);
+      const { url } = (await start.json()) as { url: string };
+      const state = new URL(url).searchParams.get("state") ?? "";
+      const code = randomUUID();
+      profiles.set(code, {
+        id: `sub-${profile.email}`,
+        name: "Maya",
+        ...profile,
+      });
+      const query = new URLSearchParams({ code, state });
+      return via.handler(
+        new Request(`${baseUrl}/api/auth/callback/google?${query}`, {
+          headers: {
+            cookie: getCookieHeader(start),
+            "x-forwarded-for": ip,
+          },
+        }),
+      );
+    }
+
+    async function requestLink(email: string, ip: string): Promise<Response> {
+      const response = await requestMagicLink(email, ip, portal);
+      return response;
+    }
+
+    async function followLastLink(ip: string): Promise<Response> {
+      return portal.handler(
+        new Request(getLinkFromLastMessage(), {
+          headers: { "x-forwarded-for": ip },
+        }),
+      );
+    }
+
+    async function accessOf(response: Response): Promise<Access> {
+      const { access } = await portal.getAccess(
+        pageRequest(getCookieHeader(response)),
+      );
+      return access;
+    }
+
+    async function readSessionsOf(email: string) {
+      return db.withSystem((tx) =>
+        tx
+          .select({ signInMethod: session.signInMethod })
+          .from(session)
+          .innerJoin(user, eq(user.id, session.userId))
+          .where(eq(user.email, email)),
+      );
+    }
+
+    async function readGoogleAccounts(email: string): Promise<string[]> {
+      const rows = await db.withSystem((tx) =>
+        tx
+          .select({ id: account.id })
+          .from(account)
+          .innerJoin(user, eq(user.id, account.userId))
+          .where(and(eq(user.email, email), eq(account.providerId, "google"))),
+      );
+      return rows.map((row) => row.id);
+    }
+
+    async function readGoogleTokens(email: string) {
+      return db.withSystem((tx) =>
+        tx
+          .select({
+            accessToken: account.accessToken,
+            refreshToken: account.refreshToken,
+            idToken: account.idToken,
+            accessTokenExpiresAt: account.accessTokenExpiresAt,
+            refreshTokenExpiresAt: account.refreshTokenExpiresAt,
+          })
+          .from(account)
+          .innerJoin(user, eq(user.id, account.userId))
+          .where(and(eq(user.email, email), eq(account.providerId, "google"))),
+      );
+    }
+
+    // A user row as a past magic-link sign-in leaves it, with no member row.
+    async function addVerifiedUser(email: string): Promise<void> {
+      await db.withSystem((tx) =>
+        tx.insert(user).values({ name: "Ex", email, emailVerified: true }),
+      );
+    }
+
+    async function readUserIds(email: string): Promise<string[]> {
+      const rows = await db.withSystem((tx) =>
+        tx.select({ id: user.id }).from(user).where(eq(user.email, email)),
+      );
+      return rows.map((row) => row.id);
+    }
+
+    function silenceWarnings(): void {
       vi.spyOn(console, "warn").mockImplementation(() => {});
+    }
 
-      const refused = await auth.handler(
-        apiRequest("/organization/invite-member", cookie, ip, {
-          email: `${prefix}-maya@example.test`,
-          role: "member",
-          organizationId: id,
-        }),
-      );
-      const allowed = await auth.handler(
-        apiRequest("/organization/invite-member", cookie, ip, {
-          email: "leo@example.test",
-          role: "member",
-          organizationId: id,
-        }),
-      );
+    describe("getAccess", () => {
+      it("is client for a member of an active Client, with its Client and role", async () => {
+        const clientId = await addClient("Acme");
+        const email = `${prefix}-maya@example.test`;
+        const userId = await addVerifiedMember(clientId, email, "member");
+        const ip = createIp();
+        await requestLink(email, ip);
 
-      expect(refused.status).toBe(403);
-      expect(await refused.json()).toMatchObject(GENERIC_REFUSAL.body);
-      expect(allowed.status).toBe(200);
-      const emails = (
-        await db.withSystem((tx) =>
+        const access = await accessOf(await followLastLink(ip));
+
+        expect(access).toEqual({
+          kind: "client",
+          userId,
+          email,
+          name: "Maya",
+          clientId,
+          clientName: `${prefix} Acme`,
+          role: "member",
+        });
+      });
+
+      it("is no-access (archived) once the member's Client is archived", async () => {
+        const clientId = await addClient("Acme");
+        const email = `${prefix}-maya@example.test`;
+        await addVerifiedMember(clientId, email);
+        const ip = createIp();
+        await requestLink(email, ip);
+        const signIn = await followLastLink(ip);
+
+        await archive(clientId);
+
+        expect(await accessOf(signIn)).toEqual({
+          kind: "no-access",
+          reason: "archived",
+        });
+      });
+
+      it("is invitee for a session with a live Invitation and no member row", async () => {
+        const clientId = await addClient("Acme");
+        const email = `${prefix}-leo@example.test`;
+        await addInvitation(clientId, { email, expiresAt: WEEK_AFTER });
+
+        const signIn = await signInWithGoogle(
+          { email, isEmailVerified: true },
+          createIp(),
+        );
+
+        const [userId] = await readUserIds(email);
+        expect(await accessOf(signIn)).toEqual({
+          kind: "invitee",
+          userId,
+          email,
+        });
+      });
+
+      it("is no-access (not-invited) once that Invitation has expired", async () => {
+        const clientId = await addClient("Acme");
+        const email = `${prefix}-leo@example.test`;
+        await addInvitation(clientId, { email, expiresAt: DAY_AFTER });
+        const signIn = await signInWithGoogle(
+          { email, isEmailVerified: true },
+          createIp(),
+        );
+
+        now = new Date(DAY_AFTER.getTime() + MINUTE_MS);
+
+        expect(await accessOf(signIn)).toEqual({
+          kind: "no-access",
+          reason: "not-invited",
+        });
+      });
+    });
+
+    describe("Google", () => {
+      it("is offered only when registered", () => {
+        expect(portal.listSocialProviders()).toEqual(["google"]);
+        expect(auth.listSocialProviders()).toEqual([]);
+      });
+
+      it("is unreachable when not registered", async () => {
+        const ip = createIp();
+
+        const start = await auth.handler(
+          apiRequest("/sign-in/social", "", ip, {
+            provider: "google",
+            callbackURL: "/",
+          }),
+        );
+        const callback = await auth.handler(
+          new Request(`${baseUrl}/api/auth/callback/google?code=x&state=y`),
+        );
+
+        expect(start.status).toBe(404);
+        expect(callback.status).toBe(404);
+      });
+
+      it("refuses the id-token variant of the social sign-in", async () => {
+        silenceWarnings();
+
+        const response = await portal.handler(
+          apiRequest("/sign-in/social", "", createIp(), {
+            provider: "google",
+            idToken: { token: "header.payload.signature" },
+          }),
+        );
+
+        expect(response.status).toBe(403);
+      });
+
+      it("refuses an uninvited email: no account, no session, the No access page", async () => {
+        silenceWarnings();
+        const email = `${prefix}-eve@example.test`;
+
+        const response = await signInWithGoogle(
+          { email, isEmailVerified: true },
+          createIp(),
+        );
+
+        expect(response.status).toBe(302);
+        expect(response.headers.get("location")).toBe(NO_ACCESS.notInvited);
+        expect(getCookieHeader(response)).not.toContain("session_token");
+        expect(await readUserIds(email)).toEqual([]);
+      });
+
+      it("gives an invitee an account and a google session", async () => {
+        const clientId = await addClient("Acme");
+        const email = `${prefix}-leo@example.test`;
+        await addInvitation(clientId, { email, expiresAt: WEEK_AFTER });
+
+        const response = await signInWithGoogle(
+          { email, isEmailVerified: true },
+          createIp(),
+        );
+
+        expect(response.status).toBe(302);
+        expect(response.headers.get("location")).toBe("/");
+        expect(await readUserIds(email)).toHaveLength(1);
+        expect(await readSessionsOf(email)).toEqual([
+          { signInMethod: "google" },
+        ]);
+        expect((await accessOf(response)).kind).toBe("invitee");
+      });
+
+      it("refuses an email Google hasn't verified, creating nothing", async () => {
+        silenceWarnings();
+        const clientId = await addClient("Acme");
+        const email = `${prefix}-leo@example.test`;
+        await addInvitation(clientId, { email, expiresAt: WEEK_AFTER });
+
+        const response = await signInWithGoogle(
+          { email, isEmailVerified: false },
+          createIp(),
+        );
+
+        expect(response.headers.get("location")).toBe(NO_ACCESS.notInvited);
+        expect(await readUserIds(email)).toEqual([]);
+      });
+
+      it("refuses ADMIN_EMAIL, before and after the Admin has an account", async () => {
+        silenceWarnings();
+        const ip = createIp();
+        const profile = { email: env.ADMIN_EMAIL, isEmailVerified: true };
+
+        const beforeAccount = await signInWithGoogle(profile, ip);
+        await signInWithMagicLink(ip);
+        const afterAccount = await signInWithGoogle(profile, ip);
+
+        expect(beforeAccount.headers.get("location")).toBe(
+          NO_ACCESS.notInvited,
+        );
+        expect(afterAccount.headers.get("location")).toBe(NO_ACCESS.notInvited);
+        expect(await readSessionsOf(env.ADMIN_EMAIL)).toEqual([
+          { signInMethod: "magic-link" },
+        ]);
+      });
+
+      it("refuses a member of an archived Client with the archived reason", async () => {
+        silenceWarnings();
+        const clientId = await addClient("Acme");
+        const email = `${prefix}-maya@example.test`;
+        await addVerifiedMember(clientId, email);
+        await archive(clientId);
+
+        const response = await signInWithGoogle(
+          { email, isEmailVerified: true },
+          createIp(),
+        );
+
+        expect(response.headers.get("location")).toBe(NO_ACCESS.archived);
+        expect(await readSessionsOf(email)).toEqual([]);
+      });
+
+      it("links no Google account to a user it refuses", async () => {
+        silenceWarnings();
+        const clientId = await addClient("Acme");
+        const archivedMember = `${prefix}-maya@example.test`;
+        const removed = `${prefix}-removed@example.test`;
+        await addVerifiedMember(clientId, archivedMember);
+        await archive(clientId);
+        await addVerifiedUser(removed);
+        const ip = createIp();
+        await signInWithMagicLink(ip);
+
+        const locations: (string | null)[] = [];
+        for (const email of [env.ADMIN_EMAIL, archivedMember, removed]) {
+          const response = await signInWithGoogle(
+            { email, isEmailVerified: true },
+            ip,
+          );
+          locations.push(response.headers.get("location"));
+        }
+
+        expect(locations).toEqual([
+          NO_ACCESS.notInvited,
+          NO_ACCESS.archived,
+          NO_ACCESS.notInvited,
+        ]);
+        expect(await readGoogleAccounts(env.ADMIN_EMAIL)).toEqual([]);
+        expect(await readGoogleAccounts(archivedMember)).toEqual([]);
+        expect(await readGoogleAccounts(removed)).toEqual([]);
+      });
+
+      it("answers the 11th sign-in or callback request from one IP within 60 s with 429", async () => {
+        const ip = createIp();
+        const signIns: number[] = [];
+        const callbacks: number[] = [];
+        for (let count = 0; count <= SOCIAL_LIMIT; count += 1) {
+          const start = await portal.handler(
+            apiRequest("/sign-in/social", "", ip, {
+              provider: "google",
+              callbackURL: "/",
+            }),
+          );
+          signIns.push(start.status);
+          const callback = await portal.handler(
+            new Request(`${baseUrl}/api/auth/callback/google?code=x&state=y`, {
+              headers: { "x-forwarded-for": ip },
+            }),
+          );
+          callbacks.push(callback.status);
+        }
+
+        expect(signIns.slice(0, SOCIAL_LIMIT)).not.toContain(429);
+        expect(signIns.at(-1)).toBe(429);
+        expect(callbacks.slice(0, SOCIAL_LIMIT)).not.toContain(429);
+        expect(callbacks.at(-1)).toBe(429);
+      });
+
+      it("links to the account a magic link created for the same email", async () => {
+        const clientId = await addClient("Acme");
+        const email = `${prefix}-leo@example.test`;
+        await addInvitation(clientId, { email, expiresAt: WEEK_AFTER });
+        const ip = createIp();
+        await requestLink(email, ip);
+        await followLastLink(ip);
+
+        const response = await signInWithGoogle(
+          { email, isEmailVerified: true },
+          ip,
+        );
+
+        expect(response.headers.get("location")).toBe("/");
+        expect(await readUserIds(email)).toHaveLength(1);
+        expect(await readSessionsOf(email)).toEqual(
+          expect.arrayContaining([
+            { signInMethod: "magic-link" },
+            { signInMethod: "google" },
+          ]),
+        );
+      });
+    });
+
+    // Better Auth's own Google provider, with only Google's token endpoint
+    // faked (the network boundary). Its ID token is read unverified there, as
+    // Better Auth does on the redirect flow.
+    describe("built-in Google", () => {
+      const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
+      const builtIn = createAuth({
+        ...authDeps,
+        trustForwardedFor: true,
+        now: () => now,
+        providers: {
+          google: {
+            clientId: "client-id.apps.googleusercontent.com",
+            clientSecret: "GOCSPX-test",
+            signInMethod: "google",
+          },
+        },
+      });
+
+      function encodePart(value: object): string {
+        return Buffer.from(JSON.stringify(value)).toString("base64url");
+      }
+
+      function fakeGoogleToken(claims: {
+        email: string;
+        email_verified: boolean;
+      }): void {
+        const idToken = [
+          encodePart({ alg: "RS256", typ: "JWT" }),
+          encodePart({ sub: `sub-${claims.email}`, name: "Leo", ...claims }),
+          "signature",
+        ].join(".");
+        const realFetch = globalThis.fetch;
+        vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+          const url = input instanceof Request ? input.url : String(input);
+          if (!url.startsWith(GOOGLE_TOKEN_URL)) return realFetch(input, init);
+
+          return Promise.resolve(
+            Response.json({
+              access_token: "google-access-token",
+              id_token: idToken,
+              token_type: "Bearer",
+              expires_in: 3600,
+            }),
+          );
+        });
+      }
+
+      async function signInWithBuiltInGoogle(ip: string): Promise<Response> {
+        const start = await builtIn.handler(
+          apiRequest("/sign-in/social", "", ip, {
+            provider: "google",
+            callbackURL: "/",
+          }),
+        );
+        const { url } = (await start.json()) as { url: string };
+        const authorization = new URL(url);
+        expect(authorization.origin).toBe("https://accounts.google.com");
+        const query = new URLSearchParams({
+          code: "google-code",
+          state: authorization.searchParams.get("state") ?? "",
+        });
+        return builtIn.handler(
+          new Request(`${baseUrl}/api/auth/callback/google?${query}`, {
+            headers: {
+              cookie: getCookieHeader(start),
+              "x-forwarded-for": ip,
+            },
+          }),
+        );
+      }
+
+      it("gives an invitee Google verified a google session", async () => {
+        const clientId = await addClient("Acme");
+        const email = `${prefix}-leo@example.test`;
+        await addInvitation(clientId, { email, expiresAt: WEEK_AFTER });
+        fakeGoogleToken({ email, email_verified: true });
+
+        const response = await signInWithBuiltInGoogle(createIp());
+
+        expect(response.headers.get("location")).toBe("/");
+        expect(await readSessionsOf(email)).toEqual([
+          { signInMethod: "google" },
+        ]);
+      });
+
+      it("stores no Google tokens, on the first sign-in or a repeat one", async () => {
+        const clientId = await addClient("Acme");
+        const email = `${prefix}-leo@example.test`;
+        await addInvitation(clientId, { email, expiresAt: WEEK_AFTER });
+        fakeGoogleToken({ email, email_verified: true });
+        const ip = createIp();
+
+        await signInWithBuiltInGoogle(ip);
+        const afterFirst = await readGoogleTokens(email);
+        await signInWithBuiltInGoogle(ip);
+        const afterRepeat = await readGoogleTokens(email);
+
+        const noTokens = {
+          accessToken: null,
+          refreshToken: null,
+          idToken: null,
+          accessTokenExpiresAt: null,
+          refreshTokenExpiresAt: null,
+        };
+        expect(afterFirst).toEqual([noTokens]);
+        expect(afterRepeat).toEqual([noTokens]);
+        expect(await readSessionsOf(email)).toHaveLength(2);
+      });
+
+      it("refuses an email Google hasn't verified as not-invited, creating nothing", async () => {
+        silenceWarnings();
+        const clientId = await addClient("Acme");
+        const email = `${prefix}-leo@example.test`;
+        await addInvitation(clientId, { email, expiresAt: WEEK_AFTER });
+        fakeGoogleToken({ email, email_verified: false });
+
+        const response = await signInWithBuiltInGoogle(createIp());
+
+        expect(response.headers.get("location")).toBe(NO_ACCESS.notInvited);
+        expect(await readUserIds(email)).toEqual([]);
+      });
+    });
+
+    describe("magic link", () => {
+      it("is sent to a member of an active or an archived Client", async () => {
+        const active = await addClient("Acme");
+        const archived = await addClient("Gone");
+        const activeEmail = `${prefix}-maya@example.test`;
+        const archivedEmail = `${prefix}-ana@example.test`;
+        await addVerifiedMember(active, activeEmail);
+        await addVerifiedMember(archived, archivedEmail);
+        await archive(archived);
+
+        await requestLink(activeEmail, createIp());
+        await requestLink(archivedEmail, createIp());
+
+        expect(mailer.sent.map((message) => message.to)).toEqual([
+          activeEmail,
+          archivedEmail,
+        ]);
+        expect(mailer.sent[0].subject).toBe(
+          "Your Neves Labs portal sign-in link",
+        );
+      });
+
+      it("is sent to a live invitee, who gets an account on following it", async () => {
+        const clientId = await addClient("Acme");
+        const email = `${prefix}-leo@example.test`;
+        await addInvitation(clientId, { email, expiresAt: WEEK_AFTER });
+        const ip = createIp();
+
+        await requestLink(email.toUpperCase(), ip);
+        const signIn = await followLastLink(ip);
+
+        expect(mailer.sent.map((message) => message.to)).toEqual([email]);
+        expect((await accessOf(signIn)).kind).toBe("invitee");
+        const [account] = await db.withSystem((tx) =>
           tx
-            .select({ email: invitation.email })
-            .from(invitation)
-            .where(eq(invitation.organizationId, id)),
-        )
-      ).map((row) => row.email);
-      expect(emails).toEqual(["leo@example.test"]);
+            .select({ emailVerified: user.emailVerified })
+            .from(user)
+            .where(eq(user.email, email)),
+        );
+        expect(account.emailVerified).toBe(true);
+      });
+
+      it("sends nothing to an uninvited, removed or expired-invitee email, with the same response", async () => {
+        const clientId = await addClient("Acme");
+        const removed = `${prefix}-removed@example.test`;
+        const expired = `${prefix}-expired@example.test`;
+        await addUser("-removed@example.test");
+        await addInvitation(clientId, {
+          email: expired,
+          expiresAt: new Date(NOW.getTime() - MINUTE_MS),
+        });
+        const member = `${prefix}-maya@example.test`;
+        await addVerifiedMember(clientId, member);
+        const baseline = await requestLink(member, createIp());
+        mailer.sent.length = 0;
+
+        const responses = [];
+        for (const email of [`${prefix}-eve@example.test`, removed, expired]) {
+          responses.push(await requestLink(email, createIp()));
+        }
+
+        expect(mailer.sent).toEqual([]);
+        const expected = {
+          status: baseline.status,
+          body: await baseline.json(),
+        };
+        for (const response of responses) {
+          expect({
+            status: response.status,
+            body: await response.json(),
+          }).toEqual(expected);
+        }
+      });
+
+      it("skips the 11th link to one address within an hour", async () => {
+        silenceWarnings();
+        const clientId = await addClient("Acme");
+        const email = `${prefix}-maya@example.test`;
+        await addVerifiedMember(clientId, email);
+
+        for (let count = 0; count <= MAGIC_LINK_HOURLY_CAP; count += 1) {
+          await requestLink(email, createIp());
+        }
+
+        expect(mailer.sent).toHaveLength(MAGIC_LINK_HOURLY_CAP);
+      });
+
+      it("refuses a passkey registration from a Client User's magic-link session", async () => {
+        silenceWarnings();
+        const clientId = await addClient("Acme");
+        const email = `${prefix}-leo@example.test`;
+        await addInvitation(clientId, { email, expiresAt: WEEK_AFTER });
+        const ip = createIp();
+        await requestLink(email, ip);
+        const cookie = getCookieHeader(await followLastLink(ip));
+
+        const registration = await registerPasskey(
+          createAuthenticator(),
+          cookie,
+          ip,
+        );
+
+        expect(registration.response.status).toBe(403);
+        const passkeys = await db.withSystem((tx) =>
+          tx
+            .select({ id: passkey.id })
+            .from(passkey)
+            .innerJoin(user, eq(user.id, passkey.userId))
+            .where(eq(user.email, email)),
+        );
+        expect(passkeys).toEqual([]);
+      });
+
+      it("refuses an archived member following the link, with the archived reason", async () => {
+        silenceWarnings();
+        const clientId = await addClient("Acme");
+        const email = `${prefix}-maya@example.test`;
+        await addVerifiedMember(clientId, email);
+        await archive(clientId);
+        const ip = createIp();
+        await requestLink(email, ip);
+
+        const response = await followLastLink(ip);
+
+        expect(response.status).toBe(302);
+        expect(response.headers.get("location")).toBe(NO_ACCESS.archived);
+        expect(await readSessionsOf(email)).toEqual([]);
+      });
+
+      it("creates no account when the Invitation expired before the link was followed", async () => {
+        silenceWarnings();
+        const clientId = await addClient("Acme");
+        const email = `${prefix}-leo@example.test`;
+        await addInvitation(clientId, { email, expiresAt: DAY_AFTER });
+        const ip = createIp();
+        await requestLink(email, ip);
+
+        now = new Date(DAY_AFTER.getTime() + MINUTE_MS);
+        const response = await followLastLink(ip);
+
+        expect(response.headers.get("location")).toBe(NO_ACCESS.notInvited);
+        expect(await readUserIds(email)).toEqual([]);
+      });
+
+      it("keeps a same-origin path as the callback and turns anything else into /", async () => {
+        const kept = ["/", "/invitations/0199b0c4-0000-7000-8000-000000000000"];
+        const replaced = [
+          `${baseUrl}/team`,
+          "//evil.example/x",
+          "/\\evil.example",
+          "team",
+          "/%0d%0aevil",
+          "/%2F%2Fevil.example",
+          "/%E0%A4%A",
+        ];
+
+        const callbacks: string[] = [];
+        for (const callbackURL of [...kept, ...replaced]) {
+          mailer.sent.length = 0;
+          await portal.handler(
+            new Request(`${baseUrl}/api/auth/sign-in/magic-link`, {
+              method: "POST",
+              headers: {
+                "content-type": "application/json",
+                origin: baseUrl,
+                "x-forwarded-for": createIp(),
+              },
+              body: JSON.stringify({
+                email: env.ADMIN_EMAIL,
+                callbackURL,
+                errorCallbackURL: "https://evil.example",
+              }),
+            }),
+          );
+          await settleBackgroundTasks();
+          // Better Auth refuses some outright; any link sent must be safe.
+          const message = mailer.sent.at(-1);
+          if (message) {
+            const link = new URL(getLinkFromLastMessage());
+            callbacks.push(link.searchParams.get("callbackURL") ?? "");
+            expect(link.searchParams.get("errorCallbackURL")).toBe("/sign-in");
+          } else {
+            callbacks.push("(none sent)");
+          }
+        }
+
+        expect(callbacks.slice(0, kept.length)).toEqual(kept);
+        for (const callback of callbacks.slice(kept.length)) {
+          expect(["/", "(none sent)"]).toContain(callback);
+        }
+      });
+    });
+
+    describe("HTTP lockdown", () => {
+      it("answers 404 on every organization endpoint, however spelled", async () => {
+        const ip = createIp();
+        const cookie = await signInWithMagicLink(ip);
+        const paths = [
+          "/organization/accept-invitation",
+          "/organization/invite-member",
+          "/organization/update-member-role",
+          "/organization/remove-member",
+          "/organization/leave",
+          "/organization/set-active",
+          "/organization/cancel-invitation",
+          "/organization/list-members",
+          "/organization/get-full-organization",
+          "/organization/create",
+          "/organization/leave/",
+          "/Organization/leave",
+          "//organization/leave",
+          "/%6Frganization/leave",
+        ];
+
+        const statuses: number[] = [];
+        for (const path of paths) {
+          const response = await portal.handler(
+            apiRequest(path, cookie, ip, { organizationId: randomUUID() }),
+          );
+          statuses.push(response.status);
+        }
+
+        expect(statuses).toEqual(paths.map(() => 404));
+      });
+
+      it("limits an Admin magic-link session to its allowlist, and it still registers a passkey", async () => {
+        silenceWarnings();
+        const ip = createIp();
+        const cookie = await signInWithMagicLink(ip);
+        const outside = [
+          apiRequest("/sign-in/magic-link", cookie, ip, {
+            email: env.ADMIN_EMAIL,
+          }),
+          apiRequest("/send-verification-email", cookie, ip, {
+            email: env.ADMIN_EMAIL,
+          }),
+          apiRequest("/sign-up/email", cookie, ip, {
+            email: env.ADMIN_EMAIL,
+            password: "correct-horse-battery",
+            name: "Admin",
+          }),
+          apiRequest("/request-password-reset", cookie, ip, {
+            email: env.ADMIN_EMAIL,
+          }),
+        ];
+
+        const statuses: number[] = [];
+        for (const request of outside) {
+          statuses.push((await auth.handler(request)).status);
+        }
+        const getSession = await auth.handler(
+          apiRequest("/get-session", cookie, ip),
+        );
+        const registration = await registerPasskey(
+          createAuthenticator(),
+          cookie,
+          ip,
+        );
+
+        expect(statuses).toEqual(outside.map(() => 403));
+        expect(getSession.status).toBe(200);
+        expect(registration.response.status).toBe(200);
+      });
     });
   });
 });

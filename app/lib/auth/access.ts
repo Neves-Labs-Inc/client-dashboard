@@ -7,6 +7,10 @@ const ACCESS_HOME: Record<AccessKind, string> = {
   anonymous: "/sign-in",
   "admin-needs-passkey": "/passkey",
   admin: "/admin",
+  client: "/team",
+  // The / route joins an invitee to their newest live Invitation.
+  invitee: "/",
+  "no-access": "/no-access",
 };
 
 // Where an access belongs: the / route sends everyone here.

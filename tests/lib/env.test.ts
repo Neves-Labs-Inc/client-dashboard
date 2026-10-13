@@ -136,4 +136,33 @@ describe("getAppEnv", () => {
       SMTP_PASSWORD: "app-password-value",
     });
   });
+  it("leaves Google off when neither Google var is set", () => {
+    const env = getAppEnv();
+
+    expect(env.GOOGLE_CLIENT_ID).toBeUndefined();
+    expect(env.GOOGLE_CLIENT_SECRET).toBeUndefined();
+  });
+
+  it("rejects GOOGLE_CLIENT_ID without GOOGLE_CLIENT_SECRET", () => {
+    vi.stubEnv("GOOGLE_CLIENT_ID", "client-id.apps.googleusercontent.com");
+
+    expectRejected("GOOGLE_CLIENT_SECRET", undefined);
+  });
+
+  it("rejects GOOGLE_CLIENT_SECRET without GOOGLE_CLIENT_ID, without echoing it", () => {
+    const secret = "GOCSPX-google-secret-value";
+    vi.stubEnv("GOOGLE_CLIENT_SECRET", secret);
+
+    expectRejected("GOOGLE_CLIENT_ID", secret);
+  });
+
+  it("accepts both Google vars", () => {
+    vi.stubEnv("GOOGLE_CLIENT_ID", "client-id.apps.googleusercontent.com");
+    vi.stubEnv("GOOGLE_CLIENT_SECRET", "GOCSPX-google-secret-value");
+
+    expect(getAppEnv()).toMatchObject({
+      GOOGLE_CLIENT_ID: "client-id.apps.googleusercontent.com",
+      GOOGLE_CLIENT_SECRET: "GOCSPX-google-secret-value",
+    });
+  });
 });

@@ -43,7 +43,7 @@ export const user = pgTable("user", {
     .notNull(),
 });
 
-export const SIGN_IN_METHODS = ["magic-link", "passkey"] as const;
+export const SIGN_IN_METHODS = ["magic-link", "passkey", "google"] as const;
 export type SignInMethod = (typeof SIGN_IN_METHODS)[number];
 
 export const session = pgTable(
@@ -70,7 +70,7 @@ export const session = pgTable(
     index("session_userId_idx").on(table.userId),
     check(
       "session_sign_in_method_check",
-      sql`${table.signInMethod} in ('magic-link', 'passkey')`,
+      sql`${table.signInMethod} in ('magic-link', 'passkey', 'google')`,
     ),
   ],
 );

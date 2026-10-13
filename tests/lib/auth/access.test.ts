@@ -39,5 +39,13 @@ describe("getAccessRedirect", () => {
     expect(getAccessHome("anonymous")).toBe("/sign-in");
     expect(getAccessHome("admin-needs-passkey")).toBe("/passkey");
     expect(getAccessHome("admin")).toBe("/admin");
+    expect(getAccessHome("client")).toBe("/team");
+    expect(getAccessHome("invitee")).toBe("/");
+    expect(getAccessHome("no-access")).toBe("/no-access");
+  });
+
+  it("sends a Client User to Team, and a refused session to No access", () => {
+    expect(getAccessRedirect("client", ADMIN_PAGES)).toBe("/team");
+    expect(getAccessRedirect("no-access", SIGN_IN_PAGES)).toBe("/no-access");
   });
 });

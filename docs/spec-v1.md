@@ -24,7 +24,7 @@ Sources: [Client dashboard v1: wayfinder map][#1], [What does a Client User see 
 
 ### Signing in and Invitations
 
-1. As a Client User, I want to sign in with Google, Microsoft or a magic link, so that I don't manage another password.
+1. As a Client User, I want to sign in with Google or a magic link, so that I don't manage another password. (Microsoft sign-in is deferred; it returns as one small ticket once an Entra app exists.)
 2. As the Admin, I want passkey sign-in (magic link only for recovery), so that the account that sees every Client is phishing-resistant.
 2a. As the Admin, I want to bootstrap (and recover) my account by magic link to `ADMIN_EMAIL`, which only lets me register a passkey, so that the first passkey needs no seed script and a stolen inbox never opens the Admin area.
 3. As a Client User, I want my session to last 90 days and extend on each visit, so that I rarely sign in again.
@@ -39,7 +39,7 @@ Sources: [Client dashboard v1: wayfinder map][#1], [What does a Client User see 
 ### Roster (Owners and Admin)
 
 11. As an Owner, I want to promote, demote and remove any Client User, other Owners included, so that I control who sees our data.
-12. As an Owner, I want the system to stop the last Owner from leaving or being demoted until another Owner exists, so that my Client always has an Owner.
+12. As an Owner, I want the system to stop the last Owner from leaving or being demoted until another Owner exists, so that my Client always has an Owner. A sole Owner who is the Client's only Client User may also leave, after a confirmation, with the same result as the Admin removing them: the Client has no users until the Admin invites a new first Owner.
 13. As the Admin, I want to promote, demote and remove any Client's users, so that I can fix rosters; the last-Owner rule binds me too.
 14. As a removed Client User, I lose access at once (sessions end), while my past actions stay attributed to me.
 15. As a Member, I want to see everything an Owner sees, Invoices included, so that nothing is hidden from me by role.
@@ -95,6 +95,10 @@ Sources: [Client dashboard v1: wayfinder map][#1], [What does a Client User see 
 47. As the Admin, I want to link an Accepted or Done Request to one Task from the Client's mirrored Projects, with any other status clearing the link, so that the Client follows progress on the real work.
 48. As the Admin, I see Withdrawn Requests read-only.
 
+### Admin: preview
+
+49. As the Admin, I want a read-only "view as <Client>" preview of the client pages as the Client's Owner sees them, so that I can check what they see. (Franklin, 2026-10-13)
+
 ## Implementation Decisions
 
 ### Users, roles and access
@@ -103,7 +107,7 @@ Sources: [Client dashboard v1: wayfinder map][#1], [What does a Client User see 
 - **Client User**: belongs to exactly one Client, with role **Owner** or **Member**. Owners and Members see the same data, Invoices included; only Owners manage the roster. ([Who within a Client can invite and remove Client Users?][#5])
 - Nothing is role-restricted for reading within a Client. ([#5][#5])
 - **Admin designation:** the Admin is whoever signs in as the `ADMIN_EMAIL` env var; there is no admin role in the DB. That email can never be invited as a Client User. ([Settle the auth and access gaps][#23])
-- A Client always has at least one Owner. The last Owner can't leave, be demoted or be removed until another Owner exists, and this binds the Admin too (no override). The only exception: removing a sole Owner who is the Client's only Client User, which leaves the Client with no users until the Admin invites a new first Owner. ([#5][#5], [#23][#23])
+- A Client always has at least one Owner. The last Owner can't leave, be demoted or be removed until another Owner exists, and this binds the Admin too (no override). The only exception: removing a sole Owner who is the Client's only Client User, which leaves the Client with no users until the Admin invites a new first Owner. A sole Owner who is the Client's only Client User may also leave, after a confirmation, with the same result (Franklin, 2026-10-13). ([#5][#5], [#23][#23])
 
 ### Authentication and Invitations
 
@@ -111,7 +115,7 @@ Sources: [Auth.js or Better Auth?][#11], `docs/adr/0001-better-auth-over-authjs.
 
 - **Library: Better Auth** (self-hosted), with its organization plugin for the roster (roles) and Invitations. One Better Auth organization per Client.
 - **One auth module** of ours wraps every roster and auth call, so a future swap is contained. Nothing else calls Better Auth directly.
-- **Client User sign-in methods:** Google, Microsoft (work/school and personal accounts: Entra audience `common`), magic link. ([#23][#23])
+- **Client User sign-in methods:** Google and magic link. Microsoft (work/school and personal accounts: Entra audience `common`) is **deferred** (Franklin, 2026-10-13): it is added later as one small ticket once an Entra app exists. The auth module's provider registry makes it a one-place change. ([#23][#23])
 - **Admin sign-in:** passkey required. `ADMIN_EMAIL` is exempt from invite-only and may sign in by magic link, but that session can only reach "register a passkey"; the Admin area opens only after a passkey sign-in. This one path covers both the first-passkey bootstrap and recovery from a lost passkey. ([#11][#11], [#23][#23])
 - **Sessions:** 90 days, sliding (extended on each visit).
 - **Invite-only:** an uninvited sign-in is rejected and no account is created. Nobody becomes a Client User without an Invitation.
@@ -237,7 +241,7 @@ Navigation (sidebar on desktop, top bar + tab row on mobile): **Overview, Projec
 - **Invoices:** table (Number, Issued, Due, Amount, Status), newest issue date first; Status is Open, Paid or Overdue. Void Invoices are filtered out in the loader, never rendered. Row opens the Invoice detail (Line Items, memo, Project).
 - **Requests:** table (Kind, Title, Status, Submitter) of all the Client's Requests; "New request" opens the request drawer (Kind, Title, Description, optional Project). Request detail shows status, response note, linked Task (or last title "(no longer tracked)"); the submitter can edit (same drawer) or withdraw while New.
 - **Team:** roster and Invitation management for Owners. Members see a read-only roster (names, emails, roles) with no controls and no pending Invitations. ([#23][#23])
-- **Profile** (user menu): display name editable; email, role, Client and linked sign-in methods (Google / Microsoft) read-only; a "Leave Client" action, subject to the last-Owner rule. ([#23][#23])
+- **Profile** (user menu): display name editable; email, role, Client and linked sign-in methods (Google) read-only; a "Leave Client" action, subject to the last-Owner rule. ([#23][#23])
 - Client Users never see: internal Tasks, internal board columns, issue bodies, sync state.
 - Client Users only read Projects and Invoices; the only things they write are Requests (and, for Owners, the roster).
 
@@ -256,6 +260,15 @@ Sources: [What does the Admin area look like?][#19], `DESIGN.md` §6.3, prototyp
 - **Invoices:** author (see [Invoices](#invoices)); mark Paid, revert Paid to Open, and Void, each with a confirmation.
 - **Requests:** triage from the global inbox or the Client's tab; the detail view sets the status and the one response note and links a Task (only while Accepted or Done). Withdrawn Requests are read-only.
 - The Admin always runs as `app_system` (ADR 0003).
+
+### Admin preview (view as Client)
+
+Source: Franklin, 2026-10-13. Story 49. Built in its own mini-Phase after Phase 5 (roadmap "Phase 5a · Admin preview").
+
+- **Read-only:** actions are hidden or disabled, nothing is written, and no Client User session is ever created.
+- **The Owner's view of the Client:** no user or role picker.
+- **Tenant isolation:** Client data in the preview goes through the same `app_tenant` + `SET LOCAL` scope as a real Client User, never the system pool, and the preview opens no path for the Admin's session to read tenant data outside a preview.
+- Entry, exit, expiry and audit are settled when its Phase is planned. Its tickets get the security review axis.
 
 ### Invoices
 
@@ -315,7 +328,7 @@ Sources: [How do environments, CI and deploy work?][#17], `docs/adr/0004-vercel-
 | Deploy | Merge to `main` → CI → `drizzle-kit migrate` as `neondb_owner` against prod Neon (direct URL) → set `app_tenant`/`app_system` passwords from GitHub Actions secrets → `vercel deploy --prod`. A failed migration blocks the deploy. Vercel Git auto-deploy off |
 | Infra as code | None in v1. `docs/runbook.md` records the Vercel, Neon and GoDaddy settings. Terraform returns with the AWS move |
 | Domain + TLS | The portal is `portal.neveslabs.dev` (CNAME at GoDaddy). `www.neveslabs.dev` and the apex `neveslabs.dev` belong to the separate business website (repo `neveslabs-site`, its own Vercel project; out of scope for v1, a "Coming soon" placeholder for now). `www` is its primary domain; the apex 308-redirects to `www` (apex A record to Vercel, `www` CNAME). Vercel issues TLS |
-| Secrets | Vercel sensitive env vars: Gmail app password, GitHub App private key, webhook secret, App ID and installation ID, Better Auth secret, Google OAuth client, Microsoft Entra app, Cron auth secret, `DATABASE_URL`(s). GitHub Actions secrets: prod `neondb_owner` direct `DATABASE_URL`, `app_tenant` and `app_system` passwords, Vercel deploy token, org ID and project ID |
+| Secrets | Vercel sensitive env vars: Gmail app password, GitHub App private key, webhook secret, App ID and installation ID, Better Auth secret, Google OAuth client (Microsoft Entra app when Microsoft returns), Cron auth secret, `DATABASE_URL`(s). GitHub Actions secrets: prod `neondb_owner` direct `DATABASE_URL`, `app_tenant` and `app_system` passwords, Vercel deploy token, org ID and project ID |
 | Observability | Vercel's built-in logs only, plus the Admin's sync-problem flag. No error tracker or alerting in v1; a failed email shows only in the logs ([#22][#22]) |
 | Coding style | Franklin's `coding-style` skill (TypeScript/React) |
 
@@ -377,7 +390,7 @@ Vertical slices in dependency order; each ends in something observable.
 
 1. **Skeleton and pipeline:** React Router v7 app, Tailwind v4 + shadcn tokens from `DESIGN.md`, Dockerfile, GitHub Actions (typecheck, tests, Docker build), local Docker Postgres, deploy job (migrate then `vercel deploy --prod`), domain and runbook.
 2. **Database foundation and isolation:** Drizzle setup, roles migration (`app_tenant`, `app_system`), two pools, the tenant-aware data module with `SET LOCAL` transactions, `clients` table with RLS, and the cross-Client RLS test harness (plus the `BYPASSRLS` assertion). Every later table adds itself to this suite.
-3. **Auth:** Better Auth behind the auth module, mailer module (Gmail SMTP), Admin passkey sign-in, Client User Google/Microsoft/magic link, invite-only enforcement.
+3. **Auth:** Better Auth behind the auth module, mailer module (Gmail SMTP), Admin passkey sign-in, Client User Google / magic link (Microsoft deferred), invite-only enforcement.
 4. **Clients and rosters:** Admin creates/archives/unarchives Clients and invites the first Owner; Owners invite Members, promote/demote/remove, last-Owner rule, one-Client rule; Admin and Client Team screens.
 5. **App shell:** client shell (sidebar, mobile top bar, user menu, theme toggle) and Admin shell (Home, Client workspace tabs, drawer).
 6. **Invoices:** schema + counters, Admin authoring/Paid/revert/Void, Client Invoices list and detail, Overview Invoice panel and KPIs.
@@ -407,7 +420,7 @@ All resolved; each names the ticket that settled it.
 13. ~~**Members and the Team page**~~ Resolved by [Settle the auth and access gaps][#23]: Members see a read-only roster.
 14. ~~**Profile page**~~ Resolved by [Settle the auth and access gaps][#23]: editable display name; rest read-only; Leave Client.
 15. ~~**Archived Client sign-in**~~ Resolved by [Settle the auth and access gaps][#23]: sessions revoked at archive; sign-in refused.
-16. ~~**Microsoft sign-in scope**~~ Resolved by [Settle the auth and access gaps][#23]: work/school and personal (`common`).
+16. ~~**Microsoft sign-in scope**~~ Resolved by [Settle the auth and access gaps][#23]: work/school and personal (`common`). Microsoft sign-in itself is deferred (Franklin, 2026-10-13); this scope applies when it returns.
 17. ~~**Local GitHub sync**~~ Resolved by [#22][#22]: a dev GitHub App on real boards, webhooks via smee.io.
 18. ~~**Observability**~~ Resolved by [#22][#22]: Vercel logs only in v1.
 

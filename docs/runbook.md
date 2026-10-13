@@ -57,11 +57,13 @@ Env is read and validated in one place, `app/lib/env.ts`. A missing or malformed
 | `DB_QUERY_TIMEOUT_MS` | App runtime: time limit in ms for every query on both pools. Optional: default `10000`, must be a positive integer, max `600000`. Migrations aren't bound by it. | `.env` (optional), Vercel env (optional; leave unset for the default) |
 | `BETTER_AUTH_SECRET` | App runtime: Better Auth's signing secret (session cookies). At least 32 characters. Rotating it signs everyone out (section 5). | `.env`, `.env.test`, CI inline (`test` job), Vercel env (prod: `openssl rand -base64 32`, sensitive) |
 | `BETTER_AUTH_URL` | App runtime: the portal's public origin, with no trailing slash or path. Must be `https`, except `http` on `localhost` / `127.0.0.1`. Drives cookies, trusted origins, the passkey `rpID` (its hostname) and `origin`, and the links in emails. | `.env`, `.env.test`, CI inline (`test` job), Vercel env (prod: `https://portal.neveslabs.dev`) |
-| `ADMIN_EMAIL` | App runtime: the Admin's email, compared case-insensitively. Magic links are sent only to it, and it is the only account that can exist in Phase 2. | `.env` (your own address), `.env.test`, CI inline (`test` job), Vercel env (sensitive) |
+| `ADMIN_EMAIL` | App runtime: the Admin's email, compared case-insensitively. It signs in by magic link (to register a passkey) and passkey only, never Google, and can never be invited. | `.env` (your own address), `.env.test`, CI inline (`test` job), Vercel env (sensitive) |
 | `SMTP_HOST` | App runtime: SMTP server for all email. | `.env` / `.env.test` (`localhost`, Mailpit), CI inline (`test` job), Vercel env (prod: `smtp.gmail.com`) |
 | `SMTP_PORT` | App runtime: SMTP port, 1–65535. Port `465` means implicit TLS; any other port is plain. | `.env` / `.env.test` (`1025`, Mailpit), CI inline (`test` job), Vercel env (prod: `465`) |
 | `SMTP_USER` | App runtime: SMTP login. Optional, but set together with `SMTP_PASSWORD` or not at all. | Unset locally and in CI (Mailpit needs no auth). Vercel env (prod: the dedicated Gmail account, sensitive) |
 | `SMTP_PASSWORD` | App runtime: SMTP password. Optional, but set together with `SMTP_USER` or not at all. When set, `SMTP_PORT` must be `465`, so the credentials never cross a plain connection. | Unset locally and in CI. Vercel env (prod: the dedicated Gmail account's app password, sensitive) |
+| `GOOGLE_CLIENT_ID` | App runtime: the Google OAuth client id for Client User sign-in. Set together with `GOOGLE_CLIENT_SECRET` or not at all; unset, Google sign-in is off and its button is hidden. **Required on prod.** | `.env` (Franklin's dev client, optional), unset in `.env.test` and CI, Vercel env (prod, not sensitive) |
+| `GOOGLE_CLIENT_SECRET` | App runtime: that client's secret. Set together with `GOOGLE_CLIENT_ID` or not at all. Rotation: section 5. **Required on prod.** | `.env` (optional), unset in `.env.test` and CI, Vercel env (prod, sensitive) |
 | `MAIL_FROM` | App runtime: sender address. The display name is always "Neves Labs". | `.env` / `.env.test` (`portal@localhost.test`), CI inline (`test` job), Vercel env (prod: the dedicated Gmail address) |
 | `DATABASE_URL_OWNER` | Migrate command: runs migrations as `neondb_owner`. | `.env`, `.env.test`, CI inline (`test` job), GitHub `production` environment secret (prod: Neon **direct** URL) |
 | `APP_TENANT_PASSWORD` | Migrate command: the password it sets for `app_tenant`. Must match the password in `DATABASE_URL_TENANT`. | `.env`, `.env.test`, CI inline (`test` job), GitHub `production` environment secret |
@@ -183,6 +185,21 @@ Phase 2 adds sign-in and email. The app fails at startup until all eight vars be
    `SMTP_PORT` must be `465` (implicit TLS) whenever `SMTP_PASSWORD` is set; the app refuses to start otherwise.
 3. Confirm `neveslabs.dev` receives no mail: `dig MX neveslabs.dev +short` must print nothing. Mail is sent from the Gmail address, never from the domain.
 
+### 3.7 Phase 3 before prod deploy
+
+Phase 3 adds Client User sign-in with Google. Without these two vars the portal still starts, but Google sign-in is off, so set them before the Phase 3 deploy.
+
+1. Vercel project **Settings → Environment Variables**, environment **Production**:
+
+   | Var | Value | Sensitive |
+   |---|---|---|
+   | `GOOGLE_CLIENT_ID` | the Google OAuth client's id | no |
+   | `GOOGLE_CLIENT_SECRET` | that client's secret | yes |
+
+   Set both or neither: the app refuses to start with only one.
+2. In Google Cloud Console (**APIs & Services → Credentials →** the OAuth client), confirm the two authorized redirect URIs are exactly `http://localhost:5173/api/auth/callback/google` and `https://portal.neveslabs.dev/api/auth/callback/google`.
+3. In **OAuth consent screen**, confirm the publishing status is **In production**. While it is **Testing**, only the listed test users can sign in, and anyone else gets Google's own error page.
+
 ## 4. How a deploy works
 
 Every push to `main` (a merged PR) runs `.github/workflows/ci.yml`:
@@ -234,6 +251,15 @@ For `VERCEL_TOKEN`: create a new token, update the environment secret, then dele
 
 For `BETTER_AUTH_SECRET`: generate a new one (`openssl rand -base64 32`), update the Vercel env var, then redeploy (re-run the latest run on `main`). **Rotating it signs everyone out**: every session cookie was signed with the old secret. The Admin signs in again with the passkey.
 
+For the Google OAuth client secret (`GOOGLE_CLIENT_SECRET`):
+
+1. In Google Cloud Console (**APIs & Services → Credentials →** the OAuth client), add a new secret. The old one keeps working until you disable it.
+2. Update `GOOGLE_CLIENT_SECRET` in Vercel (Production).
+3. Redeploy (re-run the latest run on `main`), then sign in with Google to check it works.
+4. Disable, then delete, the old secret in the console.
+
+If the old secret may have leaked, disable it first (Google sign-in fails until the redeploy), then do steps 1 to 3. Signed-in sessions aren't affected: the secret is only used during sign-in.
+
 For the Gmail app password (`SMTP_PASSWORD`):
 
 1. In the dedicated Gmail account, create a new app password.
@@ -245,7 +271,7 @@ If the old app password may have leaked, revoke it first (mail stops until the r
 
 ### Magic links stop arriving: the hourly cap
 
-`ADMIN_EMAIL` gets at most 10 magic links per hour, whatever IPs ask for them. Once the cap is spent, the sign-in screen still says "Check your email" but nothing is sent, and the Vercel function logs show `auth: magic-link email skipped (hourly cap reached)`. That line means someone (you, or anyone who knows the address) burned the 10/hour cap. If you didn't send the requests, someone is trying to mail-bomb the address.
+Each address (`ADMIN_EMAIL` and every Client User or invitee) gets at most 10 magic links per hour, whatever IPs ask for them. Once the cap is spent, the sign-in screen still says "Check your email" but nothing is sent, and the Vercel function logs show `auth: magic-link email skipped (hourly cap reached)`. That line means someone (you, or anyone who knows the address) burned the 10/hour cap. If you didn't send the requests, someone is trying to mail-bomb the address.
 
 To recover:
 

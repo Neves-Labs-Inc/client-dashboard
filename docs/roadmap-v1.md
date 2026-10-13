@@ -1,6 +1,6 @@
 # Client Dashboard v1: roadmap
 
-v1 of the client dashboard (`docs/spec-v1.md`) cut into seven ordered **Phases**. Each Phase is planned by one `planner` run, ships to prod when done, and is followed by the next. A closing launch checklist gates the first real Client.
+v1 of the client dashboard (`docs/spec-v1.md`) cut into seven ordered **Phases**, plus the mini-Phase 5a. Each Phase is planned by one `planner` run, ships to prod when done, and is followed by the next. A closing launch checklist gates the first real Client.
 
 Sources: [Client dashboard v1: delivery Phases wayfinder map](https://github.com/Neves-Labs-Inc/client-dashboard/issues/27) and the tickets it links. This document makes no decisions of its own; a gap goes back to the spec or the map.
 
@@ -14,6 +14,7 @@ Sources: [Client dashboard v1: delivery Phases wayfinder map](https://github.com
 - **Accessibility and responsive** checks from `DESIGN.md` are acceptance criteria on every UI ticket in every Phase, not a final hardening pass.
 - **Toolchain:** pnpm, Vitest, ESLint (typescript-eslint) + Prettier with prettier-plugin-tailwindcss, Node 24 LTS. Code follows the `coding-style` skill.
 - **Spec is final:** a gap found while planning a Phase goes back to `docs/spec-v1.md`, not into this roadmap.
+- **Microsoft sign-in is deferred** (Franklin, 2026-10-13): it returns later as one small ticket once an Entra app exists, with no Phase of its own.
 
 ## Phases at a glance
 
@@ -24,6 +25,7 @@ Sources: [Client dashboard v1: delivery Phases wayfinder map](https://github.com
 | 3 | Client access | 3–5 (Client User path) | ~8 | An Owner signs in and manages the roster; archive locks a Client out |
 | 4 | Board sync | 7 (engine + linking) | ~7 | A linked test board syncs by webhook, cron and "Sync now" |
 | 5 | Client Projects | 7 (board detail) + 8 | 5–7 | Clients see Overview KPIs, Projects and Project views |
+| 5a | Admin preview | (new) | 1–2 | The Admin previews a Client's pages read-only |
 | 6 | Requests | 9 | ~5 | Clients submit Requests; the Admin triages and links Tasks |
 | 7 | Invoices | 6 | 5–7 | The Admin issues, pays and voids Invoices; Overdue shows |
 | — | Launch checklist | 10 | 0 (manual) | Ready for the first real Client |
@@ -40,7 +42,7 @@ A Phase is done when all of these hold:
 4. **Local walkthrough (before merge):** `qa-visual` runs the Phase's walkthrough against the local dev server.
 5. **Prod walkthrough (after deploy):** Franklin runs the same walkthrough by hand on `portal.neveslabs.dev`.
 
-Vercel preview deploys stay off (`docs/spec-v1.md`, Stack table), so the agent check is local only. The local walkthrough signs in with Playwright's virtual WebAuthn authenticator (Admin passkey) and Mailpit in Docker Compose (magic-link and Invitation emails). There is no test-only sign-in backdoor. Google and Microsoft sign-in and real Gmail delivery are checked on prod only.
+Vercel preview deploys stay off (`docs/spec-v1.md`, Stack table), so the agent check is local only. The local walkthrough signs in with Playwright's virtual WebAuthn authenticator (Admin passkey) and Mailpit in Docker Compose (magic-link and Invitation emails). There is no test-only sign-in backdoor. Google sign-in and real Gmail delivery are checked on prod only.
 
 Prerequisites come in two buckets per Phase: **before coding** (local dev and tests) and **before prod deploy**. Each is named here with what it provides; the step-by-step setup goes in `docs/runbook.md`, and the planner picks env var names and records them in `.env.example`.
 
@@ -86,7 +88,7 @@ Prerequisites come in two buckets per Phase: **before coding** (local dev and te
 
 ## Phase 3 · Client access
 
-**Scope (~8 tickets):** Client User sign-in (Google, Microsoft `common`, magic link); invite-only rejection with no account created; accepting an Invitation (email must match); client shell + per-request membership → `clientId`; Owners invite Members; promote/demote/remove/leave and the last-Owner rule (with its sole-user exception), with session revocation; Admin Team roster controls; Client Team (Owner controls, Member read-only); Profile; archive/unarchive Client.
+**Scope (~8 tickets):** Client User sign-in (Google, magic link; Microsoft deferred); invite-only rejection with no account created; accepting an Invitation (email must match); client shell + per-request membership → `clientId`; Owners invite Members; promote/demote/remove/leave and the last-Owner rule (with its sole-user exception), with session revocation; Admin Team roster controls; Client Team (Owner controls, Member read-only); Profile; archive/unarchive Client.
 
 **User stories:** 1, 3, 4, 5, 6 (acceptance), 7, 8 (Owner side), 10, 11, 12, 13, 14, 15, 34.
 
@@ -96,11 +98,11 @@ Prerequisites come in two buckets per Phase: **before coding** (local dev and te
 - Archive/unarchive lives here, where there are Client Users to lock out, so it can be checked end to end.
 - **Overflow valve:** if the planner's Phase 3 comes out over 8 tickets, the Profile page moves to Phase 5 first.
 
-**Before coding:** one Google OAuth client and one Microsoft Entra app (`common`), each with both the localhost and prod redirect URIs.
+**Before coding:** one Google OAuth client with the localhost and prod redirect URIs (done).
 
 **Before prod deploy:** the OAuth credentials in Vercel.
 
-**Prod walkthrough:** an Owner accepts and signs in with Google, Microsoft and a magic link; invites a Member; promote, demote and remove work; archiving locks the Client out and unarchiving restores it.
+**Prod walkthrough:** an Owner accepts and signs in with Google and a magic link; invites a Member; promote, demote and remove work; archiving locks the Client out and unarchiving restores it.
 
 ## Phase 4 · Board sync
 
@@ -133,6 +135,20 @@ Prerequisites come in two buckets per Phase: **before coding** (local dev and te
 **Before coding / before prod deploy:** none.
 
 **Prod walkthrough:** a Client sees the Overview KPIs, the Projects list and a Project view; the Admin sees board detail and the sync-problem icon.
+
+## Phase 5a · Admin preview
+
+**Scope (1–2 tickets):** the read-only "view as <Client>" preview of the client pages as the Client's Owner sees them, per `docs/spec-v1.md` "Admin preview (view as Client)".
+
+**User stories:** 49.
+
+**Depends on:** Phase 5.
+
+**Notes:** entry, exit, expiry and audit are settled when this Phase is planned. Its tickets get the security review axis: the preview reads tenant data through `app_tenant` + `SET LOCAL`, never the system pool.
+
+**Before coding / before prod deploy:** none.
+
+**Prod walkthrough:** the Admin previews a Client's Overview and Projects and can't change anything.
 
 ## Phase 6 · Requests
 
