@@ -66,7 +66,7 @@ export default function InvitationRow({
             role="group"
             aria-labelledby={promptId}
             onKeyDown={row.handleConfirmKeyDown}
-            className="flex animate-in flex-wrap items-center gap-2 duration-(--dur-base) ease-out fade-in-0 md:justify-end lg:flex-nowrap"
+            className="flex animate-in flex-wrap items-center gap-2 duration-(--dur-base) ease-out fade-in-0 motion-reduce:duration-(--dur-instant) md:justify-end lg:flex-nowrap"
           >
             <p
               id={promptId}

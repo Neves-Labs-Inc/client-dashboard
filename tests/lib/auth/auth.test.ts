@@ -1203,10 +1203,20 @@ describe("Clients", () => {
       expect(team).toEqual({
         clientId: id,
         name: `${prefix} Acme`,
+        archivedAt: null,
         members: [],
         pendingInvitations: [],
         canInviteFirstOwner: true,
       });
+    });
+
+    it("says when the Client was archived", async () => {
+      const archivedAt = new Date("2026-10-11T09:00:00Z");
+      const id = await addClient("Acme", { archivedAt });
+
+      const team = await clock.getTeam(id);
+
+      expect(team?.archivedAt).toEqual(archivedAt);
     });
 
     it("lists the members, oldest first", async () => {
@@ -4101,6 +4111,704 @@ describe("Clients", () => {
           ...Array.from({ length: MAGIC_LINK_LIMIT }, () => null),
           "rate-limited",
         ]);
+      });
+    });
+  });
+
+  describe("roster", () => {
+    const ADMIN_ACTOR = { kind: "admin" } as const;
+    const RACE_HOLD_MS = 300;
+    const SESSION_TTL_MS = DAY_MS;
+    // Joined after addRoster's two.
+    const LATER = new Date(NOW.getTime() + 2 * MINUTE_MS);
+
+    function waitMs(ms: number): Promise<void> {
+      return new Promise((resolve) => setTimeout(resolve, ms));
+    }
+
+    // A Client User with a verified email, and their access as getAccess
+    // gives it.
+    async function addPerson(
+      clientId: string,
+      role: "owner" | "member",
+      label: string,
+      createdAt: Date = NOW,
+    ): Promise<ClientAccess> {
+      const email = `${prefix}-${label}-${randomUUID()}@example.test`;
+      const [row] = await db.withSystem((tx) =>
+        tx
+          .insert(user)
+          .values({ name: label, email, emailVerified: true })
+          .returning({ id: user.id }),
+      );
+      await db.withSystem((tx) =>
+        tx.insert(member).values({
+          organizationId: clientId,
+          userId: row.id,
+          role,
+          createdAt,
+        }),
+      );
+      const [client] = await db.withSystem((tx) =>
+        tx
+          .select({ name: organization.name })
+          .from(organization)
+          .where(eq(organization.id, clientId)),
+      );
+      return {
+        kind: "client",
+        userId: row.id,
+        email,
+        name: label,
+        clientId,
+        clientName: client.name,
+        role,
+      };
+    }
+
+    // A Client with an Owner and a Member, joined in that order.
+    async function addRoster(name = "Acme") {
+      const clientId = await addClient(name);
+      const owner = await addPerson(clientId, "owner", "maya", NOW);
+      const memberAccess = await addPerson(
+        clientId,
+        "member",
+        "leo",
+        new Date(NOW.getTime() + MINUTE_MS),
+      );
+      return { clientId, owner, member: memberAccess };
+    }
+
+    // Two open sessions, as two browsers signed in by magic link leave.
+    async function addSessions(userId: string): Promise<void> {
+      await db.withSystem((tx) =>
+        tx.insert(session).values(
+          [1, 2].map(() => ({
+            token: randomUUID(),
+            userId,
+            expiresAt: new Date(Date.now() + SESSION_TTL_MS),
+            signInMethod: "magic-link" as const,
+          })),
+        ),
+      );
+    }
+
+    async function countSessions(userId: string): Promise<number> {
+      const rows = await db.withSystem((tx) =>
+        tx
+          .select({ id: session.id })
+          .from(session)
+          .where(eq(session.userId, userId)),
+      );
+      return rows.length;
+    }
+
+    async function readRoles(clientId: string) {
+      const team = await clock.getTeam(clientId);
+      return (team?.members ?? []).map(({ name, role }) => ({ name, role }));
+    }
+
+    async function userExists(userId: string): Promise<boolean> {
+      const rows = await db.withSystem((tx) =>
+        tx.select({ id: user.id }).from(user).where(eq(user.id, userId)),
+      );
+      return rows.length === 1;
+    }
+
+    async function archive(clientId: string): Promise<void> {
+      await db.withSystem((tx) =>
+        tx
+          .update(clients)
+          .set({ archivedAt: NOW })
+          .where(eq(clients.id, clientId)),
+      );
+    }
+
+    function silenceWarnings(): void {
+      vi.spyOn(console, "warn").mockImplementation(() => {});
+    }
+
+    describe("changeRole", () => {
+      it("lets an Owner make a Member an Owner and back, revoking nothing", async () => {
+        const team = await addRoster();
+        await addSessions(team.member.userId);
+
+        const promoted = await clock.changeRole(
+          team.owner,
+          team.clientId,
+          team.member.userId,
+          "owner",
+        );
+        const rolesAfterPromote = await readRoles(team.clientId);
+        const demoted = await clock.changeRole(
+          team.owner,
+          team.clientId,
+          team.member.userId,
+          "member",
+        );
+
+        expect(promoted).toEqual({ value: null, error: null, status: 200 });
+        expect(rolesAfterPromote).toEqual([
+          { name: "maya", role: "owner" },
+          { name: "leo", role: "owner" },
+        ]);
+        expect(demoted).toEqual({ value: null, error: null, status: 200 });
+        expect(await readRoles(team.clientId)).toEqual([
+          { name: "maya", role: "owner" },
+          { name: "leo", role: "member" },
+        ]);
+        expect(await countSessions(team.member.userId)).toBe(2);
+      });
+
+      it("lets the Admin change anyone's role", async () => {
+        const team = await addRoster();
+
+        const result = await clock.changeRole(
+          ADMIN_ACTOR,
+          team.clientId,
+          team.member.userId,
+          "owner",
+        );
+
+        expect(result.error).toBeNull();
+        expect(await readRoles(team.clientId)).toEqual([
+          { name: "maya", role: "owner" },
+          { name: "leo", role: "owner" },
+        ]);
+      });
+
+      it("refuses the role a user already has as no-change", async () => {
+        silenceWarnings();
+        const team = await addRoster();
+
+        const result = await clock.changeRole(
+          team.owner,
+          team.clientId,
+          team.member.userId,
+          "member",
+        );
+
+        expect(result).toEqual({
+          value: null,
+          error: "no-change",
+          status: 409,
+        });
+      });
+
+      it("refuses an Owner's change to their own row as self", async () => {
+        silenceWarnings();
+        const team = await addRoster();
+        await addPerson(team.clientId, "owner", "ana", LATER);
+
+        const result = await clock.changeRole(
+          team.owner,
+          team.clientId,
+          team.owner.userId,
+          "member",
+        );
+
+        expect(result).toEqual({ value: null, error: "self", status: 422 });
+        expect((await readRoles(team.clientId))[0].role).toBe("owner");
+      });
+
+      it("refuses a Member, another Client's Owner and a demoted Owner as forbidden", async () => {
+        silenceWarnings();
+        const team = await addRoster();
+        const other = await addRoster("Globex");
+        const staleOwner = await addPerson(
+          team.clientId,
+          "member",
+          "ana",
+          LATER,
+        );
+
+        const results = await Promise.all([
+          clock.changeRole(
+            team.member,
+            team.clientId,
+            team.owner.userId,
+            "member",
+          ),
+          clock.changeRole(
+            other.owner,
+            team.clientId,
+            team.member.userId,
+            "owner",
+          ),
+          // Access is read per request: this one still says Owner.
+          clock.changeRole(
+            { ...staleOwner, role: "owner" },
+            team.clientId,
+            team.member.userId,
+            "owner",
+          ),
+        ]);
+
+        expect(results).toEqual(
+          Array.from({ length: 3 }, () => ({
+            value: null,
+            error: "forbidden",
+            status: 403,
+          })),
+        );
+        expect(await readRoles(team.clientId)).toEqual([
+          { name: "maya", role: "owner" },
+          { name: "leo", role: "member" },
+          { name: "ana", role: "member" },
+        ]);
+      });
+
+      it("refuses someone outside the Client, an unknown Client and bad ids as not-found", async () => {
+        silenceWarnings();
+        const team = await addRoster();
+        const other = await addRoster("Globex");
+        const notFound = { value: null, error: "not-found", status: 404 };
+
+        expect(
+          await clock.changeRole(
+            team.owner,
+            team.clientId,
+            other.member.userId,
+            "owner",
+          ),
+        ).toEqual(notFound);
+        expect(
+          await clock.changeRole(
+            ADMIN_ACTOR,
+            randomUUID(),
+            team.member.userId,
+            "owner",
+          ),
+        ).toEqual(notFound);
+        expect(
+          await clock.changeRole(
+            ADMIN_ACTOR,
+            "not-a-uuid",
+            team.member.userId,
+            "owner",
+          ),
+        ).toEqual(notFound);
+        expect(
+          await clock.changeRole(team.owner, team.clientId, "nope", "owner"),
+        ).toEqual(notFound);
+        expect((await readRoles(team.clientId))[1].role).toBe("member");
+      });
+
+      it("refuses any change on an archived Client, the Admin's too", async () => {
+        silenceWarnings();
+        const team = await addRoster();
+        await archive(team.clientId);
+        const archived = { value: null, error: "archived", status: 403 };
+
+        expect(
+          await clock.changeRole(
+            ADMIN_ACTOR,
+            team.clientId,
+            team.member.userId,
+            "owner",
+          ),
+        ).toEqual(archived);
+        expect(
+          await clock.changeRole(
+            team.owner,
+            team.clientId,
+            team.member.userId,
+            "owner",
+          ),
+        ).toEqual(archived);
+      });
+
+      it("refuses to demote the last Owner, even for the Admin", async () => {
+        silenceWarnings();
+        const team = await addRoster();
+        const sole = await addClient("Solo");
+        const soleOwner = await addPerson(sole, "owner", "sam");
+
+        const withOthers = await clock.changeRole(
+          ADMIN_ACTOR,
+          team.clientId,
+          team.owner.userId,
+          "member",
+        );
+        const alone = await clock.changeRole(
+          ADMIN_ACTOR,
+          sole,
+          soleOwner.userId,
+          "member",
+        );
+
+        const lastOwner = { value: null, error: "last-owner", status: 409 };
+        expect(withOthers).toEqual(lastOwner);
+        expect(alone).toEqual(lastOwner);
+        expect((await readRoles(team.clientId))[0].role).toBe("owner");
+      });
+
+      it("lets an Owner demote the only other Owner", async () => {
+        const team = await addRoster();
+        const ana = await addPerson(team.clientId, "owner", "ana", LATER);
+
+        const result = await clock.changeRole(
+          team.owner,
+          team.clientId,
+          ana.userId,
+          "member",
+        );
+
+        expect(result.error).toBeNull();
+        expect(await readRoles(team.clientId)).toEqual([
+          { name: "maya", role: "owner" },
+          { name: "leo", role: "member" },
+          { name: "ana", role: "member" },
+        ]);
+      });
+
+      it("leaves one Owner when two Owners' demotions race", async () => {
+        silenceWarnings();
+        const clientId = await addClient("Acme");
+        const maya = await addPerson(clientId, "owner", "maya");
+        const ana = await addPerson(clientId, "owner", "ana");
+        // Two pooled connections, so both demotions start at once.
+        await Promise.all(
+          [1, 2].map(() => db.withSystem((tx) => tx.execute(sql`select 1`))),
+        );
+        // Holding the member rows stalls each demotion's write until the
+        // commit. Without the Client's lock, both would count two Owners
+        // first and both write.
+        const holder = new pg.Client({
+          connectionString: getMigrateEnv().DATABASE_URL_OWNER,
+        });
+        await holder.connect();
+        let results: Awaited<ReturnType<Auth["changeRole"]>>[];
+        try {
+          await holder.query("begin");
+          await holder.query(
+            "select 1 from member where organization_id = $1 for update",
+            [clientId],
+          );
+          const racing = Promise.all([
+            clock.changeRole(ADMIN_ACTOR, clientId, maya.userId, "member"),
+            clock.changeRole(ADMIN_ACTOR, clientId, ana.userId, "member"),
+          ]);
+          await Promise.race([racing, waitMs(RACE_HOLD_MS)]);
+          await holder.query("commit");
+          results = await racing;
+        } finally {
+          await holder.end();
+        }
+
+        expect(results.map((result) => result.error).sort()).toEqual([
+          "last-owner",
+          null,
+        ]);
+        const roles = await readRoles(clientId);
+        expect(roles.filter(({ role }) => role === "owner")).toHaveLength(1);
+      });
+    });
+
+    describe("removeMember", () => {
+      it("removes a Member for an Owner: every session ends, the user row stays", async () => {
+        const team = await addRoster();
+        // The Member signed in by magic link, plus a second browser.
+        const ip = createIp();
+        await requestMagicLink(team.member.email, ip, clock);
+        const signedIn = await clock.handler(
+          new Request(getLinkFromLastMessage(), {
+            headers: { "x-forwarded-for": ip },
+          }),
+        );
+        const cookie = getCookieHeader(signedIn);
+        await addSessions(team.member.userId);
+        const before = await clock.getAccess(pageRequest(cookie));
+        mailer.sent.length = 0;
+
+        const result = await clock.removeMember(
+          team.owner,
+          team.clientId,
+          team.member.userId,
+        );
+
+        expect(before.access.kind).toBe("client");
+        expect(result).toEqual({ value: null, error: null, status: 200 });
+        expect(await readRoles(team.clientId)).toEqual([
+          { name: "maya", role: "owner" },
+        ]);
+        expect(await countSessions(team.member.userId)).toBe(0);
+        expect(await userExists(team.member.userId)).toBe(true);
+        const after = await clock.getAccess(pageRequest(cookie));
+        expect(after.access).toEqual({ kind: "anonymous" });
+        // No member row and no Invitation: a new link sends nothing.
+        await requestMagicLink(team.member.email, createIp(), clock);
+        expect(mailer.sent).toHaveLength(0);
+      });
+
+      it("refuses an Owner removing themselves as self", async () => {
+        silenceWarnings();
+        const team = await addRoster();
+
+        const result = await clock.removeMember(
+          team.owner,
+          team.clientId,
+          team.owner.userId,
+        );
+
+        expect(result).toEqual({ value: null, error: "self", status: 422 });
+        expect(await readRoles(team.clientId)).toHaveLength(2);
+      });
+
+      it("refuses a Member and another Client's Owner as forbidden", async () => {
+        silenceWarnings();
+        const team = await addRoster();
+        const other = await addRoster("Globex");
+        const forbidden = { value: null, error: "forbidden", status: 403 };
+
+        expect(
+          await clock.removeMember(
+            team.member,
+            team.clientId,
+            team.owner.userId,
+          ),
+        ).toEqual(forbidden);
+        expect(
+          await clock.removeMember(
+            other.owner,
+            team.clientId,
+            team.member.userId,
+          ),
+        ).toEqual(forbidden);
+        expect(await readRoles(team.clientId)).toHaveLength(2);
+      });
+
+      it("refuses someone outside the Client as not-found", async () => {
+        silenceWarnings();
+        const team = await addRoster();
+        const other = await addRoster("Globex");
+
+        const result = await clock.removeMember(
+          ADMIN_ACTOR,
+          team.clientId,
+          other.member.userId,
+        );
+
+        expect(result).toEqual({
+          value: null,
+          error: "not-found",
+          status: 404,
+        });
+        expect(await readRoles(other.clientId)).toHaveLength(2);
+      });
+
+      it("refuses an Owner's removal on an archived Client, but not the Admin's", async () => {
+        silenceWarnings();
+        const team = await addRoster();
+        await archive(team.clientId);
+
+        const byOwner = await clock.removeMember(
+          team.owner,
+          team.clientId,
+          team.member.userId,
+        );
+        const byAdmin = await clock.removeMember(
+          ADMIN_ACTOR,
+          team.clientId,
+          team.member.userId,
+        );
+
+        expect(byOwner).toEqual({
+          value: null,
+          error: "archived",
+          status: 403,
+        });
+        expect(byAdmin.error).toBeNull();
+        expect(await readRoles(team.clientId)).toEqual([
+          { name: "maya", role: "owner" },
+        ]);
+      });
+
+      it("refuses the Admin's removal of the last Owner while others remain", async () => {
+        silenceWarnings();
+        const team = await addRoster();
+
+        const result = await clock.removeMember(
+          ADMIN_ACTOR,
+          team.clientId,
+          team.owner.userId,
+        );
+
+        expect(result).toEqual({
+          value: null,
+          error: "last-owner",
+          status: 409,
+        });
+        expect(await readRoles(team.clientId)).toHaveLength(2);
+      });
+
+      it("lets the Admin remove a sole Owner who is the only user, emptying the Client", async () => {
+        const clientId = await addClient("Solo");
+        const sam = await addPerson(clientId, "owner", "sam");
+        await addSessions(sam.userId);
+
+        const result = await clock.removeMember(
+          ADMIN_ACTOR,
+          clientId,
+          sam.userId,
+        );
+
+        expect(result.error).toBeNull();
+        expect(await countSessions(sam.userId)).toBe(0);
+        expect(await clock.getTeam(clientId)).toMatchObject({
+          members: [],
+          canInviteFirstOwner: true,
+        });
+        const [summary] = (await listMine()).filter(
+          ({ id }) => id === clientId,
+        );
+        expect(summary).toMatchObject({ userCount: 0, owner: null });
+      });
+    });
+
+    describe("emptying a Client", () => {
+      async function readStatus(invitationId: string): Promise<string> {
+        const [row] = await db.withSystem((tx) =>
+          tx
+            .select({ status: invitation.status })
+            .from(invitation)
+            .where(eq(invitation.id, invitationId)),
+        );
+        return row.status;
+      }
+
+      const emptyBy = {
+        "the Admin's remove": (sam: ClientAccess) =>
+          clock.removeMember(ADMIN_ACTOR, sam.clientId, sam.userId),
+        "the only user leaving": (sam: ClientAccess) => clock.leaveClient(sam),
+      };
+
+      for (const [how, empty] of Object.entries(emptyBy)) {
+        it(`cancels its pending Invitations on ${how}, so the Admin invites a first Owner again`, async () => {
+          const clientId = await addClient("Solo");
+          const sam = await addPerson(clientId, "owner", "sam");
+          const invited = await clock.inviteMember(sam, "lee@example.test");
+          if (invited.value === null) throw new Error("invite failed");
+          const invitationId = invited.value.id;
+
+          const result = await empty(sam);
+
+          expect(result.error).toBeNull();
+          expect(await readStatus(invitationId)).toBe("canceled");
+          expect(await clock.getLiveInvitation(invitationId)).toBeNull();
+          expect(await clock.getTeam(clientId)).toMatchObject({
+            members: [],
+            pendingInvitations: [],
+            canInviteFirstOwner: true,
+          });
+        });
+      }
+
+      it("keeps the pending Invitations while users remain", async () => {
+        const team = await addRoster();
+        const invited = await clock.inviteMember(
+          team.owner,
+          "ana@example.test",
+        );
+        if (invited.value === null) throw new Error("invite failed");
+
+        const removed = await clock.removeMember(
+          team.owner,
+          team.clientId,
+          team.member.userId,
+        );
+
+        expect(removed.error).toBeNull();
+        expect(await readStatus(invited.value.id)).toBe("pending");
+      });
+    });
+
+    describe("leaveClient", () => {
+      it("lets a Member leave, ending every session", async () => {
+        const team = await addRoster();
+        await addSessions(team.member.userId);
+
+        const result = await clock.leaveClient(team.member);
+
+        expect(result).toEqual({ value: null, error: null, status: 200 });
+        expect(await readRoles(team.clientId)).toEqual([
+          { name: "maya", role: "owner" },
+        ]);
+        expect(await countSessions(team.member.userId)).toBe(0);
+        expect(await userExists(team.member.userId)).toBe(true);
+      });
+
+      it("refuses the last Owner while others remain", async () => {
+        silenceWarnings();
+        const team = await addRoster();
+        await addSessions(team.owner.userId);
+
+        const result = await clock.leaveClient(team.owner);
+
+        expect(result).toEqual({
+          value: null,
+          error: "last-owner",
+          status: 409,
+        });
+        expect(await readRoles(team.clientId)).toHaveLength(2);
+        expect(await countSessions(team.owner.userId)).toBe(2);
+      });
+
+      it("lets an Owner leave while another Owner remains", async () => {
+        const team = await addRoster();
+        await addPerson(team.clientId, "owner", "ana", LATER);
+
+        const result = await clock.leaveClient(team.owner);
+
+        expect(result.error).toBeNull();
+        expect(await readRoles(team.clientId)).toEqual([
+          { name: "leo", role: "member" },
+          { name: "ana", role: "owner" },
+        ]);
+      });
+
+      it("lets a sole Owner who is the only user leave, emptying the Client", async () => {
+        const clientId = await addClient("Solo");
+        const sam = await addPerson(clientId, "owner", "sam");
+        await addSessions(sam.userId);
+
+        const result = await clock.leaveClient(sam);
+
+        expect(result.error).toBeNull();
+        expect(await countSessions(sam.userId)).toBe(0);
+        expect(await clock.getTeam(clientId)).toMatchObject({
+          members: [],
+          canInviteFirstOwner: true,
+        });
+      });
+
+      it("refuses a user no longer on the team as not-found", async () => {
+        silenceWarnings();
+        const team = await addRoster();
+        await clock.leaveClient(team.member);
+
+        const again = await clock.leaveClient(team.member);
+
+        expect(again).toEqual({
+          value: null,
+          error: "not-found",
+          status: 404,
+        });
+      });
+
+      it("refuses leaving an archived Client", async () => {
+        silenceWarnings();
+        const team = await addRoster();
+        await archive(team.clientId);
+
+        const result = await clock.leaveClient(team.member);
+
+        expect(result).toEqual({
+          value: null,
+          error: "archived",
+          status: 403,
+        });
+        expect(await readRoles(team.clientId)).toHaveLength(2);
       });
     });
   });

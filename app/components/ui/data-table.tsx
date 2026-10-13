@@ -6,6 +6,9 @@ type DataTableColumn = {
   // Read by screen readers only (e.g. an actions column); the cell keeps
   // its place in the grid.
   isLabelHidden?: boolean;
+  // E.g. taking a column out of the header's flow at a breakpoint where its
+  // cells move to their own line.
+  className?: string;
 };
 
 // For a subgrid table's rows (see DataTable's `isSubgrid`).
@@ -55,6 +58,7 @@ export default function DataTable({
               className={cn(
                 "text-xs/4 font-semibold tracking-[0.06em] text-fg-2 uppercase",
                 column.align === "end" && "text-right",
+                column.className,
               )}
             >
               {column.isLabelHidden ? (

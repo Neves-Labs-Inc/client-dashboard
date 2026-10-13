@@ -1,5 +1,5 @@
 import { UserPlus } from "lucide-react";
-import TeamMembersPanel from "@/components/admin/team-members-panel";
+import TeamMembersPanel from "@/components/team/team-members-panel";
 import InviteDrawer from "@/components/team/invite-drawer";
 import PendingInvitationsPanel from "@/components/team/pending-invitations-panel";
 import Button from "@/components/ui/button";
@@ -27,6 +27,8 @@ export type ClientTeam = {
 type ClientTeamViewProps = {
   clientName: string;
   role: "owner" | "member";
+  // The viewer's own user, whose row has no actions.
+  userId: string;
   // Null when it couldn't load.
   team: ClientTeam | null;
 };
@@ -36,20 +38,22 @@ type ClientTeamViewProps = {
 export default function ClientTeamView({
   clientName,
   role,
+  userId,
   team,
 }: ClientTeamViewProps): React.ReactNode {
   return role === "owner" ? (
-    <OwnerTeam clientName={clientName} team={team} />
+    <OwnerTeam clientName={clientName} userId={userId} team={team} />
   ) : (
     <>
       <TeamHeader clientName={clientName} />
-      <MembersOrError team={team} />
+      <MembersOrError clientName={clientName} team={team} viewer={null} />
     </>
   );
 }
 
 function OwnerTeam({
   clientName,
+  userId,
   team,
 }: Omit<ClientTeamViewProps, "role">): React.ReactNode {
   const pendingInvitations = team?.pendingInvitations ?? NO_INVITATIONS;
@@ -73,7 +77,7 @@ function OwnerTeam({
           </Button>
         }
       />
-      <MembersOrError team={team} />
+      <MembersOrError clientName={clientName} team={team} viewer={userId} />
       {team !== null && (
         <PendingInvitationsPanel
           action={TEAM_ACTION}
@@ -117,17 +121,28 @@ function TeamHeader({
   );
 }
 
-// A failed load shows one error in place of both panels.
+// A failed load shows one error in place of both panels. `viewer`: the
+// Owner managing the roster; null for a Member's read-only view.
 function MembersOrError({
+  clientName,
   team,
+  viewer,
 }: {
+  clientName: string;
   team: ClientTeam | null;
+  viewer: string | null;
 }): React.ReactNode {
   return team === null ? (
     <Panel title="Users">
       <PanelError message="Couldn't load the team." />
     </Panel>
   ) : (
-    <TeamMembersPanel members={team.members} />
+    <TeamMembersPanel
+      members={team.members}
+      clientName={clientName}
+      canManage={viewer !== null}
+      viewerUserId={viewer}
+      action={TEAM_ACTION}
+    />
   );
 }

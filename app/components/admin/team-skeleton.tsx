@@ -1,24 +1,11 @@
 import PendingSkeleton from "@/components/team/pending-skeleton";
+import UsersSkeleton from "@/components/team/users-skeleton";
 import Skeleton from "@/components/ui/skeleton";
 import SkeletonGroup from "@/components/ui/skeleton-group";
 
-// The Team tab's empty layout in blocks, line box for line box, so nothing
-// shifts when the page arrives.
-function PanelSkeleton(): React.ReactNode {
-  return (
-    <div className="rounded-[3px] border border-line bg-surface">
-      <div className="flex min-h-10 items-center border-b border-line px-3 py-2">
-        <Skeleton className="h-3 w-[20%]" />
-      </div>
-      <div className="px-3 py-6">
-        <div className="flex h-5 items-center">
-          <Skeleton className="h-3 w-[30%]" />
-        </div>
-      </div>
-    </div>
-  );
-}
-
+// The Team tab in blocks, line box for line box, so nothing shifts when the
+// page arrives. Clients with users are the common case: the Users panel shows
+// rows, each with its two buttons.
 export default function TeamSkeleton(): React.ReactNode {
   return (
     <SkeletonGroup label="team">
@@ -37,7 +24,7 @@ export default function TeamSkeleton(): React.ReactNode {
             <Skeleton className="h-3 w-10" />
           </div>
         </div>
-        <PanelSkeleton />
+        <UsersSkeleton hasActions />
         <PendingSkeleton />
       </div>
     </SkeletonGroup>

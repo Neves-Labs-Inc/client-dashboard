@@ -38,6 +38,7 @@ import {
   type MemberInvitationActionError,
   type MemberInviteError,
 } from "@/lib/auth/invitations";
+import { Roster, type Role, type RosterError } from "@/lib/auth/roster";
 import { getClientNameError, normalizeClientName } from "@/lib/client-name";
 import type { Db } from "@/lib/db/db";
 import {
@@ -189,7 +190,10 @@ export type NoAccessReason = "archived" | "not-invited";
 
 export type ClientAccess = Extract<Access, { kind: "client" }>;
 
-export type { JoinError, Joined };
+export type { JoinError, Joined, RosterError };
+
+// Who changes a roster: the Admin, or an Owner of that same Client.
+export type RosterActor = { kind: "admin" } | ClientAccess;
 
 // What the Invitation page may show the link holder, for a live one only.
 export type LiveInvitation = { email: string; clientName: string };
@@ -232,6 +236,8 @@ export type PendingInvitation = Invitation & {
 export type Team = {
   clientId: string;
   name: string;
+  // Null while the Client is active.
+  archivedAt: Date | null;
   // Oldest first.
   members: TeamMember[];
   // Live only (pending and unexpired), newest first.
@@ -327,6 +333,33 @@ export type Auth = {
     access: ClientAccess,
     invitationId: string,
   ): Promise<Result<null, MemberInvitationActionError>>;
+  // Makes a member of the Client an Owner or a Member. Refusals, in order:
+  // forbidden (a Member, or an Owner of another Client), not-found (no such
+  // member, or a malformed id), self (an Owner's own row), archived,
+  // no-change (that role already), last-owner (the Client's last Owner is
+  // never demoted, by the Admin either). Revokes nothing: access is read
+  // per request.
+  changeRole(
+    actor: RosterActor,
+    clientId: string,
+    userId: string,
+    role: Role,
+  ): Promise<Result<null, RosterError>>;
+  // Takes a member off the Client: their member row and every session go,
+  // their user row stays. Refusals as changeRole, but the Admin may remove
+  // users of an archived Client, and a sole Owner who is the Client's only
+  // user (the Client is then empty, and its pending Invitations are
+  // canceled). Otherwise the last Owner is refused while others remain
+  // (last-owner).
+  removeMember(
+    actor: RosterActor,
+    clientId: string,
+    userId: string,
+  ): Promise<Result<null, RosterError>>;
+  // The Client User leaves their Client, as removeMember: a last Owner may
+  // leave only as its only user. Refusals: not-found (no longer a member),
+  // archived, last-owner.
+  leaveClient(access: ClientAccess): Promise<Result<null, RosterError>>;
 };
 
 export type AuthDeps = {
@@ -369,6 +402,7 @@ class BetterAuthModule implements Auth {
   private readonly now: () => Date;
   readonly #providers: ProviderRegistry;
   readonly #invitations: Invitations;
+  readonly #roster: Roster;
 
   constructor(deps: AuthDeps) {
     this.db = deps.db;
@@ -385,6 +419,7 @@ class BetterAuthModule implements Auth {
       baseUrl: deps.baseUrl,
       now: this.now,
     });
+    this.#roster = new Roster(deps.db);
   }
 
   async handler(request: Request): Promise<Response> {
@@ -525,7 +560,7 @@ class BetterAuthModule implements Auth {
     const now = this.now();
     const team = await this.db.withSystem(async (tx) => {
       const [client] = await tx
-        .select({ name: organization.name })
+        .select({ name: organization.name, archivedAt: clients.archivedAt })
         .from(clients)
         .innerJoin(organization, eq(organization.id, clients.id))
         .where(eq(clients.id, clientId));
@@ -558,13 +593,14 @@ class BetterAuthModule implements Auth {
           ),
         )
         .orderBy(desc(invitation.createdAt), desc(invitation.id));
-      return { name: client.name, members, pendingInvitations };
+      return { ...client, members, pendingInvitations };
     });
     if (team === null) return null;
 
     return {
       clientId,
       name: team.name,
+      archivedAt: team.archivedAt,
       members: team.members.map((row) => ({
         ...row,
         role: row.role === "owner" ? "owner" : "member",
@@ -711,6 +747,27 @@ class BetterAuthModule implements Auth {
     invitationId: string,
   ): Promise<Result<null, MemberInvitationActionError>> {
     return this.#invitations.revokeMember(access, invitationId);
+  }
+
+  changeRole(
+    actor: RosterActor,
+    clientId: string,
+    userId: string,
+    role: Role,
+  ): Promise<Result<null, RosterError>> {
+    return this.#roster.changeRole(actor, clientId, userId, role);
+  }
+
+  removeMember(
+    actor: RosterActor,
+    clientId: string,
+    userId: string,
+  ): Promise<Result<null, RosterError>> {
+    return this.#roster.removeMember(actor, clientId, userId);
+  }
+
+  leaveClient(access: ClientAccess): Promise<Result<null, RosterError>> {
+    return this.#roster.leave(access);
   }
 
   // Better Auth sees only the client IP this module trusts.

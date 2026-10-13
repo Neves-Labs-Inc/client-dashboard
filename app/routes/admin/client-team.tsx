@@ -17,6 +17,12 @@ import {
   INVITE_EMAIL_FIELD,
   type InvitationOutcome,
 } from "@/lib/team-invitations";
+import {
+  isRosterIntent,
+  MEMBER_ID_FIELD,
+  type TeamOutcome,
+} from "@/lib/team-roster";
+import { runRosterIntent } from "@/lib/team-roster.server";
 import { getNoStoreHeaders } from "@/lib/no-store-headers";
 import { revalidateUnlessThemeFailed } from "@/lib/theme";
 import type { Route } from "./+types/client-team";
@@ -26,8 +32,9 @@ const NOT_FOUND = 404;
 const UNPROCESSABLE = 422;
 const SERVER_ERROR = 500;
 const SERVICE_UNAVAILABLE = 503;
+const ADMIN_ACTOR = { kind: "admin" } as const;
 
-type OutcomeResponse = ReturnType<typeof data<InvitationOutcome>>;
+type OutcomeResponse = ReturnType<typeof data<TeamOutcome>>;
 
 export function meta({ loaderData }: Route.MetaArgs): Route.MetaDescriptors {
   const name = loaderData?.team?.name;
@@ -49,9 +56,9 @@ export async function loader({ request, params }: Route.LoaderArgs) {
   return data({ team }, { headers });
 }
 
-// Invite, resend and revoke post here. The guard comes first, before the
-// body is read: server-side auth calls skip Better Auth's origin check, so
-// it is the only CSRF protection.
+// Invite, resend, revoke and the roster changes post here. The guard comes
+// first, before the body is read: server-side auth calls skip Better Auth's
+// origin check, so it is the only CSRF protection.
 export async function action({
   request,
   params,
@@ -65,11 +72,11 @@ export async function action({
   } catch (error) {
     // The UI shows its notice or banner. Name and code only: a driver
     // error's message lists its bound parameters (the invitee's email).
-    console.error(
-      `admin: an invitation action failed (${describeError(error)})`,
-      { intent, clientId: params.clientId },
-    );
-    return data<InvitationOutcome>(
+    console.error(`admin: a Team action failed (${describeError(error)})`, {
+      intent,
+      clientId: params.clientId,
+    });
+    return data<TeamOutcome>(
       { kind: "failed" },
       { status: SERVER_ERROR, headers },
     );
@@ -83,7 +90,7 @@ export async function action({
 // error boundary.
 export async function clientAction({
   serverAction,
-}: Route.ClientActionArgs): Promise<InvitationOutcome | OutcomeResponse> {
+}: Route.ClientActionArgs): Promise<TeamOutcome | OutcomeResponse> {
   try {
     const outcome = await serverAction();
     if (outcome.kind === "refused") {
@@ -97,15 +104,15 @@ export async function clientAction({
   } catch (error) {
     if (error instanceof Response) throw error;
 
-    console.error("admin: the invitation request failed", error);
-    return data<InvitationOutcome>(
+    console.error("admin: the Team request failed", error);
+    return data<TeamOutcome>(
       { kind: "failed" },
       { status: SERVICE_UNAVAILABLE },
     );
   }
 }
 
-type IntentAnswer = { outcome: InvitationOutcome; status: number };
+type IntentAnswer = { outcome: TeamOutcome; status: number };
 
 async function runIntent(
   intent: string,
@@ -116,7 +123,10 @@ async function runIntent(
     outcome: { kind: "failed" },
     status: BAD_REQUEST,
   };
-  if (intent === "invite") {
+  if (isRosterIntent(intent)) {
+    const userId = readField(form, MEMBER_ID_FIELD);
+    answer = await runRosterIntent(intent, ADMIN_ACTOR, clientId, userId);
+  } else if (intent === "invite") {
     const result = await auth.inviteFirstOwner(
       clientId,
       readField(form, INVITE_EMAIL_FIELD),

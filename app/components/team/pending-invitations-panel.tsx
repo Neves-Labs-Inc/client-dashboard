@@ -2,10 +2,10 @@ import { useState } from "react";
 import InvitationRow, {
   INVITATION_TABLE_GRID_CLASS,
 } from "@/components/team/invitation-row";
+import PanelNotice from "@/components/team/panel-notice";
 import DataTable from "@/components/ui/data-table";
 import EmptyState from "@/components/ui/empty-state";
 import Panel from "@/components/ui/panel";
-import StatusIcon from "@/components/ui/status-icon";
 import type { PendingInvitation } from "@/lib/auth/auth";
 import type { InvitationRowCopy } from "@/lib/team-invitations";
 
@@ -48,15 +48,7 @@ export default function PendingInvitationsPanel({
       titleRef={titleRef}
       meta={invitations.length > 0 ? invitations.length : undefined}
     >
-      {notice && (
-        <div
-          role="alert"
-          className="flex items-start gap-1.5 border-b border-line px-3 py-2 text-[13px]/5 text-fg"
-        >
-          <StatusIcon status="off" className="mt-1" />
-          <p>{notice}</p>
-        </div>
-      )}
+      {notice && <PanelNotice>{notice}</PanelNotice>}
       {invitations.length === 0 ? (
         <EmptyState>No pending invitations.</EmptyState>
       ) : (
@@ -90,7 +82,7 @@ export default function PendingInvitationsPanel({
 }
 
 // A row closing its confirm leaves another row's open one alone.
-function getConfirmingId(
+export function getConfirmingId(
   current: string | null,
   rowId: string,
   isConfirming: boolean,

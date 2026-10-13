@@ -31,6 +31,8 @@ const listClients = vi.fn<Auth["listClients"]>();
 const inviteMember = vi.fn<Auth["inviteMember"]>();
 const resendMemberInvitation = vi.fn<Auth["resendMemberInvitation"]>();
 const revokeMemberInvitation = vi.fn<Auth["revokeMemberInvitation"]>();
+const changeRole = vi.fn<Auth["changeRole"]>();
+const removeMember = vi.fn<Auth["removeMember"]>();
 
 vi.mock("@/lib/auth/auth.server", () => ({
   auth: {
@@ -45,6 +47,10 @@ vi.mock("@/lib/auth/auth.server", () => ({
     revokeMemberInvitation: (
       ...args: Parameters<Auth["revokeMemberInvitation"]>
     ) => revokeMemberInvitation(...args),
+    changeRole: (...args: Parameters<Auth["changeRole"]>) =>
+      changeRole(...args),
+    removeMember: (...args: Parameters<Auth["removeMember"]>) =>
+      removeMember(...args),
   },
 }));
 
@@ -58,6 +64,7 @@ const ADMIN_SENT_EMAIL = "first.owner@acme.test";
 const TEAM: Team = {
   clientId: CLIENT_ID,
   name: "Acme",
+  archivedAt: null,
   members: [
     { userId: "u1", email: "maya@acme.test", name: "Maya Chen", role: "owner" },
     { userId: "u2", email: "jo@acme.test", name: "", role: "member" },
@@ -169,6 +176,10 @@ beforeEach(() => {
     error: null,
     status: 200,
   });
+  changeRole.mockReset();
+  changeRole.mockResolvedValue({ value: null, error: null, status: 200 });
+  removeMember.mockReset();
+  removeMember.mockResolvedValue({ value: null, error: null, status: 200 });
 });
 
 describe("the / redirect", () => {
@@ -265,6 +276,7 @@ describe("the Team loader", () => {
     expect(data).toEqual({
       clientName: "Acme",
       role: "owner",
+      userId: "u1",
       team: {
         members: TEAM.members,
         pendingInvitations: [TEAM.pendingInvitations[0]],
@@ -281,6 +293,7 @@ describe("the Team loader", () => {
     expect(data).toEqual({
       clientName: "Acme",
       role: "member",
+      userId: "u2",
       team: { members: TEAM.members },
     });
     expect(JSON.stringify(data)).not.toContain(INVITEE_EMAIL);
@@ -293,7 +306,12 @@ describe("the Team loader", () => {
 
     const { data } = await settle(() => teamLoader(argsFor("/team")));
 
-    expect(data).toEqual({ clientName: "Acme", role: "owner", team: null });
+    expect(data).toEqual({
+      clientName: "Acme",
+      role: "owner",
+      userId: "u1",
+      team: null,
+    });
     expect(errorLog).toHaveBeenCalled();
   });
 
@@ -304,7 +322,12 @@ describe("the Team loader", () => {
 
     const { data } = await settle(() => teamLoader(argsFor("/team")));
 
-    expect(data).toEqual({ clientName: "Acme", role: "owner", team: null });
+    expect(data).toEqual({
+      clientName: "Acme",
+      role: "owner",
+      userId: "u1",
+      team: null,
+    });
   });
 });
 
@@ -559,6 +582,130 @@ describe("the Team's invitation actions", () => {
       init: { status: 500 },
     });
     expect(JSON.stringify(errorLog.mock.calls)).not.toContain("leo");
+  });
+});
+
+describe("the Team's roster actions", () => {
+  function post(
+    fields: Record<string, string>,
+    origin: string = PORTAL_ORIGIN,
+  ): Parameters<typeof teamAction>[0] {
+    const body = new FormData();
+    for (const [name, value] of Object.entries(fields)) body.set(name, value);
+    return argsFor("/team", "POST", origin, body);
+  }
+
+  const posts: Record<string, string>[] = [
+    { intent: "make-owner", userId: "u2" },
+    { intent: "make-member", userId: "u2" },
+    { intent: "remove", userId: "u2" },
+  ];
+
+  it("refuses a cross-origin POST with 403 before the body is read", async () => {
+    answerAs(OWNER);
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    for (const fields of posts) {
+      const args = post(fields, "http://www.localhost:5173");
+      const thrown = await teamAction(args).catch((error: unknown) => error);
+      expect(thrown).toMatchObject({ init: { status: 403 } });
+      expect(args.request.bodyUsed).toBe(false);
+    }
+    expect(changeRole).not.toHaveBeenCalled();
+    expect(removeMember).not.toHaveBeenCalled();
+  });
+
+  it("refuses a Member's POST as forbidden with 403, running nothing", async () => {
+    answerAs(MEMBER);
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    for (const fields of posts) {
+      const args = post(fields);
+      const result = await teamAction(args);
+      expect(result).toMatchObject({
+        data: { kind: "refused", error: "forbidden" },
+        init: { status: 403 },
+      });
+      expect(args.request.bodyUsed).toBe(false);
+    }
+    expect(changeRole).not.toHaveBeenCalled();
+    expect(removeMember).not.toHaveBeenCalled();
+  });
+
+  it("changes the posted user's role in the Owner's own Client", async () => {
+    answerAs(OWNER);
+
+    const promoted = await teamAction(post(posts[0]));
+    const demoted = await teamAction(post(posts[1]));
+
+    expect(changeRole.mock.calls).toEqual([
+      [OWNER, CLIENT_ID, "u2", "owner"],
+      [OWNER, CLIENT_ID, "u2", "member"],
+    ]);
+    for (const result of [promoted, demoted]) {
+      expect(result).toMatchObject({
+        data: { kind: "role-changed" },
+        init: { status: 200 },
+      });
+    }
+  });
+
+  it("answers a role someone already set as a role change", async () => {
+    answerAs(OWNER);
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    changeRole.mockResolvedValue({
+      value: null,
+      error: "no-change",
+      status: 409,
+    });
+
+    const result = await teamAction(post(posts[0]));
+
+    expect(result).toMatchObject({
+      data: { kind: "role-changed" },
+      init: { status: 200 },
+    });
+  });
+
+  it("removes the posted user from the Owner's own Client", async () => {
+    answerAs(OWNER);
+
+    const result = await teamAction(post(posts[2]));
+
+    expect(removeMember).toHaveBeenCalledWith(OWNER, CLIENT_ID, "u2");
+    expect(result).toMatchObject({
+      data: { kind: "removed" },
+      init: { status: 200 },
+    });
+  });
+
+  it("passes a forged self-targeting POST's refusal on with its 4xx", async () => {
+    answerAs(OWNER);
+    removeMember.mockResolvedValue({ value: null, error: "self", status: 422 });
+
+    const result = await teamAction(post({ intent: "remove", userId: "u1" }));
+
+    expect(removeMember).toHaveBeenCalledWith(OWNER, CLIENT_ID, "u1");
+    expect(result).toMatchObject({
+      data: { kind: "refused", error: "self" },
+      init: { status: 422 },
+    });
+  });
+
+  it("answers a failure without its details", async () => {
+    answerAs(OWNER);
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+    removeMember.mockRejectedValue(
+      new Error("Failed query: delete from member\nparams: jo@acme.test"),
+    );
+
+    const result = await teamAction(post(posts[2]));
+
+    expect(result).toMatchObject({
+      data: { kind: "failed" },
+      init: { status: 500 },
+    });
+    expect(JSON.stringify(errorLog.mock.calls)).not.toContain("jo@");
   });
 });
 

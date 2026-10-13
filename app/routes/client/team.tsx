@@ -16,6 +16,12 @@ import {
   INVITE_EMAIL_FIELD,
   type InvitationOutcome,
 } from "@/lib/team-invitations";
+import {
+  isRosterIntent,
+  MEMBER_ID_FIELD,
+  type TeamOutcome,
+} from "@/lib/team-roster";
+import { runRosterIntent } from "@/lib/team-roster.server";
 import { revalidateUnlessThemeFailed } from "@/lib/theme";
 import type { Route } from "./+types/team";
 
@@ -25,7 +31,7 @@ const UNPROCESSABLE = 422;
 const SERVER_ERROR = 500;
 const SERVICE_UNAVAILABLE = 503;
 
-type OutcomeResponse = ReturnType<typeof data<InvitationOutcome>>;
+type OutcomeResponse = ReturnType<typeof data<TeamOutcome>>;
 
 export function meta({ loaderData }: Route.MetaArgs): Route.MetaDescriptors {
   const clientName = loaderData?.clientName;
@@ -39,13 +45,13 @@ export function meta({ loaderData }: Route.MetaArgs): Route.MetaDescriptors {
 export async function loader({ request }: Route.LoaderArgs) {
   const { access, headers } = await requireClientUser(request);
   const team = await loadTeam(access);
-  const { clientName, role } = access;
-  return data({ clientName, role, team }, { headers });
+  const { clientName, role, userId } = access;
+  return data({ clientName, role, userId, team }, { headers });
 }
 
-// An Owner's invite, resend and revoke post here. The guard comes first,
-// before the body is read: server-side auth calls skip Better Auth's origin
-// check, so it is the only CSRF protection. A Member's post is refused
+// An Owner's invite, resend, revoke and roster changes post here. The guard
+// comes first, before the body is read: server-side auth calls skip Better
+// Auth's origin check, so it is the only CSRF protection. A Member's post is refused
 // before anything runs (the auth module refuses it too).
 export async function action({
   request,
@@ -69,11 +75,11 @@ export async function action({
   } catch (error) {
     // The UI shows its notice or banner. Name and code only: a driver
     // error's message lists its bound parameters (the invitee's email).
-    console.error(
-      `client: an invitation action failed (${describeError(error)})`,
-      { intent, clientId: access.clientId },
-    );
-    return data<InvitationOutcome>(
+    console.error(`client: a Team action failed (${describeError(error)})`, {
+      intent,
+      clientId: access.clientId,
+    });
+    return data<TeamOutcome>(
       { kind: "failed" },
       { status: SERVER_ERROR, headers },
     );
@@ -87,7 +93,7 @@ export async function action({
 // error boundary.
 export async function clientAction({
   serverAction,
-}: Route.ClientActionArgs): Promise<InvitationOutcome | OutcomeResponse> {
+}: Route.ClientActionArgs): Promise<TeamOutcome | OutcomeResponse> {
   try {
     const outcome = await serverAction();
     if (outcome.kind === "refused") {
@@ -101,15 +107,15 @@ export async function clientAction({
   } catch (error) {
     if (error instanceof Response) throw error;
 
-    console.error("client: the invitation request failed", error);
-    return data<InvitationOutcome>(
+    console.error("client: the Team request failed", error);
+    return data<TeamOutcome>(
       { kind: "failed" },
       { status: SERVICE_UNAVAILABLE },
     );
   }
 }
 
-type IntentAnswer = { outcome: InvitationOutcome; status: number };
+type IntentAnswer = { outcome: TeamOutcome; status: number };
 
 async function runIntent(
   intent: string,
@@ -120,7 +126,10 @@ async function runIntent(
     outcome: { kind: "failed" },
     status: BAD_REQUEST,
   };
-  if (intent === "invite") {
+  if (isRosterIntent(intent)) {
+    const userId = readField(form, MEMBER_ID_FIELD);
+    answer = await runRosterIntent(intent, access, access.clientId, userId);
+  } else if (intent === "invite") {
     const result = await auth.inviteMember(
       access,
       readField(form, INVITE_EMAIL_FIELD),

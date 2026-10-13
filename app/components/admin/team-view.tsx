@@ -1,7 +1,7 @@
 import { UserPlus } from "lucide-react";
 import { useEffect, useRef } from "react";
 import { useLocation } from "react-router";
-import TeamMembersPanel from "@/components/admin/team-members-panel";
+import TeamMembersPanel from "@/components/team/team-members-panel";
 import InviteDrawer from "@/components/team/invite-drawer";
 import PendingInvitationsPanel from "@/components/team/pending-invitations-panel";
 import Button from "@/components/ui/button";
@@ -62,7 +62,15 @@ export default function TeamView({ team }: TeamViewProps): React.ReactNode {
         label="Client sections"
         items={[{ label: "Team", to: teamPath, current: true }]}
       />
-      <TeamMembersPanel members={team.members} />
+      {/* The Admin has no own row: every row has actions. */}
+      <TeamMembersPanel
+        members={team.members}
+        clientName={team.name}
+        canManage
+        viewerUserId={null}
+        action={teamPath}
+        returnFocusRef={invitations.inviteButtonRef}
+      />
       <PendingInvitationsPanel
         action={teamPath}
         copy={ADMIN_INVITATION_ROW_COPY}

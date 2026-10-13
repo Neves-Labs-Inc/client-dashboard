@@ -111,3 +111,20 @@
     outline-offset: 2px;
   }
 }
+
+/* Reduced motion: a row highlight is a static tint for 1.2s, no fade.
+   Unlayered, so it wins over the animate-row-highlight utility. */
+@keyframes row-highlight-static {
+  0% {
+    background-color: var(--color-accent-subtle);
+  }
+  100% {
+    background-color: transparent;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-row-highlight {
+    animation: row-highlight-static 1.2s steps(1, end) both;
+  }
+}
