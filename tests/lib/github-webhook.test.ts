@@ -2,6 +2,7 @@ import { createHmac } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { BoardSync } from "@/lib/board-sync/board-sync";
 import { createGithubWebhookHandler } from "@/lib/github-webhook";
+import { createStubBoardSync } from "../support/board-sync";
 
 const SECRET = "test-webhook-secret";
 const WEBHOOK_URL = "http://localhost:5173/webhooks/github";
@@ -16,7 +17,7 @@ type SyncCall = [method: string, ...args: string[]];
 // A board-sync that records every trigger it's asked to run.
 function createFakeBoardSync(): { boardSync: BoardSync; calls: SyncCall[] } {
   const calls: SyncCall[] = [];
-  const boardSync: BoardSync = {
+  const boardSync = createStubBoardSync({
     refreshPool: async () => {
       calls.push(["refreshPool"]);
     },
@@ -29,9 +30,7 @@ function createFakeBoardSync(): { boardSync: BoardSync; calls: SyncCall[] } {
     syncBoardsWithRepository: async (nodeId) => {
       calls.push(["syncBoardsWithRepository", nodeId]);
     },
-    reconcile: async () => ({ skipped: false, synced: 0, failed: 0 }),
-    syncProject: async () => ({ value: null, error: null, status: 200 }),
-  };
+  });
   return { boardSync, calls };
 }
 

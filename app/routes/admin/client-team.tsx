@@ -1,5 +1,6 @@
 import { data, type ShouldRevalidateFunctionArgs } from "react-router";
-import TeamView, { CLIENTS_CRUMB } from "@/components/admin/team-view";
+import { CLIENTS_CRUMB } from "@/components/admin/client-workspace-header";
+import TeamView from "@/components/admin/team-view";
 import PageHeader from "@/components/ui/page-header";
 import Panel from "@/components/ui/panel";
 import PanelError from "@/components/ui/panel-error";

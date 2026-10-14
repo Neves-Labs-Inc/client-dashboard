@@ -1,4 +1,13 @@
-import { and, eq, isNull, notInArray, sql, type SQL } from "drizzle-orm";
+import {
+  and,
+  asc,
+  eq,
+  isNotNull,
+  isNull,
+  notInArray,
+  sql,
+  type SQL,
+} from "drizzle-orm";
 import type { Db, Tx } from "@/lib/db/db";
 import {
   clients,
@@ -15,8 +24,10 @@ import { describeError } from "@/lib/describe-error";
 import {
   PmSourceError,
   type PmBoard,
+  type PmBoardSummary,
   type PmItem,
   type PmSource,
+  type PmStatusOption,
 } from "@/lib/pm-source/pm-source";
 import type { Result } from "@/lib/result";
 
@@ -30,7 +41,71 @@ export type ClientStatus = (typeof taskClientStatus.enumValues)[number];
 export type SyncError =
   "github-off" | "not-found" | "unlinked" | "archived" | "sync-failed";
 
+// GitHub option id → client status; null is Unmapped.
+export type Mapping = Record<string, ClientStatus | null>;
+
+export type UnassignedBoard = PmBoardSummary;
+
+export type LinkDraft = {
+  board: UnassignedBoard;
+  options: PmStatusOption[];
+  // For each Client with a frozen copy of the board: its old mapping.
+  frozenMappings: Record<string, Mapping>;
+};
+
+export type LinkDraftError =
+  "github-off" | "not-found" | "already-linked" | "github-failed";
+
+export type LinkInput = {
+  boardNodeId: string;
+  clientId: string;
+  mapping: Mapping;
+  // The draft's options, for the mapping rows' names until the first sync
+  // refreshes them. Mapping ids not among them are ignored.
+  options: PmStatusOption[];
+};
+
+export type LinkError =
+  | "github-off"
+  | "not-found"
+  | "already-linked"
+  | "client-not-found"
+  | "archived";
+
+export type ProjectState = "linked" | "closed-on-github" | "unlinked";
+
+export type ProjectRow = {
+  id: string;
+  name: string;
+  url: string;
+  state: ProjectState;
+  unlinkedAt: Date | null;
+  lastSyncedAt: Date | null;
+  lastSyncError: string | null;
+  unmappedCount: number;
+};
+
 export type BoardSync = {
+  // False when GitHub is off: no board can be linked or synced.
+  isGithubConnected: boolean;
+  // Pool boards no linked Project uses: open first, then closed, each by
+  // title (case-insensitive).
+  listUnassignedBoards(): Promise<UnassignedBoard[] | "github-off">;
+  // The Link drawer's data. Its Status options are the one live GitHub call
+  // a page makes.
+  getLinkDraft(boardNodeId: string): Promise<Result<LinkDraft, LinkDraftError>>;
+  // Links the board to the Client (reviving its frozen copy, if any), then
+  // runs the first sync. A failed first sync still links.
+  link(
+    input: LinkInput,
+  ): Promise<
+    Result<{ projectId: string; firstSyncFailed: boolean }, LinkError>
+  >;
+  // The Client's Projects: linked and closed ones by name, then unlinked
+  // ones by name (case-insensitive).
+  listProjects(clientId: string): Promise<ProjectRow[]>;
+  // The Admin's Sync now: syncProject.
+  syncNow(projectId: string): Promise<Result<null, SyncError>>;
   // Refreshes the org board pool cache from GitHub.
   refreshPool(): Promise<void>;
   // Syncs the linked Project with that board, if any.
@@ -59,6 +134,9 @@ export const RECONCILE_LOCK_KEY = 4_048_202_610_001n;
 // Namespace for the per-Project sync lock. Two-int advisory keys never
 // overlap the single-bigint key space reconcile uses.
 const PROJECT_LOCK_NAMESPACE = 4_048;
+// Namespace for the per-board link lock, so two links of one board
+// serialize.
+const BOARD_LOCK_NAMESPACE = 4_049;
 const GENERIC_SYNC_ERROR = "Sync failed";
 // Shape check only, as in db.ts.
 const UUID_PATTERN =
@@ -71,6 +149,17 @@ const STATUS_BY_ERROR = {
   archived: 409,
   "sync-failed": 502,
 } satisfies Record<SyncError, number>;
+
+const STATUS_BY_LINK_ERROR = {
+  "github-off": 503,
+  "not-found": 404,
+  "already-linked": 409,
+  "github-failed": 502,
+  "client-not-found": 404,
+  archived: 409,
+} satisfies Record<LinkDraftError | LinkError, number>;
+
+const CREATED = 201;
 
 type IssueItem = Extract<PmItem, { kind: "issue" }>;
 type MissingField = Extract<SyncWarning, { kind: "missing-field" }>["field"];
@@ -266,7 +355,133 @@ export function createBoardSync(deps: BoardSyncDeps): BoardSync {
     });
   }
 
+  async function listUnassignedBoards(): Promise<
+    UnassignedBoard[] | "github-off"
+  > {
+    if (pmSource === null) return "github-off";
+
+    // A board whose only Projects are frozen copies stays unassigned.
+    const rows = await db.withSystem((tx) =>
+      tx
+        .select({ board: githubBoards })
+        .from(githubBoards)
+        .leftJoin(
+          projects,
+          and(
+            eq(projects.githubProjectNodeId, githubBoards.nodeId),
+            isNull(projects.unlinkedAt),
+          ),
+        )
+        .where(isNull(projects.id))
+        .orderBy(
+          asc(githubBoards.closed),
+          asc(sql`lower(${githubBoards.title})`),
+          asc(githubBoards.nodeId),
+        ),
+    );
+    return rows.map((row) => toUnassignedBoard(row.board));
+  }
+
+  async function getLinkDraft(
+    boardNodeId: string,
+  ): Promise<Result<LinkDraft, LinkDraftError>> {
+    if (pmSource === null) return failLink("github-off", boardNodeId);
+
+    const stored = await db.withSystem(async (tx) => ({
+      board: await getPoolBoard(tx, boardNodeId),
+      isLinked: await isBoardLinked(tx, boardNodeId),
+      frozenMappings: await getFrozenMappings(tx, boardNodeId),
+    }));
+    if (stored.board === null) return failLink("not-found", boardNodeId);
+    if (stored.isLinked) return failLink("already-linked", boardNodeId);
+
+    let result: Result<LinkDraft, LinkDraftError>;
+    try {
+      const options = await pmSource.getStatusOptions(boardNodeId);
+      result =
+        options === null
+          ? failLink("not-found", boardNodeId)
+          : {
+              value: {
+                board: stored.board,
+                options,
+                frozenMappings: stored.frozenMappings,
+              },
+              error: null,
+              status: 200,
+            };
+    } catch (error) {
+      if (!(error instanceof PmSourceError)) throw error;
+      // pm-source logged GitHub's side.
+      result = failLink("github-failed", boardNodeId);
+    }
+    return result;
+  }
+
+  async function link(
+    input: LinkInput,
+  ): Promise<
+    Result<{ projectId: string; firstSyncFailed: boolean }, LinkError>
+  > {
+    if (pmSource === null) return failLink("github-off", input.boardNodeId);
+
+    const linked = await db.withSystem((tx) => linkInTransaction(tx, input));
+    if (linked.error !== null) return failLink(linked.error, input.boardNodeId);
+
+    const sync = await syncProject(linked.projectId);
+    return {
+      value: {
+        projectId: linked.projectId,
+        firstSyncFailed: sync.error !== null,
+      },
+      error: null,
+      status: CREATED,
+    };
+  }
+
+  async function listProjects(clientId: string): Promise<ProjectRow[]> {
+    // Postgres would reject a malformed id (22P02); it can't name a Client.
+    if (!UUID_PATTERN.test(clientId)) return [];
+
+    const rows = await db.withSystem((tx) =>
+      tx
+        .select({
+          id: projects.id,
+          name: projects.name,
+          url: projects.url,
+          closedOnGithub: projects.closedOnGithub,
+          unlinkedAt: projects.unlinkedAt,
+          lastSyncedAt: projects.lastSyncedAt,
+          lastSyncError: projects.lastSyncError,
+          // Unmapped options: mapping rows with no client status.
+          unmappedCount: sql<number>`(count(*) filter (where ${projectStatusMappings.id} is not null and ${projectStatusMappings.clientStatus} is null))::int`,
+        })
+        .from(projects)
+        .leftJoin(
+          projectStatusMappings,
+          eq(projectStatusMappings.projectId, projects.id),
+        )
+        .where(eq(projects.clientId, clientId))
+        .groupBy(projects.id)
+        .orderBy(
+          sql`${projects.unlinkedAt} is not null`,
+          asc(sql`lower(${projects.name})`),
+          asc(projects.id),
+        ),
+    );
+    return rows.map(({ closedOnGithub, ...row }) => ({
+      ...row,
+      state: getProjectState(row.unlinkedAt, closedOnGithub),
+    }));
+  }
+
   return {
+    isGithubConnected: pmSource !== null,
+    listUnassignedBoards,
+    getLinkDraft,
+    link,
+    listProjects,
+    syncNow: syncProject,
     refreshPool,
     syncBoardByNodeId,
     syncBoardsWithIssue,
@@ -281,6 +496,178 @@ const OK: Result<null, SyncError> = { value: null, error: null, status: 200 };
 function fail(error: SyncError, projectId: string): Result<null, SyncError> {
   console.warn(`board-sync: skipped project ${projectId} (${error})`);
   return { value: null, error, status: STATUS_BY_ERROR[error] };
+}
+
+function failLink<E extends LinkDraftError | LinkError>(
+  error: E,
+  boardNodeId: string,
+): Result<never, E> {
+  console.warn(`board-sync: refused to link board ${boardNodeId} (${error})`);
+  return { value: null, error, status: STATUS_BY_LINK_ERROR[error] };
+}
+
+function getProjectState(
+  unlinkedAt: Date | null,
+  closedOnGithub: boolean,
+): ProjectState {
+  if (unlinkedAt !== null) return "unlinked";
+
+  return closedOnGithub ? "closed-on-github" : "linked";
+}
+
+function toUnassignedBoard(
+  row: typeof githubBoards.$inferSelect,
+): UnassignedBoard {
+  return {
+    nodeId: row.nodeId,
+    number: row.number,
+    title: row.title,
+    url: row.url,
+    closed: row.closed,
+    updatedAt: row.githubUpdatedAt,
+  };
+}
+
+async function getPoolBoard(
+  tx: Tx,
+  boardNodeId: string,
+): Promise<UnassignedBoard | null> {
+  const [row] = await tx
+    .select()
+    .from(githubBoards)
+    .where(eq(githubBoards.nodeId, boardNodeId));
+  return row === undefined ? null : toUnassignedBoard(row);
+}
+
+async function isBoardLinked(tx: Tx, boardNodeId: string): Promise<boolean> {
+  const rows = await tx
+    .select({ id: projects.id })
+    .from(projects)
+    .where(
+      and(
+        eq(projects.githubProjectNodeId, boardNodeId),
+        isNull(projects.unlinkedAt),
+      ),
+    );
+  return rows.length > 0;
+}
+
+// Every frozen copy's Client, even one with no mapping rows (a board with
+// no Status column), so the drawer can say the link revives it.
+async function getFrozenMappings(
+  tx: Tx,
+  boardNodeId: string,
+): Promise<Record<string, Mapping>> {
+  const rows = await tx
+    .select({
+      clientId: projects.clientId,
+      optionId: projectStatusMappings.githubOptionId,
+      clientStatus: projectStatusMappings.clientStatus,
+    })
+    .from(projects)
+    .leftJoin(
+      projectStatusMappings,
+      eq(projectStatusMappings.projectId, projects.id),
+    )
+    .where(
+      and(
+        eq(projects.githubProjectNodeId, boardNodeId),
+        isNotNull(projects.unlinkedAt),
+      ),
+    );
+  return rows.reduce<Record<string, Mapping>>((byClient, row) => {
+    const mapping = byClient[row.clientId] ?? {};
+    return {
+      ...byClient,
+      [row.clientId]:
+        row.optionId === null
+          ? mapping
+          : { ...mapping, [row.optionId]: row.clientStatus },
+    };
+  }, {});
+}
+
+type Linked = { error: null; projectId: string } | { error: LinkError };
+
+// Checks, revives or inserts the Project, and writes the drawer's mapping,
+// under a lock on the board so two links of it serialize.
+async function linkInTransaction(tx: Tx, input: LinkInput): Promise<Linked> {
+  const { boardNodeId, clientId } = input;
+  await tx.execute(
+    sql`select pg_advisory_xact_lock(${BOARD_LOCK_NAMESPACE}, hashtext(${boardNodeId}))`,
+  );
+  const board = await getPoolBoard(tx, boardNodeId);
+  if (board === null) return { error: "not-found" };
+  if (await isBoardLinked(tx, boardNodeId)) return { error: "already-linked" };
+  // Postgres would reject a malformed id (22P02); it can't name a Client.
+  if (!UUID_PATTERN.test(clientId)) return { error: "client-not-found" };
+
+  const [client] = await tx
+    .select({ archivedAt: clients.archivedAt })
+    .from(clients)
+    .where(eq(clients.id, clientId));
+  if (client === undefined) return { error: "client-not-found" };
+  if (client.archivedAt !== null) return { error: "archived" };
+
+  const projectId = await reviveOrInsertProject(tx, clientId, board);
+  await replaceMappings(tx, { projectId, clientId }, input);
+  return { error: null, projectId };
+}
+
+async function reviveOrInsertProject(
+  tx: Tx,
+  clientId: string,
+  board: UnassignedBoard,
+): Promise<string> {
+  const [revived] = await tx
+    .update(projects)
+    .set({ unlinkedAt: null })
+    .where(
+      and(
+        eq(projects.clientId, clientId),
+        eq(projects.githubProjectNodeId, board.nodeId),
+      ),
+    )
+    .returning({ id: projects.id });
+  if (revived !== undefined) return revived.id;
+
+  const [inserted] = await tx
+    .insert(projects)
+    .values({
+      clientId,
+      githubProjectNodeId: board.nodeId,
+      githubProjectNumber: board.number,
+      name: board.title,
+      url: board.url,
+      closedOnGithub: board.closed,
+    })
+    .returning({ id: projects.id });
+  return inserted.id;
+}
+
+// One row per draft option; null is Unmapped.
+async function replaceMappings(
+  tx: Tx,
+  owner: Owner,
+  input: LinkInput,
+): Promise<void> {
+  const options = keepLastBy(input.options, (option) => option.id);
+  await tx
+    .delete(projectStatusMappings)
+    .where(eq(projectStatusMappings.projectId, owner.projectId));
+  if (options.length > 0) {
+    await tx.insert(projectStatusMappings).values(
+      options.map((option) => ({
+        ...owner,
+        githubOptionId: option.id,
+        optionName: option.name,
+        // Own keys only: "constructor" mustn't read Object.prototype.
+        clientStatus: Object.hasOwn(input.mapping, option.id)
+          ? input.mapping[option.id]
+          : null,
+      })),
+    );
+  }
 }
 
 // Linked Projects of non-archived Clients matching `condition`.

@@ -10,8 +10,8 @@ import type { Route } from "./+types/client";
 
 const METHOD_NOT_ALLOWED = 405;
 
-// A Client's workspace opens on its Team tab, the only one in Phase 2. The
-// guard runs first, so the redirect reveals nothing to a visitor.
+// A Client's workspace opens on its Team tab. The guard runs first, so the
+// redirect reveals nothing to a visitor.
 export async function loader({
   request,
   params,

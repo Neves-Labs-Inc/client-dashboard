@@ -1,0 +1,133 @@
+import { Link2 } from "lucide-react";
+import { useEffect, useRef } from "react";
+import { Link, useLocation } from "react-router";
+import ClientWorkspaceHeader, {
+  type ClientWorkspace,
+} from "@/components/admin/client-workspace-header";
+import ProjectRow from "@/components/admin/project-row";
+import ProjectsTable from "@/components/admin/projects-table";
+import { buttonStyles } from "@/components/ui/button-styles";
+import EmptyState from "@/components/ui/empty-state";
+import Panel from "@/components/ui/panel";
+import PanelError from "@/components/ui/panel-error";
+import { useArchiveClient } from "@/hooks/use-archive-client";
+import { useRowHighlight } from "@/hooks/use-row-highlight";
+import type { ProjectRow as Project } from "@/lib/board-sync/board-sync";
+import { clearHistoryState } from "@/lib/history-state";
+import { getLinkedProject, getProjectsPath, LINK_COPY } from "@/lib/link-board";
+import { getTeamPath } from "@/lib/new-client";
+import { PROJECTS_COPY } from "@/lib/projects";
+import { toast } from "@/lib/toast";
+import { cn } from "@/lib/utils";
+
+type ProjectsViewProps = {
+  client: ClientWorkspace;
+  // Null when they couldn't load.
+  projects: Project[] | null;
+  isGithubConnected: boolean;
+};
+
+export default function ProjectsView({
+  client,
+  projects,
+  isGithubConnected,
+}: ProjectsViewProps): React.ReactNode {
+  const { state } = useLocation();
+  const titleRef = useRef<HTMLHeadingElement>(null);
+  const panelTitleRef = useRef<HTMLHeadingElement>(null);
+  const linked = getLinkedProject(state);
+  const { highlightedId, highlight } = useRowHighlight(
+    linked?.linkedProjectId ?? null,
+  );
+  const handledLinkRef = useRef<string | null>(null);
+  // Archive and unarchive post to the Team route, which owns them.
+  const archive = useArchiveClient({
+    clientName: client.name,
+    action: getTeamPath(client.clientId),
+    titleRef,
+  });
+  const isArchived = client.archivedAt !== null;
+  const canSync = isGithubConnected && !isArchived;
+  const projectsPath = getProjectsPath(client.clientId);
+
+  // Arriving from a link, the drawer's trigger is gone: focus the h1 and
+  // confirm. The marker leaves the history entry, so a reload doesn't
+  // replay it.
+  useEffect(() => {
+    if (linked === null) return;
+    if (handledLinkRef.current === linked.linkedProjectId) return;
+
+    handledLinkRef.current = linked.linkedProjectId;
+    titleRef.current?.focus();
+    clearHistoryState();
+    toast(
+      linked.firstSyncFailed ? LINK_COPY.linkedSyncFailed : LINK_COPY.linked,
+    );
+  }, [linked]);
+
+  return (
+    <>
+      <ClientWorkspaceHeader
+        client={client}
+        tab="projects"
+        archive={archive}
+        titleRef={titleRef}
+      />
+      <Panel
+        title="Projects"
+        titleRef={panelTitleRef}
+        meta={projects === null ? undefined : getMeta(projects)}
+      >
+        {projects === null && (
+          <PanelError
+            message={PROJECTS_COPY.loadFailed}
+            getReturnFocusTarget={() => panelTitleRef.current}
+          />
+        )}
+        {projects?.length === 0 && (
+          <EmptyState action={isArchived ? undefined : <LinkFromHome />}>
+            {PROJECTS_COPY.empty}
+          </EmptyState>
+        )}
+        {projects !== null && projects.length > 0 && (
+          <ProjectsTable>
+            {projects.map((project) => (
+              <ProjectRow
+                key={project.id}
+                project={project}
+                canSync={canSync}
+                action={projectsPath}
+                isHighlighted={project.id === highlightedId}
+                onSynced={highlight}
+              />
+            ))}
+          </ProjectsTable>
+        )}
+      </Panel>
+    </>
+  );
+}
+
+function LinkFromHome(): React.ReactNode {
+  return (
+    <Link
+      to="/admin"
+      className={cn(
+        buttonStyles({ variant: "secondary" }),
+        "h-11 px-4 text-sm md:h-8 md:px-2.5 md:text-[13px] pointer-coarse:h-11 pointer-coarse:px-4",
+      )}
+    >
+      <Link2 size={14} aria-hidden="true" />
+      {PROJECTS_COPY.linkFromHome}
+    </Link>
+  );
+}
+
+// "2 linked · 1 unlinked"; closed on GitHub counts as linked.
+function getMeta(projects: Project[]): string | undefined {
+  if (projects.length === 0) return undefined;
+
+  const unlinked = projects.filter((row) => row.state === "unlinked").length;
+  const linkedLabel = `${projects.length - unlinked} linked`;
+  return unlinked > 0 ? `${linkedLabel} · ${unlinked} unlinked` : linkedLabel;
+}

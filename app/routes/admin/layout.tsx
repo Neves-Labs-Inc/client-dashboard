@@ -7,6 +7,7 @@ import {
   type ShouldRevalidateFunctionArgs,
 } from "react-router";
 import AdminShell from "@/components/admin/admin-shell";
+import ProjectsSkeleton from "@/components/admin/projects-skeleton";
 import TeamSkeleton from "@/components/admin/team-skeleton";
 import { auth } from "@/lib/auth/auth.server";
 import {
@@ -15,6 +16,11 @@ import {
   isNewClientDrawerToggle,
   TEAM_ROUTE_PATTERN,
 } from "@/lib/new-client";
+import {
+  getLinkedProject,
+  isLinkDrawerToggle,
+  PROJECTS_ROUTE_PATTERN,
+} from "@/lib/link-board";
 import { getNoStoreHeaders } from "@/lib/no-store-headers";
 import { requireAdmin } from "@/lib/auth/require-access.server";
 import { revalidateUnlessThemeFailed } from "@/lib/theme";
@@ -57,6 +63,7 @@ export function shouldRevalidate(args: ShouldRevalidateFunctionArgs): boolean {
   return (
     revalidateUnlessThemeFailed(args) &&
     !isNewClientDrawerToggle(args) &&
+    !isLinkDrawerToggle(args) &&
     !isInviteFlagRemoval(args)
   );
 }
@@ -64,23 +71,29 @@ export function shouldRevalidate(args: ShouldRevalidateFunctionArgs): boolean {
 export default function AdminLayout({
   loaderData,
 }: Route.ComponentProps): React.ReactNode {
-  const isLoadingTeam = useIsNavigatingToTeam();
+  const loadingTab = useLoadingWorkspaceTab();
 
+  let content = <Outlet />;
+  if (loadingTab === "team") {
+    content = <TeamSkeleton />;
+  } else if (loadingTab === "projects") {
+    content = <ProjectsSkeleton />;
+  }
   return (
     <AdminShell
       email={loaderData.email}
       clients={loaderData.clients}
       archivedClients={loaderData.archivedClients}
     >
-      {isLoadingTeam ? <TeamSkeleton /> : <Outlet />}
+      {content}
     </AdminShell>
   );
 }
 
-// The Team loader is awaited, so a client-side navigation into another
-// Client's Team tab shows its skeleton meanwhile. Not after a create: the
-// drawer's "Creating…" covers that wait.
-function useIsNavigatingToTeam(): boolean {
+// The workspace tabs' loaders are awaited, so a client-side navigation into
+// another Client's tab shows its skeleton meanwhile. Not after a create or a
+// link: the drawer's pending label covers that wait.
+function useLoadingWorkspaceTab(): "team" | "projects" | null {
   const navigation = useNavigation();
   const { pathname } = useLocation();
   const target = navigation.location;
@@ -89,9 +102,16 @@ function useIsNavigatingToTeam(): boolean {
     !target ||
     target.pathname === pathname
   ) {
-    return false;
+    return null;
   }
-  if (getCreatedClientId(target.state) !== null) return false;
+  if (getCreatedClientId(target.state) !== null) return null;
+  if (getLinkedProject(target.state) !== null) return null;
 
-  return matchPath(TEAM_ROUTE_PATTERN, target.pathname) !== null;
+  let tab: "team" | "projects" | null = null;
+  if (matchPath(TEAM_ROUTE_PATTERN, target.pathname) !== null) {
+    tab = "team";
+  } else if (matchPath(PROJECTS_ROUTE_PATTERN, target.pathname) !== null) {
+    tab = "projects";
+  }
+  return tab;
 }

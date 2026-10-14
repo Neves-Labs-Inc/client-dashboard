@@ -26,6 +26,8 @@ export default [
     index("routes/admin/index.tsx"),
     route("clients/:clientId", "routes/admin/client.tsx"),
     route("clients/:clientId/team", "routes/admin/client-team.tsx"),
+    route("clients/:clientId/projects", "routes/admin/client-projects.tsx"),
+    route("boards/:nodeId/link-draft", "routes/admin/link-draft.ts"),
   ]),
   route("sign-out", "routes/sign-out.ts"),
   route("healthz", "routes/healthz.ts"),

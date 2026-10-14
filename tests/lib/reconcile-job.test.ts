@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { BoardSync } from "@/lib/board-sync/board-sync";
 import { createReconcileHandler } from "@/lib/reconcile-job";
+import { createStubBoardSync } from "../support/board-sync";
 
 const CRON_SECRET = "cron-secret-0123456789abcdef-0123456789";
 const RECONCILE_URL = "http://localhost:5173/jobs/reconcile";
@@ -12,14 +13,7 @@ function createFakeBoardSync(outcome: ReconcileOutcome): {
   reconcile: ReturnType<typeof vi.fn<BoardSync["reconcile"]>>;
 } {
   const reconcile = vi.fn<BoardSync["reconcile"]>(async () => outcome);
-  const boardSync: BoardSync = {
-    refreshPool: async () => {},
-    syncBoardByNodeId: async () => {},
-    syncBoardsWithIssue: async () => {},
-    syncBoardsWithRepository: async () => {},
-    reconcile,
-    syncProject: async () => ({ value: null, error: null, status: 200 }),
-  };
+  const boardSync = createStubBoardSync({ reconcile });
   return { boardSync, reconcile };
 }
 
