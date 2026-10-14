@@ -1,0 +1,22 @@
+{
+  "data": {
+    "node": {
+      "statusUpdates": {
+        "pageInfo": {
+          "hasNextPage": false,
+          "endCursor": "Y3Vyc29yOnN1OjI"
+        },
+        "nodes": [
+          {
+            "id": "PVTSU_update0002",
+            "status": null,
+            "startDate": null,
+            "targetDate": null,
+            "body": null,
+            "createdAt": "2026-09-01T09:00:00Z"
+          }
+        ]
+      }
+    }
+  }
+}

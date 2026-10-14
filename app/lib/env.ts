@@ -24,6 +24,22 @@ const SMTPS_PORT = 465;
 // Secure and the passkey origin would be http.
 const LOCAL_HOSTNAMES = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
+// Some env UIs flatten a multiline PEM into one line of literal `\n`s.
+const PEM_PRIVATE_KEY =
+  /^-----BEGIN [A-Z ]*PRIVATE KEY-----\n[\s\S]+\n-----END [A-Z ]*PRIVATE KEY-----$/;
+const LITERAL_NEWLINE = /\\n/g;
+// A key saved on Windows has CRLF line endings.
+const CRLF = /\r\n/g;
+
+// The GitHub App, all or none. Unset, board sync is off (CI and tests).
+const GITHUB_VARS = [
+  "GITHUB_APP_ID",
+  "GITHUB_APP_PRIVATE_KEY",
+  "GITHUB_APP_INSTALLATION_ID",
+  "GITHUB_WEBHOOK_SECRET",
+  "GITHUB_ORG",
+] as const;
+
 const httpOrigin = z
   .string()
   .refine(
@@ -53,6 +69,21 @@ const appEnvSchema = z
     // Google sign-in, both or neither. Unset, Google is off (CI and tests).
     GOOGLE_CLIENT_ID: z.string().min(1).optional(),
     GOOGLE_CLIENT_SECRET: z.string().min(1).optional(),
+    GITHUB_APP_ID: z.string().min(1).optional(),
+    GITHUB_APP_PRIVATE_KEY: z
+      .string()
+      .transform((key) =>
+        key.replace(LITERAL_NEWLINE, "\n").replace(CRLF, "\n").trim(),
+      )
+      .refine((key) => PEM_PRIVATE_KEY.test(key), "must be a PEM private key")
+      .optional(),
+    GITHUB_APP_INSTALLATION_ID: z
+      .string()
+      .regex(/^[1-9][0-9]*$/, "must be a positive integer")
+      .transform(Number)
+      .optional(),
+    GITHUB_WEBHOOK_SECRET: z.string().min(1).optional(),
+    GITHUB_ORG: z.string().min(1).optional(),
     // Set to 1 by Vercel at build and run time. Vercel overwrites
     // x-forwarded-for with the client IP, so only then is it trusted.
     VERCEL: z
@@ -101,6 +132,21 @@ const appEnvSchema = z
         path: ["GOOGLE_CLIENT_ID"],
         message: "must be set when GOOGLE_CLIENT_SECRET is",
       });
+    }
+    const missingGithubVars = GITHUB_VARS.filter(
+      (name) => env[name] === undefined,
+    );
+    const isGithubPartial =
+      missingGithubVars.length > 0 &&
+      missingGithubVars.length < GITHUB_VARS.length;
+    if (isGithubPartial) {
+      for (const name of missingGithubVars) {
+        context.addIssue({
+          code: "custom",
+          path: [name],
+          message: "must be set when any other GITHUB_ var is",
+        });
+      }
     }
   });
 

@@ -1,0 +1,114 @@
+{
+  "data": {
+    "node": {
+      "items": {
+        "pageInfo": {
+          "hasNextPage": true,
+          "endCursor": "Y3Vyc29yOnYyOpMA"
+        },
+        "nodes": [
+          {
+            "id": "PVTI_item0001",
+            "type": "ISSUE",
+            "content": {
+              "id": "I_kwDOIssue0001",
+              "title": "Design the home page",
+              "closedAt": null,
+              "repository": {
+                "id": "R_kgDORepo0001"
+              },
+              "milestone": {
+                "title": "Launch",
+                "dueOn": "2026-11-30T07:00:00Z"
+              }
+            },
+            "fieldValues": {
+              "nodes": [
+                {
+                  "__typename": "ProjectV2ItemFieldTextValue",
+                  "text": "Design the home page",
+                  "field": {
+                    "name": "Title"
+                  }
+                },
+                {
+                  "__typename": "ProjectV2ItemFieldSingleSelectValue",
+                  "optionId": "47fc9ee4",
+                  "name": "In progress",
+                  "field": {
+                    "name": "Status"
+                  }
+                },
+                {
+                  "__typename": "ProjectV2ItemFieldSingleSelectValue",
+                  "optionId": "a1b2c3d4",
+                  "name": "Visible",
+                  "field": {
+                    "name": "Client visibility"
+                  }
+                },
+                {
+                  "__typename": "ProjectV2ItemFieldTextValue",
+                  "text": "Waiting on the final logo",
+                  "field": {
+                    "name": "Client note"
+                  }
+                },
+                {
+                  "__typename": "ProjectV2ItemFieldDateValue",
+                  "date": "2026-11-15",
+                  "field": {
+                    "name": "Target date"
+                  }
+                },
+                {
+                  "__typename": "ProjectV2ItemFieldRepositoryValue"
+                }
+              ]
+            }
+          },
+          {
+            "id": "PVTI_item0002",
+            "type": "PULL_REQUEST",
+            "content": {},
+            "fieldValues": {
+              "nodes": [
+                {
+                  "__typename": "ProjectV2ItemFieldTextValue",
+                  "text": "Add hero section",
+                  "field": {
+                    "name": "Title"
+                  }
+                },
+                {
+                  "__typename": "ProjectV2ItemFieldSingleSelectValue",
+                  "optionId": "98236657",
+                  "name": "Done",
+                  "field": {
+                    "name": "Status"
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "id": "PVTI_item0003",
+            "type": "DRAFT_ISSUE",
+            "content": {},
+            "fieldValues": {
+              "nodes": [
+                {
+                  "__typename": "ProjectV2ItemFieldTextValue",
+                  "text": "Ideas for the footer",
+                  "field": {
+                    "name": "Title"
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    }
+  }
+}

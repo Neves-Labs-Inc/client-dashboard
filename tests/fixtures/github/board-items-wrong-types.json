@@ -1,0 +1,67 @@
+{
+  "data": {
+    "node": {
+      "items": {
+        "pageInfo": {
+          "hasNextPage": false,
+          "endCursor": "Y3Vyc29yOnYyOpMC"
+        },
+        "nodes": [
+          {
+            "id": "PVTI_item0101",
+            "type": "ISSUE",
+            "content": {
+              "id": "I_kwDOIssue0101",
+              "title": "Archive old pages",
+              "closedAt": null,
+              "repository": {
+                "id": "R_kgDORepo0001"
+              },
+              "milestone": null
+            },
+            "fieldValues": {
+              "nodes": [
+                {
+                  "__typename": "ProjectV2ItemFieldTextValue",
+                  "text": "Archive old pages",
+                  "field": {
+                    "name": "Title"
+                  }
+                },
+                {
+                  "__typename": "ProjectV2ItemFieldTextValue",
+                  "text": "Visible",
+                  "field": {
+                    "name": "Client visibility"
+                  }
+                },
+                {
+                  "__typename": "ProjectV2ItemFieldTextValue",
+                  "text": "Wrong-case field",
+                  "field": {
+                    "name": "client note"
+                  }
+                },
+                {
+                  "__typename": "ProjectV2ItemFieldDateValue",
+                  "date": "2025-07-01",
+                  "field": {
+                    "name": "Target date"
+                  }
+                },
+                {
+                  "__typename": "ProjectV2ItemFieldSingleSelectValue",
+                  "optionId": "p1",
+                  "name": "High",
+                  "field": {
+                    "name": "Priority"
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    }
+  }
+}

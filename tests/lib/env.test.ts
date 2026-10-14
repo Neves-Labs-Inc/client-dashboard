@@ -1,6 +1,21 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { getAppEnv } from "@/lib/env";
 
+// Shape only; not a real key.
+const PRIVATE_KEY_PEM = [
+  "-----BEGIN RSA PRIVATE KEY-----",
+  "MIIEowIBAAKCAQEAtestonlynotarealkey",
+  "-----END RSA PRIVATE KEY-----",
+].join("\n");
+
+function stubGithubEnv(): void {
+  vi.stubEnv("GITHUB_APP_ID", "123456");
+  vi.stubEnv("GITHUB_APP_PRIVATE_KEY", PRIVATE_KEY_PEM);
+  vi.stubEnv("GITHUB_APP_INSTALLATION_ID", "987654");
+  vi.stubEnv("GITHUB_WEBHOOK_SECRET", "webhook-secret-value");
+  vi.stubEnv("GITHUB_ORG", "Neves-Labs-Inc");
+}
+
 afterEach(() => {
   vi.unstubAllEnvs();
 });
@@ -164,5 +179,83 @@ describe("getAppEnv", () => {
       GOOGLE_CLIENT_ID: "client-id.apps.googleusercontent.com",
       GOOGLE_CLIENT_SECRET: "GOCSPX-google-secret-value",
     });
+  });
+  it("leaves GitHub off when no GitHub var is set", () => {
+    const env = getAppEnv();
+
+    expect(env.GITHUB_APP_ID).toBeUndefined();
+    expect(env.GITHUB_APP_PRIVATE_KEY).toBeUndefined();
+    expect(env.GITHUB_APP_INSTALLATION_ID).toBeUndefined();
+    expect(env.GITHUB_WEBHOOK_SECRET).toBeUndefined();
+    expect(env.GITHUB_ORG).toBeUndefined();
+  });
+
+  it("rejects a partial GitHub config, naming each missing var without echoing the set ones", () => {
+    const secret = "webhook-secret-value";
+    vi.stubEnv("GITHUB_APP_ID", "123456");
+    vi.stubEnv("GITHUB_WEBHOOK_SECRET", secret);
+
+    let message = "";
+    try {
+      getAppEnv();
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+    }
+
+    expect(message).toContain("GITHUB_APP_PRIVATE_KEY");
+    expect(message).toContain("GITHUB_APP_INSTALLATION_ID");
+    expect(message).toContain("GITHUB_ORG");
+    expect(message).not.toContain("GITHUB_APP_ID ");
+    expect(message).not.toContain("GITHUB_WEBHOOK_SECRET");
+    expect(message).not.toContain(secret);
+  });
+
+  it("accepts all five GitHub vars", () => {
+    stubGithubEnv();
+
+    expect(getAppEnv()).toMatchObject({
+      GITHUB_APP_ID: "123456",
+      GITHUB_APP_PRIVATE_KEY: PRIVATE_KEY_PEM,
+      GITHUB_APP_INSTALLATION_ID: 987654,
+      GITHUB_WEBHOOK_SECRET: "webhook-secret-value",
+      GITHUB_ORG: "Neves-Labs-Inc",
+    });
+  });
+
+  it("turns literal \\n escapes in the GitHub private key into newlines", () => {
+    stubGithubEnv();
+    vi.stubEnv(
+      "GITHUB_APP_PRIVATE_KEY",
+      PRIVATE_KEY_PEM.replaceAll("\n", "\\n"),
+    );
+
+    expect(getAppEnv().GITHUB_APP_PRIVATE_KEY).toBe(PRIVATE_KEY_PEM);
+  });
+
+  it("accepts a GitHub private key with CRLF line endings", () => {
+    stubGithubEnv();
+    vi.stubEnv(
+      "GITHUB_APP_PRIVATE_KEY",
+      PRIVATE_KEY_PEM.replaceAll("\n", "\r\n"),
+    );
+
+    expect(getAppEnv().GITHUB_APP_PRIVATE_KEY).toBe(PRIVATE_KEY_PEM);
+  });
+
+  it("rejects a GitHub private key that isn't a PEM, without echoing it", () => {
+    const notAKey = "not-a-private-key-value";
+    stubGithubEnv();
+    vi.stubEnv("GITHUB_APP_PRIVATE_KEY", notAKey);
+
+    expectRejected("GITHUB_APP_PRIVATE_KEY", notAKey);
+  });
+
+  it("rejects a GITHUB_APP_INSTALLATION_ID that isn't a positive integer", () => {
+    stubGithubEnv();
+    vi.stubEnv("GITHUB_APP_INSTALLATION_ID", "12ab");
+    expectRejected("GITHUB_APP_INSTALLATION_ID", undefined);
+
+    vi.stubEnv("GITHUB_APP_INSTALLATION_ID", "0");
+    expectRejected("GITHUB_APP_INSTALLATION_ID", undefined);
   });
 });

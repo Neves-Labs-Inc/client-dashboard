@@ -1,0 +1,22 @@
+{
+  "data": {
+    "node": {
+      "statusUpdates": {
+        "pageInfo": {
+          "hasNextPage": true,
+          "endCursor": "Y3Vyc29yOnN1OjE"
+        },
+        "nodes": [
+          {
+            "id": "PVTSU_update0001",
+            "status": "AT_RISK",
+            "startDate": "2026-09-01",
+            "targetDate": "2026-12-01",
+            "body": "Logo is late.\n\n- Waiting on the client",
+            "createdAt": "2026-10-01T09:00:00Z"
+          }
+        ]
+      }
+    }
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "data": {
+    "node": {
+      "statusUpdates": {
+        "pageInfo": {
+          "hasNextPage": false,
+          "endCursor": null
+        },
+        "nodes": []
+      }
+    }
+  }
+}
