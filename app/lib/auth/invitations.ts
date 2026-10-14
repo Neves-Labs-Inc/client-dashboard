@@ -62,6 +62,7 @@ export type Invitation = { id: string; email: string; sentAt: Date };
 export type InviteError =
   | "invalid-email"
   | "client-not-found"
+  | "archived"
   | "admin-email"
   | "other-client"
   | "not-first-owner"
@@ -69,9 +70,11 @@ export type InviteError =
   | AdminQuotaRefusal;
 
 // not-found: no live (pending, unexpired) invitation of this Client has
-// that id. too-many-emails: its address hit the hourly email cap.
-// too-many-invitations: all the Admin's invitation email hit its cap.
-export type InvitationActionError = "not-found" | AdminQuotaRefusal;
+// that id. archived: the Client is archived. too-many-emails: its address
+// hit the hourly email cap. too-many-invitations: all the Admin's
+// invitation email hit its cap.
+export type InvitationActionError =
+  "not-found" | "archived" | AdminQuotaRefusal;
 
 // forbidden: the inviter isn't (or is no longer) an Owner of an active
 // Client. ineligible: ADMIN_EMAIL or another Client's user, one code so an
@@ -98,6 +101,7 @@ export type ClientActor = {
 const INVITE_ERROR_STATUS: Record<InviteError, number> = {
   "invalid-email": UNPROCESSABLE,
   "client-not-found": NOT_FOUND,
+  archived: FORBIDDEN,
   "admin-email": UNPROCESSABLE,
   "other-client": CONFLICT,
   "not-first-owner": CONFLICT,
@@ -122,6 +126,7 @@ const ACTION_ERROR_STATUS: Record<
 > = {
   forbidden: FORBIDDEN,
   "not-found": NOT_FOUND,
+  archived: FORBIDDEN,
   "too-many-emails": TOO_MANY_REQUESTS,
   "too-many-invitations": TOO_MANY_REQUESTS,
   "too-many-for-client": TOO_MANY_REQUESTS,
@@ -182,12 +187,13 @@ export class Invitations {
     const outcome = await this.#db.withSystem(
       async (tx): Promise<SavedInvitation | InviteError> => {
         const [client] = await tx
-          .select({ name: organization.name })
+          .select({ name: organization.name, archivedAt: clients.archivedAt })
           .from(clients)
           .innerJoin(organization, eq(organization.id, clients.id))
           .where(eq(clients.id, clientId))
           .for("update", { of: clients });
         if (!client) return "client-not-found";
+        if (client.archivedAt !== null) return "archived";
 
         const reason =
           (await getInviteIneligibility(
@@ -269,13 +275,18 @@ export class Invitations {
       return refuseAction("resend", "not-found");
     }
 
-    const outcome = await this.#db.withSystem((tx) =>
-      this.#renew(
-        tx,
-        { clientId, role: null },
-        invitationId,
-        consumeAdminQuota,
-      ),
+    const outcome = await this.#db.withSystem(
+      async (tx): Promise<SavedInvitation | InvitationActionError> => {
+        const refusal = await lockActiveClient(tx, clientId);
+        if (refusal !== null) return refusal;
+
+        return this.#renew(
+          tx,
+          { clientId, role: null },
+          invitationId,
+          consumeAdminQuota,
+        );
+      },
     );
     if (typeof outcome === "string") return refuseAction("resend", outcome);
 
@@ -319,10 +330,18 @@ export class Invitations {
       return refuseAction("revoke", "not-found");
     }
 
-    const isCanceled = await this.#db.withSystem((tx) =>
-      cancelInvitation(tx, { clientId, role: null }, invitationId, this.#now()),
+    const now = this.#now();
+    const outcome = await this.#db.withSystem(
+      async (tx): Promise<InvitationActionError | null> => {
+        const refusal = await lockActiveClient(tx, clientId);
+        if (refusal !== null) return refusal;
+
+        const scope = { clientId, role: null };
+        const isCanceled = await cancelInvitation(tx, scope, invitationId, now);
+        return isCanceled ? null : "not-found";
+      },
     );
-    if (!isCanceled) return refuseAction("revoke", "not-found");
+    if (outcome !== null) return refuseAction("revoke", outcome);
 
     return { value: null, error: null, status: OK };
   }
@@ -445,6 +464,22 @@ async function insertInvitation(
       role: invitation.role,
     });
   return saved;
+}
+
+// Locks the Client's row for the Admin's resend or revoke, before the
+// invitation's (the order archiving takes): null when it's there and active.
+async function lockActiveClient(
+  tx: Tx,
+  clientId: string,
+): Promise<"not-found" | "archived" | null> {
+  const [client] = await tx
+    .select({ archivedAt: clients.archivedAt })
+    .from(clients)
+    .where(eq(clients.id, clientId))
+    .for("update");
+  if (!client) return "not-found";
+
+  return client.archivedAt === null ? null : "archived";
 }
 
 // Locks the actor's Client row when they are still an Owner of it and it's

@@ -6,17 +6,19 @@ import MobileTopBar from "@/components/ui/mobile-top-bar";
 import NavItem from "@/components/ui/nav-item";
 import ShellBrand from "@/components/ui/shell-brand";
 import Sidebar from "@/components/ui/sidebar";
-import type { ClientSummary } from "@/lib/auth/auth";
+import type { ArchivedClient, ClientSummary } from "@/lib/auth/auth";
 
 type AdminShellProps = {
   email: string;
   clients: Pick<ClientSummary, "id" | "name">[] | null;
+  archivedClients: Pick<ArchivedClient, "id" | "name">[] | null;
   children: React.ReactNode;
 };
 
 export default function AdminShell({
   email,
   clients,
+  archivedClients,
   children,
 }: AdminShellProps): React.ReactNode {
   return (
@@ -28,7 +30,10 @@ export default function AdminShell({
           }
           footer={<AdminUserMenu email={email} placement="sidebar" />}
         >
-          <AdminSidebarNav clients={clients} />
+          <AdminSidebarNav
+            clients={clients}
+            archivedClients={archivedClients}
+          />
         </Sidebar>
       }
       mobileTopBar={

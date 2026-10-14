@@ -1,6 +1,7 @@
 import type { TeamMember } from "@/lib/auth/auth";
 import type { RosterError } from "@/lib/auth/roster";
 import { getDisplayName } from "@/lib/display-name";
+import type { ArchiveOutcome } from "@/lib/team-archive";
 import type { InvitationOutcome } from "@/lib/team-invitations";
 
 // The roster actions of the Admin's Team tab and the client /team page. They
@@ -22,7 +23,7 @@ export type RosterOutcome =
   | { kind: "failed" };
 
 // What a Team route's action answers, whichever panel posted.
-export type TeamOutcome = InvitationOutcome | RosterOutcome;
+export type TeamOutcome = InvitationOutcome | RosterOutcome | ArchiveOutcome;
 
 export const ROSTER_COPY = {
   makeOwner: "Make Owner",

@@ -41,14 +41,17 @@ export const INVITATION_COPY = {
   notPending: "This invitation is no longer pending.",
   tooManyEmails: "Too many emails to this address. Try again later.",
   tooManyInvitations: "Too many invitation emails right now. Try again later.",
+  archived: "This Client is archived.",
 } as const;
 
 // What a pending row says after a resend or revoke. A refusal not listed
-// in `rateLimits` means the row is no longer pending.
+// in `rateLimits` means the row is no longer pending (or, archived, that
+// its Client was archived since the page loaded).
 export type InvitationRowCopy = {
   resent: string;
   revoked: string;
   notPending: string;
+  archived: string;
   resendFailed: string;
   revokeFailed: string;
   rateLimits: Partial<Record<RefusalCode, string>>;
@@ -58,6 +61,7 @@ export const ADMIN_INVITATION_ROW_COPY: InvitationRowCopy = {
   resent: INVITATION_COPY.resent,
   revoked: INVITATION_COPY.revoked,
   notPending: INVITATION_COPY.notPending,
+  archived: INVITATION_COPY.archived,
   resendFailed: INVITATION_COPY.resendFailed,
   revokeFailed: INVITATION_COPY.revokeFailed,
   rateLimits: {
@@ -91,6 +95,7 @@ const BANNER_COPY: Partial<Record<RefusalCode, string>> = {
   "not-first-owner":
     "This Client already has an Owner or a pending invitation.",
   "client-not-found": "This Client no longer exists.",
+  archived: INVITATION_COPY.archived,
   "too-many-invitations": INVITATION_COPY.tooManyInvitations,
 };
 

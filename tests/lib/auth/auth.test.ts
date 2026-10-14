@@ -4113,6 +4113,316 @@ describe("Clients", () => {
         ]);
       });
     });
+
+    describe("archive", () => {
+      // A member's session, signed in by magic link as a browser would.
+      async function signInByLink(email: string): Promise<string> {
+        const ip = createIp();
+        await requestLink(email, ip);
+        const response = await followLastLink(ip);
+        expect(response.status).toBe(302);
+        return getCookieHeader(response);
+      }
+
+      async function accessFor(cookie: string): Promise<Access> {
+        const { access } = await portal.getAccess(pageRequest(cookie));
+        return access;
+      }
+
+      async function readStatus(invitationId: string): Promise<string> {
+        const [row] = await db.withSystem((tx) =>
+          tx
+            .select({ status: invitation.status })
+            .from(invitation)
+            .where(eq(invitation.id, invitationId)),
+        );
+        return row.status;
+      }
+
+      async function readArchivedAt(clientId: string): Promise<Date | null> {
+        const [row] = await db.withSystem((tx) =>
+          tx
+            .select({ archivedAt: clients.archivedAt })
+            .from(clients)
+            .where(eq(clients.id, clientId)),
+        );
+        return row.archivedAt;
+      }
+
+      async function listMyArchived() {
+        const all = await portal.listArchivedClients();
+        return all.filter((client) => client.name.startsWith(prefix));
+      }
+
+      describe("archiveClient", () => {
+        it("archives the Client: it leaves listClients for listArchivedClients", async () => {
+          const clientId = await addClient("Acme");
+
+          const result = await portal.archiveClient(clientId);
+
+          expect(result).toEqual({ value: null, error: null, status: 200 });
+          expect(await readArchivedAt(clientId)).toEqual(NOW);
+          const active = await portal.listClients();
+          expect(active.map((client) => client.id)).not.toContain(clientId);
+          expect(await listMyArchived()).toEqual([
+            { id: clientId, name: `${prefix} Acme`, archivedAt: NOW },
+          ]);
+        });
+
+        it("is idempotent: archiving again succeeds and keeps the first date", async () => {
+          const clientId = await addClient("Acme");
+          await portal.archiveClient(clientId);
+          now = DAY_AFTER;
+
+          const result = await portal.archiveClient(clientId);
+
+          expect(result).toEqual({ value: null, error: null, status: 200 });
+          expect(await readArchivedAt(clientId)).toEqual(NOW);
+        });
+
+        it("archiving again still signs out and cancels what slipped in since", async () => {
+          const clientId = await addClient("Acme");
+          const email = `${prefix}-maya@example.test`;
+          await addVerifiedMember(clientId, email);
+          await portal.archiveClient(clientId);
+          // As a sign-in and a resend racing the first archive would leave.
+          const [{ userId }] = await db.withSystem((tx) =>
+            tx
+              .select({ userId: user.id })
+              .from(user)
+              .where(eq(user.email, email)),
+          );
+          await db.withSystem((tx) =>
+            tx.insert(session).values({
+              token: randomUUID(),
+              userId,
+              signInMethod: "magic-link",
+              expiresAt: WEEK_AFTER,
+              updatedAt: NOW,
+            }),
+          );
+          const slipped = await addInvitation(clientId, {
+            email: `${prefix}-leo@example.test`,
+            expiresAt: WEEK_AFTER,
+          });
+
+          await portal.archiveClient(clientId);
+
+          expect(await readSessionsOf(email)).toEqual([]);
+          expect(await readStatus(slipped)).toBe("canceled");
+        });
+
+        it("is not-found for an unknown or malformed id", async () => {
+          silenceWarnings();
+          const notFound = { value: null, error: "not-found", status: 404 };
+
+          expect(await portal.archiveClient(randomUUID())).toEqual(notFound);
+          expect(await portal.archiveClient("not-a-uuid")).toEqual(notFound);
+        });
+
+        it("signs every member out at once, and leaves other Clients' sessions alone", async () => {
+          const clientId = await addClient("Acme");
+          const otherId = await addClient("Globex");
+          const ownerEmail = `${prefix}-maya@example.test`;
+          const memberEmail = `${prefix}-leo@example.test`;
+          const otherEmail = `${prefix}-ana@example.test`;
+          await addVerifiedMember(clientId, ownerEmail, "owner");
+          await addVerifiedMember(clientId, memberEmail, "member");
+          await addVerifiedMember(otherId, otherEmail, "owner");
+          const ownerCookie = await signInByLink(ownerEmail);
+          const memberCookie = await signInByLink(memberEmail);
+          const otherCookie = await signInByLink(otherEmail);
+
+          await portal.archiveClient(clientId);
+
+          expect(await accessFor(ownerCookie)).toEqual({ kind: "anonymous" });
+          expect(await accessFor(memberCookie)).toEqual({ kind: "anonymous" });
+          expect(await readSessionsOf(ownerEmail)).toEqual([]);
+          expect(await readSessionsOf(memberEmail)).toEqual([]);
+          expect((await accessFor(otherCookie)).kind).toBe("client");
+        });
+
+        it("cancels the live pending Invitations and deletes nothing", async () => {
+          const clientId = await addClient("Acme");
+          const ownerEmail = `${prefix}-maya@example.test`;
+          await addVerifiedMember(clientId, ownerEmail, "owner");
+          const live = await addInvitation(clientId, {
+            email: `${prefix}-leo@example.test`,
+            role: "member",
+            expiresAt: WEEK_AFTER,
+          });
+          const accepted = await addInvitation(clientId, {
+            email: `${prefix}-ana@example.test`,
+            status: "accepted",
+            expiresAt: WEEK_AFTER,
+          });
+
+          await portal.archiveClient(clientId);
+
+          expect(await readStatus(live)).toBe("canceled");
+          expect(await readStatus(accepted)).toBe("accepted");
+          expect(await portal.getLiveInvitation(live)).toBeNull();
+          const team = await portal.getTeam(clientId);
+          expect(team?.members.map((row) => row.email)).toEqual([ownerEmail]);
+          expect(team?.pendingInvitations).toEqual([]);
+          expect(await readUserIds(ownerEmail)).toHaveLength(1);
+        });
+
+        it("takes away an empty Client's Invite first Owner", async () => {
+          const clientId = await addClient("Acme");
+          expect((await portal.getTeam(clientId))?.canInviteFirstOwner).toBe(
+            true,
+          );
+
+          await portal.archiveClient(clientId);
+
+          const team = await portal.getTeam(clientId);
+          expect(team?.members).toEqual([]);
+          expect(team?.canInviteFirstOwner).toBe(false);
+        });
+
+        it("refuses the member's later Google sign-in with the archived reason", async () => {
+          silenceWarnings();
+          const clientId = await addClient("Acme");
+          const email = `${prefix}-maya@example.test`;
+          await addVerifiedMember(clientId, email);
+          await portal.archiveClient(clientId);
+
+          const response = await signInWithGoogle(
+            { email, isEmailVerified: true },
+            createIp(),
+          );
+
+          expect(response.status).toBe(302);
+          expect(response.headers.get("location")).toBe(NO_ACCESS.archived);
+          expect(await readSessionsOf(email)).toEqual([]);
+        });
+
+        it("still mails the member a magic link, which opens on the archived reason", async () => {
+          silenceWarnings();
+          const clientId = await addClient("Acme");
+          const email = `${prefix}-maya@example.test`;
+          await addVerifiedMember(clientId, email);
+          await portal.archiveClient(clientId);
+          const ip = createIp();
+
+          await requestLink(email, ip);
+          const response = await followLastLink(ip);
+
+          expect(mailer.sent.map((message) => message.to)).toEqual([email]);
+          expect(response.headers.get("location")).toBe(NO_ACCESS.archived);
+          expect(await readSessionsOf(email)).toEqual([]);
+        });
+      });
+
+      describe("unarchiveClient", () => {
+        it("lets the members sign in again, and the canceled Invitations stay canceled", async () => {
+          const clientId = await addClient("Acme");
+          const email = `${prefix}-maya@example.test`;
+          await addVerifiedMember(clientId, email);
+          const canceled = await addInvitation(clientId, {
+            email: `${prefix}-leo@example.test`,
+            role: "member",
+            expiresAt: WEEK_AFTER,
+          });
+          await portal.archiveClient(clientId);
+
+          const result = await portal.unarchiveClient(clientId);
+          const cookie = await signInByLink(email);
+
+          expect(result).toEqual({ value: null, error: null, status: 200 });
+          expect(await readArchivedAt(clientId)).toBeNull();
+          expect(await accessFor(cookie)).toMatchObject({
+            kind: "client",
+            clientId,
+          });
+          expect(await readStatus(canceled)).toBe("canceled");
+          expect(await listMyArchived()).toEqual([]);
+        });
+
+        it("is idempotent on an active Client", async () => {
+          const clientId = await addClient("Acme");
+
+          const result = await portal.unarchiveClient(clientId);
+
+          expect(result).toEqual({ value: null, error: null, status: 200 });
+          expect(await readArchivedAt(clientId)).toBeNull();
+        });
+
+        it("is not-found for an unknown or malformed id", async () => {
+          silenceWarnings();
+          const notFound = { value: null, error: "not-found", status: 404 };
+
+          expect(await portal.unarchiveClient(randomUUID())).toEqual(notFound);
+          expect(await portal.unarchiveClient("not-a-uuid")).toEqual(notFound);
+        });
+      });
+
+      describe("listArchivedClients", () => {
+        it("lists archived Clients only, by name case-insensitively", async () => {
+          const umbrella = await addClient("umbrella");
+          const initech = await addClient("Initech");
+          const banana = await addClient("Banana");
+          await addClient("Active");
+          await portal.archiveClient(umbrella);
+          now = DAY_AFTER;
+          await portal.archiveClient(initech);
+          await portal.archiveClient(banana);
+
+          expect(await listMyArchived()).toEqual([
+            { id: banana, name: `${prefix} Banana`, archivedAt: DAY_AFTER },
+            { id: initech, name: `${prefix} Initech`, archivedAt: DAY_AFTER },
+            { id: umbrella, name: `${prefix} umbrella`, archivedAt: NOW },
+          ]);
+        });
+      });
+
+      describe("while archived", () => {
+        it("refuses the Admin's first-Owner invite as archived", async () => {
+          silenceWarnings();
+          const clientId = await addClient("Acme");
+          await portal.archiveClient(clientId);
+
+          const result = await portal.inviteFirstOwner(
+            clientId,
+            `${prefix}-maya@example.test`,
+          );
+
+          expect(result).toEqual({
+            value: null,
+            error: "archived",
+            status: 403,
+          });
+          expect(mailer.sent).toEqual([]);
+        });
+
+        it("refuses the Admin's resend and revoke as archived", async () => {
+          silenceWarnings();
+          const clientId = await addClient("Acme");
+          const invitationId = await addInvitation(clientId, {
+            email: `${prefix}-leo@example.test`,
+            expiresAt: WEEK_AFTER,
+          });
+          await portal.archiveClient(clientId);
+          // As if a resend had renewed it after the archive.
+          await db.withSystem((tx) =>
+            tx
+              .update(invitation)
+              .set({ status: "pending" })
+              .where(eq(invitation.id, invitationId)),
+          );
+          const archived = { value: null, error: "archived", status: 403 };
+
+          expect(await portal.resendInvitation(clientId, invitationId)).toEqual(
+            archived,
+          );
+          expect(await portal.revokeInvitation(clientId, invitationId)).toEqual(
+            archived,
+          );
+          expect(mailer.sent).toEqual([]);
+        });
+      });
+    });
   });
 
   describe("roster", () => {

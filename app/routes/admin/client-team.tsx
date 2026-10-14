@@ -11,6 +11,7 @@ import {
   requireAdminMutation,
 } from "@/lib/auth/require-access.server";
 import { isInviteFlagRemoval } from "@/lib/new-client";
+import { isArchiveIntent, type ArchiveOutcome } from "@/lib/team-archive";
 import {
   INVITATION_ID_FIELD,
   INVITATION_INTENT_FIELD,
@@ -56,7 +57,8 @@ export async function loader({ request, params }: Route.LoaderArgs) {
   return data({ team }, { headers });
 }
 
-// Invite, resend, revoke and the roster changes post here. The guard comes
+// Invite, resend, revoke, the roster changes, archive and unarchive post
+// here. The guard comes
 // first, before the body is read: server-side auth calls skip Better Auth's
 // origin check, so it is the only CSRF protection.
 export async function action({
@@ -123,7 +125,17 @@ async function runIntent(
     outcome: { kind: "failed" },
     status: BAD_REQUEST,
   };
-  if (isRosterIntent(intent)) {
+  if (isArchiveIntent(intent)) {
+    const result =
+      intent === "archive"
+        ? await auth.archiveClient(clientId)
+        : await auth.unarchiveClient(clientId);
+    const outcome: ArchiveOutcome =
+      result.error === null
+        ? { kind: intent === "archive" ? "archived" : "unarchived" }
+        : { kind: "refused", error: result.error };
+    answer = { outcome, status: result.status };
+  } else if (isRosterIntent(intent)) {
     const userId = readField(form, MEMBER_ID_FIELD);
     answer = await runRosterIntent(intent, ADMIN_ACTOR, clientId, userId);
   } else if (intent === "invite") {

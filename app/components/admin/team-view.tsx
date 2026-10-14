@@ -1,12 +1,17 @@
 import { UserPlus } from "lucide-react";
 import { useEffect, useRef } from "react";
 import { useLocation } from "react-router";
+import ArchiveControl, {
+  ArchiveStatus,
+} from "@/components/admin/archive-control";
+import ArchivedBadge from "@/components/admin/archived-badge";
 import TeamMembersPanel from "@/components/team/team-members-panel";
 import InviteDrawer from "@/components/team/invite-drawer";
 import PendingInvitationsPanel from "@/components/team/pending-invitations-panel";
 import Button from "@/components/ui/button";
 import PageHeader from "@/components/ui/page-header";
 import TabNav from "@/components/ui/tab-nav";
+import { useArchiveClient } from "@/hooks/use-archive-client";
 import { useTeamInvitations } from "@/hooks/use-team-invitations";
 import type { Team } from "@/lib/auth/auth";
 import { clearHistoryState } from "@/lib/history-state";
@@ -28,6 +33,13 @@ export default function TeamView({ team }: TeamViewProps): React.ReactNode {
   const isJustCreated = getCreatedClientId(state) === team.clientId;
   const invitations = useTeamInvitations(team, { canReturnToInvite: true });
   const teamPath = getTeamPath(team.clientId);
+  const archive = useArchiveClient({
+    clientName: team.name,
+    action: teamPath,
+    titleRef,
+  });
+  const isArchived = team.archivedAt !== null;
+  const archiveVariant = isArchived ? "archived" : "active";
 
   // Arriving from create, the drawer's trigger may be gone: focus the h1
   // (the invite drawer, when it opens, takes focus from there). The marker
@@ -45,28 +57,42 @@ export default function TeamView({ team }: TeamViewProps): React.ReactNode {
         breadcrumb={[CLIENTS_CRUMB, { label: team.name }]}
         title={team.name}
         titleRef={titleRef}
-        action={
-          team.canInviteFirstOwner && (
-            <Button
-              ref={invitations.inviteButtonRef}
-              variant="primary"
-              icon={UserPlus}
-              onClick={() => invitations.handleInviteOpenChange(true)}
-            >
-              Invite first Owner
-            </Button>
-          )
+        badge={
+          isArchived && <ArchivedBadge isAnimated={archive.isJustArchived} />
         }
+        action={
+          <ArchiveControl variant={archiveVariant} archive={archive}>
+            {team.canInviteFirstOwner && (
+              <Button
+                ref={invitations.inviteButtonRef}
+                variant="primary"
+                icon={UserPlus}
+                className="whitespace-nowrap"
+                disabled={archive.isBusy}
+                onClick={() => invitations.handleInviteOpenChange(true)}
+              >
+                Invite first Owner
+              </Button>
+            )}
+          </ArchiveControl>
+        }
+      />
+      <ArchiveStatus
+        variant={archiveVariant}
+        clientName={team.name}
+        archive={archive}
       />
       <TabNav
         label="Client sections"
         items={[{ label: "Team", to: teamPath, current: true }]}
       />
-      {/* The Admin has no own row: every row has actions. */}
+      {/* The Admin has no own row: every row has actions. An archived
+          Client's rows keep only "Remove". */}
       <TeamMembersPanel
         members={team.members}
         clientName={team.name}
         canManage
+        canChangeRoles={!isArchived}
         viewerUserId={null}
         action={teamPath}
         returnFocusRef={invitations.inviteButtonRef}

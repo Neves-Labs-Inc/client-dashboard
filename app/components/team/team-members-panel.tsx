@@ -25,6 +25,8 @@ type TeamMembersPanelProps = {
   // The Admin's or an Owner's view: role changes and removes on every row
   // but the viewer's own.
   canManage: boolean;
+  // False on an archived Client: its managed rows offer only "Remove".
+  canChangeRoles?: boolean;
   // The viewer's own row, which has no actions; null for the Admin.
   viewerUserId: string | null;
   // The route the rows' actions post to.
@@ -39,6 +41,7 @@ export default function TeamMembersPanel({
   members,
   clientName,
   canManage,
+  canChangeRoles = true,
   viewerUserId,
   action,
   returnFocusRef,
@@ -65,6 +68,7 @@ export default function TeamMembersPanel({
               member={teamMember}
               variant={getVariant(canManage, teamMember.userId, viewerUserId)}
               clientName={clientName}
+              canChangeRole={canChangeRoles}
               action={action}
               isHighlighted={teamMember.userId === roster.highlightedId}
               isConfirming={teamMember.userId === roster.confirmingId}

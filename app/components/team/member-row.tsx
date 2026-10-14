@@ -42,6 +42,9 @@ type MemberRowProps = {
   member: TeamMember;
   variant: MemberRowVariant;
   clientName: string;
+  // A managed row's "Make Owner" / "Make Member" (not on an archived
+  // Client).
+  canChangeRole: boolean;
   // The route the row's actions post to.
   action: string;
   isHighlighted: boolean;
@@ -108,6 +111,7 @@ type MemberActionsProps = Omit<MemberRowProps, "variant" | "isHighlighted">;
 function MemberActions({
   member,
   clientName,
+  canChangeRole,
   action,
   isConfirming,
   onConfirmingChange,
@@ -162,14 +166,16 @@ function MemberActions({
         </div>
       ) : (
         <div className="flex flex-wrap gap-2 md:justify-end">
-          <Button
-            className={NO_WRAP}
-            isPending={row.isSaving}
-            pendingLabel={ROSTER_COPY.saving}
-            onClick={row.handleRoleChange}
-          >
-            <RoleLabel isOwner={member.role === "owner"} />
-          </Button>
+          {canChangeRole && (
+            <Button
+              className={NO_WRAP}
+              isPending={row.isSaving}
+              pendingLabel={ROSTER_COPY.saving}
+              onClick={row.handleRoleChange}
+            >
+              <RoleLabel isOwner={member.role === "owner"} />
+            </Button>
+          )}
           <Button
             ref={row.removeRef}
             variant="destructive"

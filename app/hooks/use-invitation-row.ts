@@ -82,7 +82,7 @@ export function useInvitationRow({
       // The row stays, and so does focus on its button.
       onNotice(rateLimit);
     } else if (outcome.kind === "refused") {
-      onNotice(copy.notPending);
+      onNotice(outcome.error === "archived" ? copy.archived : copy.notPending);
       onConfirmingChange(false);
       // Drops the row that's no longer pending; focus moves on once it's
       // gone, as after a revoke.

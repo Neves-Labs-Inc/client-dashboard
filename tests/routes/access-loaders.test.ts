@@ -43,6 +43,9 @@ const resendInvitation = vi.fn<Auth["resendInvitation"]>();
 const revokeInvitation = vi.fn<Auth["revokeInvitation"]>();
 const changeRole = vi.fn<Auth["changeRole"]>();
 const removeMember = vi.fn<Auth["removeMember"]>();
+const archiveClient = vi.fn<Auth["archiveClient"]>();
+const unarchiveClient = vi.fn<Auth["unarchiveClient"]>();
+const listArchivedClients = vi.fn<Auth["listArchivedClients"]>();
 
 vi.mock("@/lib/auth/auth.server", () => ({
   auth: {
@@ -60,6 +63,9 @@ vi.mock("@/lib/auth/auth.server", () => ({
       changeRole(...args),
     removeMember: (...args: Parameters<Auth["removeMember"]>) =>
       removeMember(...args),
+    archiveClient: (clientId: string) => archiveClient(clientId),
+    unarchiveClient: (clientId: string) => unarchiveClient(clientId),
+    listArchivedClients: () => listArchivedClients(),
     listSocialProviders: () => [],
   },
 }));
@@ -182,6 +188,12 @@ beforeEach(() => {
   changeRole.mockResolvedValue({ value: null, error: null, status: 200 });
   removeMember.mockReset();
   removeMember.mockResolvedValue({ value: null, error: null, status: 200 });
+  archiveClient.mockReset();
+  archiveClient.mockResolvedValue({ value: null, error: null, status: 200 });
+  unarchiveClient.mockReset();
+  unarchiveClient.mockResolvedValue({ value: null, error: null, status: 200 });
+  listArchivedClients.mockReset();
+  listArchivedClients.mockResolvedValue([]);
 });
 
 const MEMBER_USER_ID = "0199d0a4-5b6c-7d8e-9f01-23456789abcf";
@@ -338,7 +350,22 @@ describe("when the roster can't load", () => {
       data: { email: string; clients: null };
     };
 
-    expect(result.data).toEqual({ email: "admin@test.local", clients: null });
+    expect(result.data).toEqual({
+      email: "admin@test.local",
+      clients: null,
+      archivedClients: [],
+    });
+  });
+
+  it("the layout still loads when the archived Clients can't, with null for them", async () => {
+    listClients.mockResolvedValue([]);
+    listArchivedClients.mockRejectedValue(new Error("connection lost"));
+
+    const result = (await adminLoader(argsFor("/admin"))) as unknown as {
+      data: { clients: []; archivedClients: null };
+    };
+
+    expect(result.data).toMatchObject({ clients: [], archivedClients: null });
   });
 
   it("the Home loader returns, and the panel gets null, not a rejection", async () => {
@@ -908,5 +935,89 @@ describe("the Team's roster actions", () => {
       init: { status: 500 },
     });
     expect(JSON.stringify(errorLog.mock.calls)).not.toContain("leo");
+  });
+});
+
+describe("the Team's archive actions", () => {
+  const ARCHIVE_POSTS: Record<string, string>[] = [
+    { intent: "archive" },
+    { intent: "unarchive" },
+  ];
+
+  it("are refused with 403 before the body is read, even from a sibling subdomain", async () => {
+    answerAs(ADMIN);
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    for (const fields of ARCHIVE_POSTS) {
+      const args = teamArgs<Parameters<typeof teamAction>[0]>(
+        fields,
+        "http://www.localhost:5173",
+      );
+      const thrown = await teamAction(args).catch((error: unknown) => error);
+      expect(thrown).toMatchObject({ init: { status: 403 } });
+      expect(args.request.bodyUsed).toBe(false);
+    }
+    expect(archiveClient).not.toHaveBeenCalled();
+    expect(unarchiveClient).not.toHaveBeenCalled();
+  });
+
+  it("change nothing for a magic-link session", async () => {
+    answerAs(ADMIN_NEEDS_PASSKEY);
+
+    for (const fields of ARCHIVE_POSTS) {
+      const headers = await getResponseHeaders(() =>
+        teamAction(teamArgs(fields)),
+      );
+      expect(headers.get("location")).toBe("/passkey");
+    }
+    expect(archiveClient).not.toHaveBeenCalled();
+    expect(unarchiveClient).not.toHaveBeenCalled();
+  });
+
+  it("archive and unarchive this Client", async () => {
+    answerAs(ADMIN);
+
+    const archived = await teamAction(teamArgs(ARCHIVE_POSTS[0]));
+    const unarchived = await teamAction(teamArgs(ARCHIVE_POSTS[1]));
+
+    expect(archiveClient).toHaveBeenCalledWith(CLIENT_ID);
+    expect(unarchiveClient).toHaveBeenCalledWith(CLIENT_ID);
+    expect(archived).toMatchObject({
+      data: { kind: "archived" },
+      init: { status: 200 },
+    });
+    expect(unarchived).toMatchObject({
+      data: { kind: "unarchived" },
+      init: { status: 200 },
+    });
+  });
+
+  it("pass not-found on as a refusal with its status", async () => {
+    answerAs(ADMIN);
+    archiveClient.mockResolvedValue({
+      value: null,
+      error: "not-found",
+      status: 404,
+    });
+
+    const result = await teamAction(teamArgs(ARCHIVE_POSTS[0]));
+
+    expect(result).toMatchObject({
+      data: { kind: "refused", error: "not-found" },
+      init: { status: 404 },
+    });
+  });
+
+  it("answer a failure with a 5xx", async () => {
+    answerAs(ADMIN);
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    unarchiveClient.mockRejectedValue(new Error("connection lost"));
+
+    const result = await teamAction(teamArgs(ARCHIVE_POSTS[1]));
+
+    expect(result).toMatchObject({
+      data: { kind: "failed" },
+      init: { status: 500 },
+    });
   });
 });

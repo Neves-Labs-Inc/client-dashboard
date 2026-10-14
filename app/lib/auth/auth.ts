@@ -39,6 +39,11 @@ import {
   type MemberInviteError,
 } from "@/lib/auth/invitations";
 import { Roster, type Role, type RosterError } from "@/lib/auth/roster";
+import {
+  ClientArchive,
+  type ArchivedClient,
+  type ArchiveError,
+} from "@/lib/auth/client-archive";
 import { getClientNameError, normalizeClientName } from "@/lib/client-name";
 import type { Db } from "@/lib/db/db";
 import {
@@ -190,7 +195,7 @@ export type NoAccessReason = "archived" | "not-invited";
 
 export type ClientAccess = Extract<Access, { kind: "client" }>;
 
-export type { JoinError, Joined, RosterError };
+export type { ArchivedClient, ArchiveError, JoinError, Joined, RosterError };
 
 // Who changes a roster: the Admin, or an Owner of that same Client.
 export type RosterActor = { kind: "admin" } | ClientAccess;
@@ -242,7 +247,7 @@ export type Team = {
   members: TeamMember[];
   // Live only (pending and unexpired), newest first.
   pendingInvitations: PendingInvitation[];
-  // No members and no live pending invitation.
+  // Active, with no members and no live pending invitation.
   canInviteFirstOwner: boolean;
 };
 
@@ -268,7 +273,7 @@ export type Auth = {
   getTeam(clientId: string): Promise<Team | null>;
   // The Client's first Owner-to-be, invited by the Admin and emailed. The
   // email is normalised (trimmed, NFC, lowercase). Refusals, in order:
-  // invalid-email, client-not-found, admin-email, other-client,
+  // invalid-email, client-not-found, archived, admin-email, other-client,
   // not-first-owner, pending-exists, too-many-emails, too-many-invitations.
   // A failed email still
   // succeeds: the row stays, and the Admin can resend.
@@ -280,12 +285,13 @@ export type Auth = {
   // emailed again in its role's copy with the same link and 7 more days.
   // The Admin's invites and resends share a cap of 5 emails an hour per
   // address with Owners' (too-many-emails), and 20 an hour in all
-  // (too-many-invitations).
+  // (too-many-invitations). Refused while the Client is archived.
   resendInvitation(
     clientId: string,
     invitationId: string,
   ): Promise<Result<Invitation, InvitationActionError>>;
-  // Any live pending Invitation of this Client, canceled.
+  // Any live pending Invitation of this Client, canceled. Refused while the
+  // Client is archived.
   revokeInvitation(
     clientId: string,
     invitationId: string,
@@ -360,6 +366,16 @@ export type Auth = {
   // leave only as its only user. Refusals: not-found (no longer a member),
   // archived, last-owner.
   leaveClient(access: ClientAccess): Promise<Result<null, RosterError>>;
+  // Locks the Client out, Admin only: archived_at set (kept when already
+  // archived), its live pending Invitations canceled and every session of
+  // its members deleted, in one transaction. Nothing is deleted otherwise,
+  // and sign-in refuses its members with the archived reason. Idempotent.
+  archiveClient(clientId: string): Promise<Result<null, ArchiveError>>;
+  // Clears archived_at: members may sign in again. Canceled Invitations stay
+  // canceled. Idempotent.
+  unarchiveClient(clientId: string): Promise<Result<null, ArchiveError>>;
+  // Archived Clients, sorted by name (case-insensitive).
+  listArchivedClients(): Promise<ArchivedClient[]>;
 };
 
 export type AuthDeps = {
@@ -403,6 +419,7 @@ class BetterAuthModule implements Auth {
   readonly #providers: ProviderRegistry;
   readonly #invitations: Invitations;
   readonly #roster: Roster;
+  readonly #archive: ClientArchive;
 
   constructor(deps: AuthDeps) {
     this.db = deps.db;
@@ -420,6 +437,7 @@ class BetterAuthModule implements Auth {
       now: this.now,
     });
     this.#roster = new Roster(deps.db);
+    this.#archive = new ClientArchive(deps.db, this.now);
   }
 
   async handler(request: Request): Promise<Response> {
@@ -610,7 +628,9 @@ class BetterAuthModule implements Auth {
         role: row.role === "owner" ? "owner" : "member",
       })),
       canInviteFirstOwner:
-        team.members.length === 0 && team.pendingInvitations.length === 0,
+        team.archivedAt === null &&
+        team.members.length === 0 &&
+        team.pendingInvitations.length === 0,
     };
   }
 
@@ -768,6 +788,18 @@ class BetterAuthModule implements Auth {
 
   leaveClient(access: ClientAccess): Promise<Result<null, RosterError>> {
     return this.#roster.leave(access);
+  }
+
+  archiveClient(clientId: string): Promise<Result<null, ArchiveError>> {
+    return this.#archive.archive(clientId);
+  }
+
+  unarchiveClient(clientId: string): Promise<Result<null, ArchiveError>> {
+    return this.#archive.unarchive(clientId);
+  }
+
+  listArchivedClients(): Promise<ArchivedClient[]> {
+    return this.#archive.list();
   }
 
   // Better Auth sees only the client IP this module trusts.

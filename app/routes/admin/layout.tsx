@@ -29,11 +29,19 @@ export async function loader({ request }: Route.LoaderArgs) {
   const { email, headers } = await requireAdmin(request);
   // The sidebar's roster: if it can't load, the shell still renders and the
   // sidebar says so (Home's panel offers the retry).
-  const clients = await auth.listClients().catch((error: unknown) => {
-    console.error("admin: couldn't load the sidebar's Clients", error);
-    return null;
-  });
-  return data({ email, clients }, { headers });
+  // Archived Clients feed the sidebar's Archived group and Home's panel,
+  // which reads them from here (one query); null when they can't load.
+  const [clients, archivedClients] = await Promise.all([
+    auth.listClients().catch((error: unknown) => {
+      console.error("admin: couldn't load the sidebar's Clients", error);
+      return null;
+    }),
+    auth.listArchivedClients().catch((error: unknown) => {
+      console.error("admin: couldn't load the archived Clients", error);
+      return null;
+    }),
+  ]);
+  return data({ email, clients, archivedClients }, { headers });
 }
 
 // A POST to /admin itself lands here. The guard answers first, then the
@@ -59,7 +67,11 @@ export default function AdminLayout({
   const isLoadingTeam = useIsNavigatingToTeam();
 
   return (
-    <AdminShell email={loaderData.email} clients={loaderData.clients}>
+    <AdminShell
+      email={loaderData.email}
+      clients={loaderData.clients}
+      archivedClients={loaderData.archivedClients}
+    >
       {isLoadingTeam ? <TeamSkeleton /> : <Outlet />}
     </AdminShell>
   );

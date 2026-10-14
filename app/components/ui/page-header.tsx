@@ -12,6 +12,9 @@ type BreadcrumbItem = {
 type PageHeaderProps = {
   breadcrumb: BreadcrumbItem[];
   title: string;
+  // Rendered inside the h1 after the title, so it's part of the heading's
+  // accessible name ("Acme Archived").
+  badge?: React.ReactNode;
   action?: React.ReactNode;
   // Makes the h1 a programmatic focus target (tabIndex -1), for pages that
   // move focus to their heading on arrival.
@@ -21,6 +24,7 @@ type PageHeaderProps = {
 export default function PageHeader({
   breadcrumb,
   title,
+  badge,
   action,
   titleRef,
 }: PageHeaderProps): React.ReactNode {
@@ -75,9 +79,13 @@ export default function PageHeader({
           className="mt-1 text-lg/6 font-semibold break-words text-fg outline-hidden"
         >
           {title}
+          {badge && <> {badge}</>}
         </h1>
       </div>
-      {action && <div className="self-start md:self-auto">{action}</div>}
+      {/* The title column takes the squeeze (it wraps), never the actions. */}
+      {action && (
+        <div className="self-start md:shrink-0 md:self-auto">{action}</div>
+      )}
     </header>
   );
 }
