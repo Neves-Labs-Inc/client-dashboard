@@ -14,7 +14,7 @@ import {
   user,
 } from "@/lib/db/schema";
 import { describeError } from "@/lib/describe-error";
-import { getDisplayName } from "@/lib/display-name";
+import { getSenderLabel } from "@/lib/display-name";
 import type { Mailer, MailMessage } from "@/lib/mailer/mailer";
 import { normalizeInviteEmail } from "@/lib/invite-email";
 import type { Result } from "@/lib/result";
@@ -149,7 +149,7 @@ type InvitationsDeps = {
 };
 
 // What a saved row needs to be emailed: the copy follows its role, and a
-// Member invitation names who sent it.
+// Member invitation names who sent it (name and email, or the email).
 type SavedInvitation = Invitation & {
   clientName: string;
   role: string | null;
@@ -406,7 +406,7 @@ export class Invitations {
       .set({ expiresAt: new Date(now.getTime() + INVITATION_EXPIRES_IN_MS) })
       .where(eq(invitation.id, row.id));
     const { inviterName, inviterEmail, ...saved } = row;
-    return { ...saved, inviterName: getDisplayName(inviterName, inviterEmail) };
+    return { ...saved, inviterName: getSenderLabel(inviterName, inviterEmail) };
   }
 
   // The row is saved either way: a failed send is logged and the sender
@@ -512,7 +512,7 @@ async function lockOwnersClient(
 
   return {
     clientName: row.clientName,
-    inviterName: getDisplayName(row.name, row.email),
+    inviterName: getSenderLabel(row.name, row.email),
   };
 }
 

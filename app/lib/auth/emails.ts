@@ -31,8 +31,8 @@ export function buildInvitationEmail(
   };
 }
 
-// An Owner's invitation; `inviterName` is the Owner's display name (their
-// email when the name is empty).
+// An Owner's invitation; `inviterName` is the Owner's name and email, as
+// getSenderLabel gives it.
 export function buildMemberInvitationEmail(
   to: string,
   clientName: string,

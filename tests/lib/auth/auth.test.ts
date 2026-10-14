@@ -131,8 +131,9 @@ async function requestMagicLink(
   email: string,
   forwardedFor: string,
   via: Auth = auth,
+  name?: string,
 ): Promise<Response> {
-  const response = await postMagicLinkRequest(email, forwardedFor, via);
+  const response = await postMagicLinkRequest(email, forwardedFor, via, name);
   await settleBackgroundTasks();
   return response;
 }
@@ -141,6 +142,7 @@ function postMagicLinkRequest(
   email: string,
   forwardedFor: string,
   via: Auth = auth,
+  name?: string,
 ): Promise<Response> {
   return via.handler(
     new Request(`${baseUrl}/api/auth/sign-in/magic-link`, {
@@ -150,7 +152,7 @@ function postMagicLinkRequest(
         origin: baseUrl,
         "x-forwarded-for": forwardedFor,
       },
-      body: JSON.stringify({ email, callbackURL: "/" }),
+      body: JSON.stringify({ email, callbackURL: "/", name }),
     }),
   );
 }
@@ -2098,8 +2100,8 @@ describe("Clients", () => {
           {
             to: "leo@example.test",
             subject: `You're invited to ${prefix} Acme & <Co> on the Neves Labs portal`,
-            text: `Maya <Chen> invited you to join ${prefix} Acme & <Co> on the Neves Labs client portal. Accept the invitation: ${url}. It expires in 7 days.`,
-            html: `<p>Maya &lt;Chen&gt; invited you to join ${prefix} Acme &amp; &lt;Co&gt; on the Neves Labs client portal. Accept the invitation: <a href="${url}">${url}</a>. It expires in 7 days.</p>`,
+            text: `Maya <Chen> (${team.owner.email}) invited you to join ${prefix} Acme & <Co> on the Neves Labs client portal. Accept the invitation: ${url}. It expires in 7 days.`,
+            html: `<p>Maya &lt;Chen&gt; (${team.owner.email}) invited you to join ${prefix} Acme &amp; &lt;Co&gt; on the Neves Labs client portal. Accept the invitation: <a href="${url}">${url}</a>. It expires in 7 days.</p>`,
           },
         ]);
         const listed = await clock.getTeam(team.clientId);
@@ -2613,7 +2615,11 @@ describe("Clients", () => {
         expect(result.error).toBeNull();
         expect(mailer.sent).toHaveLength(2);
         expect(mailer.sent[1]).toEqual(mailer.sent[0]);
-        expect(mailer.sent[1].text).toMatch(/^Maya Chen invited you to join/);
+        expect(mailer.sent[1].text).toMatch(
+          new RegExp(
+            `^Maya Chen \\(${team.owner.email}\\) invited you to join`,
+          ),
+        );
         expect((await getRow(id)).expiresAt).toEqual(
           new Date(now.getTime() + SEVEN_DAYS_MS),
         );
@@ -2947,8 +2953,12 @@ describe("Clients", () => {
       );
     }
 
-    async function requestLink(email: string, ip: string): Promise<Response> {
-      const response = await requestMagicLink(email, ip, portal);
+    async function requestLink(
+      email: string,
+      ip: string,
+      name?: string,
+    ): Promise<Response> {
+      const response = await requestMagicLink(email, ip, portal, name);
       return response;
     }
 
@@ -3009,6 +3019,13 @@ describe("Clients", () => {
       await db.withSystem((tx) =>
         tx.insert(user).values({ name: "Ex", email, emailVerified: true }),
       );
+    }
+
+    async function readUserName(email: string): Promise<string | undefined> {
+      const [row] = await db.withSystem((tx) =>
+        tx.select({ name: user.name }).from(user).where(eq(user.email, email)),
+      );
+      return row?.name;
     }
 
     async function readUserIds(email: string): Promise<string[]> {
@@ -3163,6 +3180,46 @@ describe("Clients", () => {
           { signInMethod: "google" },
         ]);
         expect((await accessOf(response)).kind).toBe("invitee");
+      });
+
+      it("stores the Google profile name, normalised", async () => {
+        const clientId = await addClient("Acme");
+        const email = `${prefix}-leo@example.test`;
+        await addInvitation(clientId, { email, expiresAt: WEEK_AFTER });
+
+        await signInWithGoogle(
+          { email, isEmailVerified: true, name: "  Leo   Park " },
+          createIp(),
+        );
+
+        expect(await readUserName(email)).toBe("Leo Park");
+      });
+
+      it("stores an empty name, not a refusal, for a Google name with hidden characters", async () => {
+        const clientId = await addClient("Acme");
+        const email = `${prefix}-leo@example.test`;
+        await addInvitation(clientId, { email, expiresAt: WEEK_AFTER });
+
+        const response = await signInWithGoogle(
+          { email, isEmailVerified: true, name: "Leo\u202EPark" },
+          createIp(),
+        );
+
+        expect(response.headers.get("location")).toBe("/");
+        expect(await readUserName(email)).toBe("");
+      });
+
+      it("stores an empty name for a Google name containing an @", async () => {
+        const clientId = await addClient("Acme");
+        const email = `${prefix}-leo@example.test`;
+        await addInvitation(clientId, { email, expiresAt: WEEK_AFTER });
+
+        await signInWithGoogle(
+          { email, isEmailVerified: true, name: "Leo (ceo@acme.test)" },
+          createIp(),
+        );
+
+        expect(await readUserName(email)).toBe("");
       });
 
       it("refuses an email Google hasn't verified, creating nothing", async () => {
@@ -3457,6 +3514,18 @@ describe("Clients", () => {
             .where(eq(user.email, email)),
         );
         expect(account.emailVerified).toBe(true);
+      });
+
+      it("ignores a name sent with the request: a new invitee's name is empty", async () => {
+        const clientId = await addClient("Acme");
+        const email = `${prefix}-leo@example.test`;
+        await addInvitation(clientId, { email, expiresAt: WEEK_AFTER });
+        const ip = createIp();
+
+        await requestLink(email, ip, "Spoofed Name");
+        await followLastLink(ip);
+
+        expect(await readUserName(email)).toBe("");
       });
 
       it("sends nothing to an uninvited, removed or expired-invitee email, with the same response", async () => {
@@ -5119,6 +5188,185 @@ describe("Clients", () => {
           status: 403,
         });
         expect(await readRoles(team.clientId)).toHaveLength(2);
+      });
+    });
+
+    describe("getProfile", () => {
+      async function linkGoogle(userId: string): Promise<void> {
+        await db.withSystem((tx) =>
+          tx.insert(account).values({
+            accountId: randomUUID(),
+            providerId: "google",
+            userId,
+          }),
+        );
+      }
+
+      it("describes a Member who signed in by magic link", async () => {
+        const team = await addRoster();
+
+        const profile = await clock.getProfile(team.member);
+
+        expect(profile).toEqual({
+          name: "leo",
+          email: team.member.email,
+          role: "member",
+          clientName: team.member.clientName,
+          isGoogleLinked: false,
+          canLeave: "yes",
+        });
+      });
+
+      it("reports Google as linked once the user has a Google account", async () => {
+        const team = await addRoster();
+        await linkGoogle(team.member.userId);
+
+        const [mine, theirs] = await Promise.all([
+          clock.getProfile(team.member),
+          clock.getProfile(team.owner),
+        ]);
+
+        expect(mine.isGoogleLinked).toBe(true);
+        expect(theirs.isGoogleLinked).toBe(false);
+      });
+
+      it("ignores accounts of other providers", async () => {
+        const team = await addRoster();
+        await db.withSystem((tx) =>
+          tx.insert(account).values({
+            accountId: team.member.userId,
+            providerId: "credential",
+            userId: team.member.userId,
+          }),
+        );
+
+        const profile = await clock.getProfile(team.member);
+
+        expect(profile.isGoogleLinked).toBe(false);
+      });
+
+      it("blocks the only Owner from leaving while others remain", async () => {
+        const team = await addRoster();
+
+        const profile = await clock.getProfile(team.owner);
+
+        expect(profile.canLeave).toBe("last-owner");
+      });
+
+      it("warns the Client's sole user that it will be left empty", async () => {
+        const clientId = await addClient("Solo");
+        const sam = await addPerson(clientId, "owner", "sam");
+
+        const profile = await clock.getProfile(sam);
+
+        expect(profile.canLeave).toBe("only-user");
+      });
+
+      it("lets an Owner leave while another Owner remains", async () => {
+        const team = await addRoster();
+        await addPerson(team.clientId, "owner", "ana", LATER);
+
+        const profile = await clock.getProfile(team.owner);
+
+        expect(profile.canLeave).toBe("yes");
+      });
+
+      it("reads the stored name, not the access's", async () => {
+        const team = await addRoster();
+        await clock.updateDisplayName(team.member, "Leo Park");
+
+        const profile = await clock.getProfile(team.member);
+
+        expect(profile.name).toBe("Leo Park");
+      });
+    });
+
+    describe("updateDisplayName", () => {
+      async function readName(userId: string): Promise<string | undefined> {
+        const [row] = await db.withSystem((tx) =>
+          tx.select({ name: user.name }).from(user).where(eq(user.id, userId)),
+        );
+        return row?.name;
+      }
+
+      it("stores the name trimmed, in NFC and with whitespace collapsed", async () => {
+        const team = await addRoster();
+
+        const result = await clock.updateDisplayName(
+          team.member,
+          "  Zoe\u0301   Park  ",
+        );
+
+        expect(result).toEqual({ value: null, error: null, status: 200 });
+        expect(await readName(team.member.userId)).toBe("Zo\u00e9 Park");
+      });
+
+      it("accepts a name of exactly 100 characters, counting code points", async () => {
+        const team = await addRoster();
+        const name = "\u{1F600}".repeat(100);
+
+        const result = await clock.updateDisplayName(team.member, name);
+
+        expect(result.error).toBeNull();
+        expect(await readName(team.member.userId)).toBe(name);
+      });
+
+      it.each([
+        ["blank", "   "],
+        ["empty", ""],
+        ["over 100 characters", "a".repeat(101)],
+        ["a line break", "Leo\nPark"],
+        ["a tab", "Leo\tPark"],
+        ["a zero-width space", "Leo\u200BPark"],
+        ["a right-to-left override", "Leo\u202EPark"],
+        ["a line separator", "Leo\u2028Park"],
+        ["a blank filler", "\u3164"],
+        ["a stack of combining marks", "x\u0301\u0302\u0303\u0304 Park"],
+        [
+          "combining marks split by joiners",
+          "x" + "\u0301\u0302\u0303\u200D".repeat(24),
+        ],
+        ["an @", "Maya (maya@acme.test)"],
+      ])("refuses a name that is %s, changing nothing", async (_, name) => {
+        silenceWarnings();
+        const team = await addRoster();
+
+        const result = await clock.updateDisplayName(team.member, name);
+
+        expect(result).toEqual({
+          value: null,
+          error: "invalid-name",
+          status: 422,
+        });
+        expect(await readName(team.member.userId)).toBe("leo");
+      });
+
+      it("accepts the few combining marks real names stack", async () => {
+        const team = await addRoster();
+
+        const result = await clock.updateDisplayName(
+          team.member,
+          "x\u0301\u0302\u0303 Park",
+        );
+
+        expect(result.error).toBeNull();
+      });
+
+      it("renames only the caller", async () => {
+        const team = await addRoster();
+
+        await clock.updateDisplayName(team.member, "Leo Park");
+
+        expect(await readName(team.owner.userId)).toBe("maya");
+      });
+
+      it("never logs the name", async () => {
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        const team = await addRoster();
+
+        await clock.updateDisplayName(team.member, "Secret\nName");
+
+        expect(JSON.stringify(warn.mock.calls)).not.toContain("Secret");
       });
     });
   });

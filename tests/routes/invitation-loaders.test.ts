@@ -523,6 +523,18 @@ describe("the sign-in screen", () => {
 
     expect(data).toMatchObject({ banner: "google-failed" });
   });
+
+  it("flags a visit right after leaving a Client, and only exactly then", async () => {
+    answerAs(ANONYMOUS);
+
+    const left = await settle(() => signInLoader(argsFor("/sign-in?left=1")));
+    const other = await settle(() => signInLoader(argsFor("/sign-in?left=2")));
+    const plain = await settle(() => signInLoader(argsFor("/sign-in")));
+
+    expect(left.data).toMatchObject({ hasLeft: true });
+    expect(other.data).toMatchObject({ hasLeft: false });
+    expect(plain.data).toMatchObject({ hasLeft: false });
+  });
 });
 
 describe("signing out", () => {

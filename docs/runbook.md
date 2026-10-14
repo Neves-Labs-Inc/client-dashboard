@@ -309,6 +309,27 @@ After the first Phase 2 deploy, on `https://portal.neveslabs.dev` (not a preview
 
 If an invitation email doesn't arrive, the action still reports success (the Invitation is saved, so you can resend). The Vercel function logs show `auth: invitation email failed (<error name and code>)`, with the Client's id but no address or link; check the `SMTP_*` vars, then resend.
 
-## 8. Adding to this runbook
+## 8. Phase 3 prod walkthrough
+
+After the Phase 3 deploy (§3.7 done first), on `https://portal.neveslabs.dev`. Use test addresses you own, never a real client's: one Gmail address for the first Owner (it must be a Google account, to test Google), a second for the Member, and a third Google account that is never invited. Use a second browser profile (or a private window) for the Member.
+
+1. As the Admin, create a Client and invite the first Owner's Gmail address (§7, steps 4 and 5). The invitation email arrives in Gmail.
+2. Open the email's link signed out. The page says "Join <Client>" and shows **Continue with Google** and **Email me a sign-in link**. Choose **Continue with Google** with the invited Gmail account. You land on `/team` as an Owner.
+3. Sign out from the user menu. On `/sign-in`, request a magic link for the same address and check it **arrives in Gmail**. Open it: you land on `/team` again, with no second account created.
+4. Sign out. On `/sign-in`, request a magic link for an address nobody invited: the check-your-email page appears, but nothing arrives. Then choose **Continue with Google** with the **uninvited** Google account. You land on "No access", and the Admin's Home shows no new user.
+5. While signed in as the Owner, open an invitation link addressed to a different email (create one for a fourth address). The page says the invitation is for that address and offers **Sign out**.
+6. As the Owner, **Invite teammate** with the Member's address. The email reads "<name> (<your email>) invited you to join <Client>…". Open it in the second browser profile and join (by Google or by magic link). The Member lands on `/team` with a read-only roster: no invite, role or remove controls.
+7. As the Admin, open the Client's **Team** tab. It lists both users with their role and remove controls, and the Owner's pending invitations.
+8. As the Owner, **Make Owner** on the Member (the toast says "Role updated"), then **Make Member** again. Your own row has no controls.
+9. As the Owner, **Remove** the Member and confirm. In the Member's browser profile, the next page load sends them to `/sign-in`: they are signed out.
+10. Invite the Member again and let them rejoin. Then, in the Member's profile, open **Profile** from the user menu. Rename yourself: the toast says "Name saved" and the sidebar shows the new name. Google reads "Linked" if the Member joined with Google, otherwise "Not linked".
+11. As the Owner (the only Owner, with the Member still on the team), open **Profile**. **Leave** is disabled, with "You're the only Owner. Make someone else an Owner first."
+12. As the Member, **Leave** from Profile and confirm. You land on `/sign-in` with "You left your Client." (a reload no longer shows it). The Owner's roster no longer lists them.
+13. As the Admin, open the Client and choose **Archive client**, then confirm. The Client moves to the **Archived** group in the sidebar. In the Owner's browser profile the next page load signs them out, and both **Continue with Google** and a magic link then show "no longer has access".
+14. As the Admin, **Unarchive** the Client. It leaves the Archived group. The Owner signs in again by Google and by magic link, and lands on `/team`.
+
+If a magic link or invitation email doesn't arrive, see §5 ("Magic links stop arriving") and §7. If Google sign-in shows Google's own error page, the OAuth consent screen is still in Testing or the redirect URI is wrong (§3.7).
+
+## 9. Adding to this runbook
 
 Every Phase adds its settings here and to `.env.example` (roadmap gate 3): new env vars and secrets in section 2, new manual setup in section 3, new checks in a Phase walkthrough.

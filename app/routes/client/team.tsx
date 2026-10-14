@@ -1,4 +1,5 @@
 import { data, type ShouldRevalidateFunctionArgs } from "react-router";
+import ClientRouteError from "@/components/client/client-route-error";
 import ClientTeamView, {
   type ClientTeam,
 } from "@/components/team/client-team-view";
@@ -162,6 +163,10 @@ function readField(form: FormData | null, name: string): string {
 }
 
 export const headers = getNoStoreHeaders;
+
+export function ErrorBoundary(): React.ReactNode {
+  return <ClientRouteError title="Team" />;
+}
 
 export function shouldRevalidate(args: ShouldRevalidateFunctionArgs): boolean {
   return revalidateUnlessThemeFailed(args);

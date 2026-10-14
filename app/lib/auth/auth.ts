@@ -61,6 +61,7 @@ import {
 } from "@/lib/db/schema";
 import type { Mailer } from "@/lib/mailer/mailer";
 import type { Result } from "@/lib/result";
+import { isValidUserName, normalizeUserName } from "@/lib/user-name";
 
 // The one module that wraps Better Auth (ADR 0001): nothing else on the
 // server imports it. Better Auth runs on the system pool (ADR 0003).
@@ -96,6 +97,8 @@ const CONFLICT = 409;
 const NOT_FOUND = 404;
 const TOO_MANY_REQUESTS = 429;
 const SERVER_ERROR = 500;
+// Better Auth's providerId for a linked Google account.
+const GOOGLE_PROVIDER_ID = "google";
 const MAGIC_LINK_PATH = "/sign-in/magic-link";
 const INVITATION_PAGE_PREFIX = "/invitations/";
 // A bad or reused emailed link lands here with ?error= (Phase 2's banner).
@@ -225,6 +228,18 @@ export type ClientSummary = {
 };
 
 export type CreateClientError = "invalid-name" | "duplicate-name";
+
+// What a Client User's Profile page shows. canLeave: "last-owner" = the only
+// Owner of a Client with other users (Leave is refused); "only-user" = the
+// Client's sole user (Leave empties it); "yes" otherwise.
+export type Profile = {
+  name: string;
+  email: string;
+  role: "owner" | "member";
+  clientName: string;
+  isGoogleLinked: boolean;
+  canLeave: "yes" | "only-user" | "last-owner";
+};
 
 export type TeamMember = {
   userId: string;
@@ -376,6 +391,15 @@ export type Auth = {
   unarchiveClient(clientId: string): Promise<Result<null, ArchiveError>>;
   // Archived Clients, sorted by name (case-insensitive).
   listArchivedClients(): Promise<ArchivedClient[]>;
+  // The Client User's own Profile, read fresh.
+  getProfile(access: ClientAccess): Promise<Profile>;
+  // Sets the user's display name (stored trimmed, NFC, whitespace collapsed).
+  // Refusal: invalid-name (blank, over 100 characters, or hidden characters).
+  // Written here, never through Better Auth's /update-user (disabled).
+  updateDisplayName(
+    access: ClientAccess,
+    name: string,
+  ): Promise<Result<null, "invalid-name">>;
 };
 
 export type AuthDeps = {
@@ -802,6 +826,73 @@ class BetterAuthModule implements Auth {
     return this.#archive.list();
   }
 
+  getProfile(access: ClientAccess): Promise<Profile> {
+    return this.db.withSystem(async (tx) => {
+      const [stored] = await tx
+        .select({ name: user.name })
+        .from(user)
+        .where(eq(user.id, access.userId));
+      const [google] = await tx
+        .select({ id: account.id })
+        .from(account)
+        .where(
+          and(
+            eq(account.userId, access.userId),
+            eq(account.providerId, GOOGLE_PROVIDER_ID),
+          ),
+        )
+        .limit(1);
+      const [counts] = await tx
+        .select({
+          owners: sql<number>`count(*) filter (where ${member.role} = 'owner')::int`,
+          users: sql<number>`count(*)::int`,
+        })
+        .from(member)
+        .where(eq(member.organizationId, access.clientId));
+
+      let canLeave: Profile["canLeave"] = "yes";
+      if (counts.users === 1) {
+        canLeave = "only-user";
+      } else if (access.role === "owner" && counts.owners === 1) {
+        canLeave = "last-owner";
+      }
+      return {
+        name: stored?.name ?? access.name,
+        email: access.email,
+        role: access.role,
+        clientName: access.clientName,
+        isGoogleLinked: google !== undefined,
+        canLeave,
+      };
+    });
+  }
+
+  async updateDisplayName(
+    access: ClientAccess,
+    name: string,
+  ): Promise<Result<null, "invalid-name">> {
+    if (!isValidUserName(name)) {
+      // The name stays out of the log: it is the user's own data.
+      console.warn("auth: refused a display name", {
+        clientId: access.clientId,
+      });
+      return { value: null, error: "invalid-name", status: UNPROCESSABLE };
+    }
+
+    const updated = await this.db.withSystem((tx) =>
+      tx
+        .update(user)
+        .set({ name: normalizeUserName(name), updatedAt: this.now() })
+        .where(eq(user.id, access.userId))
+        .returning({ id: user.id }),
+    );
+    if (updated.length === 0) {
+      throw new Error("auth: the display name's user no longer exists");
+    }
+
+    return { value: null, error: null, status: OK };
+  }
+
   // Better Auth sees only the client IP this module trusts.
   private trustedHeaders(request: Request): Headers {
     return withClientIp(request.headers, this.trustForwardedFor);
@@ -926,7 +1017,15 @@ export function createBetterAuth(
               });
               throw refuse("not-invited");
             }
-            return true;
+            // A magic link has no name of its own: one sent in the request body is
+            // the requester's claim, so it is dropped.
+            // A provider's profile name is free text: it gets the Profile
+            // form's rules. Either way an empty name (the email stands in)
+            // rather than a refused sign-in.
+            const isNamed =
+              signInMethod !== "magic-link" && isValidUserName(newUser.name);
+            const name = isNamed ? normalizeUserName(newUser.name) : "";
+            return { data: { ...newUser, name } };
           },
         },
       },

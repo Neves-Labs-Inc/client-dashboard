@@ -64,7 +64,7 @@ export default function Button({
           className={cn(contentClass, isPending && "invisible")}
           aria-hidden={isPending || undefined}
         >
-          {Icon && <Icon size={14} aria-hidden="true" />}
+          {Icon && <Icon size={14} aria-hidden="true" className="shrink-0" />}
           {children}
         </span>
         <span

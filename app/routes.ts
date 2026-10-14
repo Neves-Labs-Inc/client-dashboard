@@ -18,7 +18,10 @@ export default [
     route("no-access", "routes/auth/no-access.tsx"),
     route("invitations/:invitationId", "routes/auth/invitation.tsx"),
   ]),
-  layout("routes/client/layout.tsx", [route("team", "routes/client/team.tsx")]),
+  layout("routes/client/layout.tsx", [
+    route("team", "routes/client/team.tsx"),
+    route("profile", "routes/client/profile.tsx"),
+  ]),
   route("admin", "routes/admin/layout.tsx", [
     index("routes/admin/index.tsx"),
     route("clients/:clientId", "routes/admin/client.tsx"),

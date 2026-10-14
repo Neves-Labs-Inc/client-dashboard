@@ -1,7 +1,10 @@
 import { KeyRound, Mail } from "lucide-react";
+import { useEffect, useState } from "react";
 import {
   data,
   redirect,
+  useLocation,
+  useNavigate,
   type ShouldRevalidateFunctionArgs,
 } from "react-router";
 import GoogleMark from "@/components/auth/google-mark";
@@ -9,6 +12,7 @@ import OrDivider from "@/components/auth/or-divider";
 import Button from "@/components/ui/button";
 import Field from "@/components/ui/field";
 import FormError from "@/components/ui/form-error";
+import InfoBanner from "@/components/ui/info-banner";
 import Input from "@/components/ui/input";
 import { useGoogleSignIn } from "@/hooks/use-google-sign-in";
 import { usePasskeySignIn } from "@/hooks/use-passkey-sign-in";
@@ -16,12 +20,15 @@ import { type InitialBanner, useSignInForm } from "@/hooks/use-sign-in-form";
 import { GOOGLE_ERROR_FLAG } from "@/lib/auth/auth-client";
 import { auth } from "@/lib/auth/auth.server";
 import { requireAccess } from "@/lib/auth/require-access.server";
+import { PROFILE_COPY } from "@/lib/profile";
 import { revalidateUnlessThemeFailed } from "@/lib/theme";
 import type { Route } from "./+types/sign-in";
 
 const SEE_OTHER = 303;
 // Marks a form the browser posted itself, before the page hydrated.
 const UNSENT_PARAM = "unsent";
+// Marks a visit right after leaving a Client (the Profile page's Leave).
+const LEFT_PARAM = "left";
 const GOOGLE_PROVIDER = "google";
 // Where the opened magic link lands: / sends each access home.
 const HOME_PATH = "/";
@@ -44,7 +51,8 @@ export async function loader({ request }: Route.LoaderArgs) {
     banner = "failed";
   }
   const isGoogleEnabled = auth.listSocialProviders().includes(GOOGLE_PROVIDER);
-  return data({ banner, isGoogleEnabled }, { headers });
+  const hasLeft = params.get(LEFT_PARAM) === "1";
+  return data({ banner, hasLeft, isGoogleEnabled }, { headers });
 }
 
 // Only a submit before hydration lands here (the JS path never posts). It
@@ -61,10 +69,13 @@ export default function SignIn({
   loaderData,
 }: Route.ComponentProps): React.ReactNode {
   const { isGoogleEnabled } = loaderData;
+  const [hasLeft, setHasLeft] = useState(loaderData.hasLeft);
+  useStripLeftFlag(loaderData.hasLeft);
   const form = useSignInForm(loaderData.banner);
   const google = useGoogleSignIn({
     callbackURL: HOME_PATH,
     onAttempt: () => {
+      setHasLeft(false);
       form.clearBanner();
       passkey.clearBanner();
     },
@@ -72,6 +83,7 @@ export default function SignIn({
   const passkey = usePasskeySignIn({
     isAutofillPaused: form.isPending || google.isPending,
     onAttempt: () => {
+      setHasLeft(false);
       form.clearBanner();
       google.clearBanner();
     },
@@ -80,6 +92,7 @@ export default function SignIn({
   const banner = google.banner ?? passkey.banner ?? form.banner;
 
   function handleSubmit(event: React.FormEvent<HTMLFormElement>): void {
+    setHasLeft(false);
     passkey.clearBanner();
     google.clearBanner();
     void form.handleSubmit(event);
@@ -88,7 +101,11 @@ export default function SignIn({
   return (
     <>
       <h1 className="text-lg/6 font-semibold text-fg">Sign in</h1>
-      {banner && <FormError variant="banner">{banner}</FormError>}
+      {banner ? (
+        <FormError variant="banner">{banner}</FormError>
+      ) : (
+        hasLeft && <InfoBanner>{PROFILE_COPY.leftBanner}</InfoBanner>
+      )}
       {isGoogleEnabled && (
         <>
           <Button
@@ -156,4 +173,24 @@ export default function SignIn({
       </Button>
     </>
   );
+}
+
+// The flag leaves the URL once shown, so a reload or Back doesn't show the
+// banner again (the page keeps it in state).
+function useStripLeftFlag(hasLeft: boolean): void {
+  const navigate = useNavigate();
+  const { pathname, search } = useLocation();
+
+  useEffect(() => {
+    if (!hasLeft) return;
+
+    const params = new URLSearchParams(search);
+    params.delete(LEFT_PARAM);
+    const rest = params.toString();
+    void navigate(
+      { pathname, search: rest ? `?${rest}` : "" },
+      { replace: true, preventScrollReset: true },
+    );
+    // Only the flag's arrival matters, not the location read alongside it.
+  }, [hasLeft]);
 }

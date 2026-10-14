@@ -7,7 +7,9 @@ import {
 } from "react-router";
 import ClientShell from "@/components/client/client-shell";
 import ClientTeamSkeleton from "@/components/client/client-team-skeleton";
+import ProfileSkeleton from "@/components/client/profile-skeleton";
 import { useWelcomeToast } from "@/hooks/use-welcome-toast";
+import { PROFILE_PATH } from "@/lib/profile";
 import { requireClientUser } from "@/lib/auth/require-access.server";
 import { getNoStoreHeaders } from "@/lib/no-store-headers";
 import { revalidateUnlessThemeFailed } from "@/lib/theme";
@@ -33,30 +35,39 @@ export function shouldRevalidate(args: ShouldRevalidateFunctionArgs): boolean {
 export default function ClientLayout({
   loaderData,
 }: Route.ComponentProps): React.ReactNode {
-  const isLoadingTeam = useIsNavigatingToTeam();
+  const loadingPath = useNavigatingToPath();
   useWelcomeToast(loaderData.clientName);
 
   return (
     <ClientShell {...loaderData}>
-      {isLoadingTeam ? (
-        <ClientTeamSkeleton isOwner={loaderData.role === "owner"} />
-      ) : (
-        <Outlet />
-      )}
+      {getSkeleton(loadingPath, loaderData.role) ?? <Outlet />}
     </ClientShell>
   );
 }
 
-// The Team loader is awaited, so a client-side navigation into /team shows
-// its skeleton meanwhile.
-function useIsNavigatingToTeam(): boolean {
+function getSkeleton(
+  path: string | null,
+  role: "owner" | "member",
+): React.ReactNode {
+  let skeleton: React.ReactNode = null;
+  if (path === TEAM_PATH) {
+    skeleton = <ClientTeamSkeleton isOwner={role === "owner"} />;
+  } else if (path === PROFILE_PATH) {
+    skeleton = <ProfileSkeleton />;
+  }
+  return skeleton;
+}
+
+// The Team and Profile loaders are awaited, so a client-side navigation into
+// either shows its skeleton meanwhile. The path being loaded, or null when
+// no other page is.
+function useNavigatingToPath(): string | null {
   const navigation = useNavigation();
   const { pathname } = useLocation();
   const target = navigation.location;
-  return (
+  const isChangingPage =
     navigation.state === "loading" &&
     target !== undefined &&
-    target.pathname !== pathname &&
-    target.pathname === TEAM_PATH
-  );
+    target.pathname !== pathname;
+  return isChangingPage ? target.pathname : null;
 }

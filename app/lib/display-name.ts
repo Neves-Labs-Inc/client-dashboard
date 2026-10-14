@@ -3,6 +3,13 @@ export function getDisplayName(name: string, email: string): string {
   return name.trim() || email;
 }
 
+// How an email names who sent it: "Maya Chen (maya@acme.test)", or just the
+// address when there is no name, so the sender's address always shows.
+export function getSenderLabel(name: string, email: string): string {
+  const trimmed = name.trim();
+  return trimmed ? `${trimmed} (${email})` : email;
+}
+
 // The first letters of the name's first and last words (one for a one-word
 // name), or the email's first letter when there is no name.
 export function getInitials(name: string, email: string): string {

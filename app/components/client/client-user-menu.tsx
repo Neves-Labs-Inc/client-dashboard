@@ -1,6 +1,9 @@
+import { User } from "lucide-react";
+import MenuItem from "@/components/ui/menu-item";
 import UserMenu from "@/components/ui/user-menu";
 import type { ClientAccess } from "@/lib/auth/auth";
 import { getDisplayName, getInitials } from "@/lib/display-name";
+import { PROFILE_PATH } from "@/lib/profile";
 import { ROLE_LABEL } from "@/lib/roles";
 
 type ClientUserMenuProps = {
@@ -41,6 +44,10 @@ export default function ClientUserMenu({
           )}
         </>
       }
-    />
+    >
+      <MenuItem icon={User} to={PROFILE_PATH}>
+        Profile
+      </MenuItem>
+    </UserMenu>
   );
 }
