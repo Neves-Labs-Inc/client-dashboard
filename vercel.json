@@ -1,5 +1,6 @@
 {
   "framework": "react-router",
   "regions": ["iad1"],
-  "git": { "deploymentEnabled": false }
+  "git": { "deploymentEnabled": false },
+  "crons": [{ "path": "/jobs/reconcile", "schedule": "*/15 * * * *" }]
 }

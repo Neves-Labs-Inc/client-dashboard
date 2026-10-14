@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { getAppEnv } from "@/lib/env";
+import { getAppEnv, getDevWebhooksEnv } from "@/lib/env";
 
 // Shape only; not a real key.
 const PRIVATE_KEY_PEM = [
@@ -257,5 +257,39 @@ describe("getAppEnv", () => {
 
     vi.stubEnv("GITHUB_APP_INSTALLATION_ID", "0");
     expectRejected("GITHUB_APP_INSTALLATION_ID", undefined);
+  });
+
+  it("leaves CRON_SECRET unset by default", () => {
+    expect(getAppEnv().CRON_SECRET).toBeUndefined();
+  });
+
+  it("rejects a CRON_SECRET shorter than 32 chars without echoing it", () => {
+    const shortSecret = "short-cron-secret-value";
+    vi.stubEnv("CRON_SECRET", shortSecret);
+
+    expectRejected("CRON_SECRET", shortSecret);
+  });
+
+  it("accepts a 32-char CRON_SECRET with GitHub off", () => {
+    const cronSecret = "c".repeat(32);
+    vi.stubEnv("CRON_SECRET", cronSecret);
+
+    expect(getAppEnv().CRON_SECRET).toBe(cronSecret);
+  });
+});
+
+describe("getDevWebhooksEnv", () => {
+  it("reads the smee channel URL", () => {
+    vi.stubEnv("SMEE_URL", "https://smee.io/abc123");
+
+    expect(getDevWebhooksEnv().SMEE_URL).toBe("https://smee.io/abc123");
+  });
+
+  it("rejects a missing or non-https SMEE_URL, naming the var", () => {
+    vi.stubEnv("SMEE_URL", undefined);
+    expect(() => getDevWebhooksEnv()).toThrow("SMEE_URL");
+
+    vi.stubEnv("SMEE_URL", "http://smee.io/abc123");
+    expect(() => getDevWebhooksEnv()).toThrow("SMEE_URL");
   });
 });

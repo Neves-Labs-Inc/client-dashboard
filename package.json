@@ -16,7 +16,8 @@
     "format:check": "prettier --check .",
     "test": "vitest run",
     "db:generate": "drizzle-kit generate",
-    "db:migrate": "node --env-file-if-exists=.env scripts/db-migrate.ts"
+    "db:migrate": "node --env-file-if-exists=.env scripts/db-migrate.ts",
+    "dev:webhooks": "node --env-file-if-exists=.env scripts/dev-webhooks.ts"
   },
   "dependencies": {
     "@better-auth/passkey": "^1.7.7",
@@ -56,6 +57,7 @@
     "eslint": "^10.12.0",
     "prettier": "^3.9.10",
     "prettier-plugin-tailwindcss": "^0.8.1",
+    "smee-client": "^5.0.0",
     "tailwindcss": "^4.3.3",
     "typescript": "~6.0.3",
     "typescript-eslint": "^8.71.1",

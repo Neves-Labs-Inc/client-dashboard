@@ -29,6 +29,8 @@ export default [
   ]),
   route("sign-out", "routes/sign-out.ts"),
   route("healthz", "routes/healthz.ts"),
+  route("webhooks/github", "routes/webhooks.github.ts"),
+  route("jobs/reconcile", "routes/jobs.reconcile.ts"),
   route("api/auth/*", "routes/api.auth.ts"),
   route("theme", "routes/theme.tsx"),
   ...(isProduction

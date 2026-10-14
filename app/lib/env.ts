@@ -15,6 +15,7 @@ const DEFAULT_DB_QUERY_TIMEOUT_MS = 10_000;
 const MAX_DB_QUERY_TIMEOUT_MS = 600_000;
 
 const MIN_AUTH_SECRET_LENGTH = 32;
+const MIN_CRON_SECRET_LENGTH = 32;
 const MAX_PORT = 65_535;
 // Implicit TLS. Credentials may only travel on it, never on a plain or
 // STARTTLS-upgraded connection a downgrade could strip.
@@ -84,6 +85,8 @@ const appEnvSchema = z
       .optional(),
     GITHUB_WEBHOOK_SECRET: z.string().min(1).optional(),
     GITHUB_ORG: z.string().min(1).optional(),
+    // The bearer Vercel Cron sends to /jobs/reconcile. Unset, the job is off.
+    CRON_SECRET: z.string().min(MIN_CRON_SECRET_LENGTH).optional(),
     // Set to 1 by Vercel at build and run time. Vercel overwrites
     // x-forwarded-for with the client IP, so only then is it trusted.
     VERCEL: z
@@ -156,8 +159,14 @@ const migrateEnvSchema = z.object({
   APP_SYSTEM_PASSWORD: z.string().min(1),
 });
 
+// `pnpm dev:webhooks` only: the dev App's smee channel. The app never reads it.
+const devWebhooksEnvSchema = z.object({
+  SMEE_URL: z.url({ protocol: /^https$/ }),
+});
+
 export type AppEnv = z.infer<typeof appEnvSchema>;
 export type MigrateEnv = z.infer<typeof migrateEnvSchema>;
+export type DevWebhooksEnv = z.infer<typeof devWebhooksEnvSchema>;
 
 // Names the bad vars and why, never their values (they hold credentials).
 function parseEnv<T>(schema: z.ZodType<T>): T {
@@ -177,6 +186,10 @@ export function getAppEnv(): AppEnv {
 
 export function getMigrateEnv(): MigrateEnv {
   return parseEnv(migrateEnvSchema);
+}
+
+export function getDevWebhooksEnv(): DevWebhooksEnv {
+  return parseEnv(devWebhooksEnvSchema);
 }
 
 // `new URL(...).origin` drops any trailing slash or path, so equality means
