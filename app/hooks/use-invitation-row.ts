@@ -1,18 +1,19 @@
 import { useEffect, useRef } from "react";
 import { useFetcher, useRevalidator } from "react-router";
-import { getTeamPath } from "@/lib/new-client";
 import {
-  INVITATION_COPY,
   INVITATION_ID_FIELD,
   INVITATION_INTENT_FIELD,
   type InvitationIntent,
   type InvitationOutcome,
+  type InvitationRowCopy,
 } from "@/lib/team-invitations";
 import { toast } from "@/lib/toast";
 
 type InvitationRowOptions = {
   invitationId: string;
-  clientId: string;
+  // The route the resend and revoke post to.
+  action: string;
+  copy: InvitationRowCopy;
   isConfirming: boolean;
   onConfirmingChange: (isConfirming: boolean) => void;
   // A message for the panel's notice; null clears it.
@@ -37,7 +38,8 @@ type InvitationRowActions = {
 // isn't pending any more is about to unmount.
 export function useInvitationRow({
   invitationId,
-  clientId,
+  action,
+  copy,
   isConfirming,
   onConfirmingChange,
   onNotice,
@@ -69,33 +71,25 @@ export function useInvitationRow({
 
     handledRef.current = outcome;
     const isRevoke = intentRef.current === "revoke";
+    const rateLimit =
+      outcome.kind === "refused" ? copy.rateLimits[outcome.error] : undefined;
     if (outcome.kind === "resent") {
-      toast(INVITATION_COPY.resent);
+      toast(copy.resent);
     } else if (outcome.kind === "revoked") {
-      toast(INVITATION_COPY.revoked);
+      toast(copy.revoked);
       onRowGone(invitationId);
-    } else if (
-      outcome.kind === "refused" &&
-      outcome.error === "too-many-emails"
-    ) {
+    } else if (rateLimit) {
       // The row stays, and so does focus on its button.
-      onNotice(INVITATION_COPY.tooManyEmails);
-    } else if (
-      outcome.kind === "refused" &&
-      outcome.error === "too-many-invitations"
-    ) {
-      onNotice(INVITATION_COPY.tooManyInvitations);
+      onNotice(rateLimit);
     } else if (outcome.kind === "refused") {
-      onNotice(INVITATION_COPY.notPending);
+      onNotice(outcome.error === "archived" ? copy.archived : copy.notPending);
       onConfirmingChange(false);
       // Drops the row that's no longer pending; focus moves on once it's
       // gone, as after a revoke.
       onRowGone(invitationId);
       void revalidator.revalidate();
     } else {
-      onNotice(
-        isRevoke ? INVITATION_COPY.revokeFailed : INVITATION_COPY.resendFailed,
-      );
+      onNotice(isRevoke ? copy.revokeFailed : copy.resendFailed);
       if (isRevoke) {
         shouldFocusRevokeRef.current = true;
         onConfirmingChange(false);
@@ -104,6 +98,7 @@ export function useInvitationRow({
   }, [
     fetcher.data,
     fetcher.state,
+    copy,
     invitationId,
     onConfirmingChange,
     onNotice,
@@ -121,7 +116,7 @@ export function useInvitationRow({
         [INVITATION_INTENT_FIELD]: intent,
         [INVITATION_ID_FIELD]: invitationId,
       },
-      { method: "post", action: getTeamPath(clientId) },
+      { method: "post", action },
     );
   }
 

@@ -7,6 +7,9 @@ import {
 } from "@/lib/auth/auth-client";
 
 export const CHECK_EMAIL_PATH = "/sign-in/check-email";
+// The opened link lands on /, which sends each access home (the Admin to
+// /passkey, an invitee through their join).
+const MAGIC_LINK_CALLBACK_URL = "/";
 
 const INVALID_EMAIL = "Enter a valid email.";
 // Deliberately loose: the browser's type="email" rule plus a dot in the
@@ -15,13 +18,16 @@ const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 // Banners the server renders: a bad emailed link, or a form submitted
 // before the page could send the request itself.
-export type InitialBanner = "bad-link" | "failed" | null;
+// "google-failed": a Google round trip that came back with an error.
+export type InitialBanner = "bad-link" | "failed" | "google-failed" | null;
 
-type Banner = Exclude<MagicLinkOutcome, "sent"> | "bad-link";
+type Banner = Exclude<MagicLinkOutcome, "sent"> | "bad-link" | "google-failed";
 
-const BANNER_COPY: Record<Banner, string> = {
+// Also the Invitation page's send banners.
+export const MAGIC_LINK_BANNER_COPY: Record<Banner, string> = {
   "bad-link":
     "That sign-in link has expired or was already used. Request a new one.",
+  "google-failed": "Couldn't sign in with Google. Try again.",
   "rate-limited": "Too many attempts. Try again in a minute.",
   failed: "Couldn't send the link. Try again.",
 };
@@ -36,7 +42,7 @@ type SignInForm = {
   handleChange: (event: React.ChangeEvent<HTMLInputElement>) => void;
   handleBlur: () => void;
   handleSubmit: (event: React.FormEvent<HTMLFormElement>) => Promise<void>;
-  // For the page's other banner source (passkey sign-in): one at a time.
+  // For the page's other banner sources (passkey, Google): one at a time.
   clearBanner: () => void;
 };
 
@@ -88,7 +94,10 @@ export function useSignInForm(initialBanner: InitialBanner): SignInForm {
     }
 
     setIsPending(true);
-    const outcome = await requestMagicLink(value.trim());
+    const outcome = await requestMagicLink(
+      value.trim(),
+      MAGIC_LINK_CALLBACK_URL,
+    );
     if (outcome === "sent") {
       // Stays pending until the next screen loads, so it never flashes idle.
       await navigate(CHECK_EMAIL_PATH);
@@ -106,7 +115,7 @@ export function useSignInForm(initialBanner: InitialBanner): SignInForm {
   return {
     email,
     fieldError: isErrorShown ? INVALID_EMAIL : null,
-    banner: banner === null ? null : BANNER_COPY[banner],
+    banner: banner === null ? null : MAGIC_LINK_BANNER_COPY[banner],
     isPending,
     inputRef,
     buttonRef,

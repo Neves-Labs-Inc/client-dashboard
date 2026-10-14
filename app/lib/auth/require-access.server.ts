@@ -4,7 +4,7 @@ import {
   getAccessRedirect,
   type AccessKind,
 } from "@/lib/auth/access";
-import type { AccessResult } from "@/lib/auth/auth";
+import type { AccessResult, ClientAccess } from "@/lib/auth/auth";
 import { auth } from "@/lib/auth/auth.server";
 import { getAppEnv } from "@/lib/env";
 import { isSameOrigin } from "@/lib/same-origin";
@@ -56,4 +56,38 @@ export async function requireAdminMutation(
   }
 
   return access;
+}
+
+export type ClientUserAccess = { access: ClientAccess; headers: Headers };
+
+// The guard for every loader and action of the client area: the Client
+// User's access, or a thrown redirect to where this access belongs (the
+// Admin to /admin). Pages scope their data by `access.clientId`, never by a
+// URL param. Callers put `headers` on their response, as with requireAccess.
+export async function requireClientUser(
+  request: Request,
+): Promise<ClientUserAccess> {
+  const { access, headers } = await auth.getAccess(request);
+  if (access.kind !== "client") {
+    throw redirect(getAccessHome(access.kind), { headers });
+  }
+
+  return { access, headers };
+}
+
+// The guard for every client action, called first, before formData():
+// requireClientUser, then the same-origin check that throws a 403.
+export async function requireClientMutation(
+  request: Request,
+): Promise<ClientUserAccess> {
+  const result = await requireClientUser(request);
+  if (!isSameOrigin(request, getAppEnv().BETTER_AUTH_URL)) {
+    console.warn("client: refused a cross-origin mutation", {
+      path: new URL(request.url).pathname,
+      clientId: result.access.clientId,
+    });
+    throw data(null, { status: FORBIDDEN, headers: result.headers });
+  }
+
+  return result;
 }

@@ -1,11 +1,20 @@
 import { Fragment } from "react";
 import { Link } from "react-router";
 
-type BreadcrumbItem = { label: string; href?: string };
+type BreadcrumbItem = {
+  label: string;
+  href?: string;
+  // The crumb that gives way on a narrow screen (a Client name). Without
+  // one, the current page's crumb truncates.
+  isTruncated?: boolean;
+};
 
 type PageHeaderProps = {
   breadcrumb: BreadcrumbItem[];
   title: string;
+  // Rendered inside the h1 after the title, so it's part of the heading's
+  // accessible name ("Acme Archived").
+  badge?: React.ReactNode;
   action?: React.ReactNode;
   // Makes the h1 a programmatic focus target (tabIndex -1), for pages that
   // move focus to their heading on arrival.
@@ -15,6 +24,7 @@ type PageHeaderProps = {
 export default function PageHeader({
   breadcrumb,
   title,
+  badge,
   action,
   titleRef,
 }: PageHeaderProps): React.ReactNode {
@@ -22,19 +32,22 @@ export default function PageHeader({
   // The current page is the last crumb, unless that crumb links elsewhere.
   const isCurrent = (item: BreadcrumbItem, index: number): boolean =>
     index === lastIndex && !item.href;
+  const hasTruncatedItem = breadcrumb.some((item) => item.isTruncated);
+  const isTruncated = (item: BreadcrumbItem, index: number): boolean =>
+    hasTruncatedItem ? Boolean(item.isTruncated) : isCurrent(item, index);
 
   return (
     <header className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
       <div className="min-w-0">
         <nav aria-label="Breadcrumb">
-          {/* One line: a long last item (a Client name) truncates. */}
+          {/* One line: a long Client name truncates. */}
           <ol className="flex min-w-0 font-mono text-xs/4 text-fg-2 uppercase">
             {breadcrumb.map((item, index) => (
               <Fragment key={`${item.label}-${index}`}>
                 <li
                   aria-current={isCurrent(item, index) ? "page" : undefined}
                   className={
-                    isCurrent(item, index) ? "min-w-0 truncate" : "shrink-0"
+                    isTruncated(item, index) ? "min-w-0 truncate" : "shrink-0"
                   }
                 >
                   {item.href ? (
@@ -66,9 +79,13 @@ export default function PageHeader({
           className="mt-1 text-lg/6 font-semibold break-words text-fg outline-hidden"
         >
           {title}
+          {badge && <> {badge}</>}
         </h1>
       </div>
-      {action && <div className="self-start md:self-auto">{action}</div>}
+      {/* The title column takes the squeeze (it wraps), never the actions. */}
+      {action && (
+        <div className="self-start md:shrink-0 md:self-auto">{action}</div>
+      )}
     </header>
   );
 }

@@ -28,4 +28,20 @@ describe("getAuthSettings", () => {
       secret: env.BETTER_AUTH_SECRET,
     });
   });
+  it("registers no social provider when the Google vars are unset", () => {
+    expect(getAuthSettings(getAppEnv()).providers).toEqual({});
+  });
+
+  it("registers Google, recording google sessions, when both vars are set", () => {
+    vi.stubEnv("GOOGLE_CLIENT_ID", "client-id.apps.googleusercontent.com");
+    vi.stubEnv("GOOGLE_CLIENT_SECRET", "GOCSPX-google-secret-value");
+
+    expect(getAuthSettings(getAppEnv()).providers).toEqual({
+      google: {
+        clientId: "client-id.apps.googleusercontent.com",
+        clientSecret: "GOCSPX-google-secret-value",
+        signInMethod: "google",
+      },
+    });
+  });
 });

@@ -13,7 +13,7 @@ export default function SkeletonGroup({
       {/* The 150ms delay keeps the skeleton from flashing on fast loads. */}
       <div
         aria-hidden="true"
-        className="animate-in delay-150 duration-(--dur-base) ease-out fade-in-0 fill-mode-both"
+        className="animate-in delay-150 duration-(--dur-base) ease-out fade-in-0 fill-mode-both motion-reduce:duration-(--dur-instant)"
       >
         {children}
       </div>

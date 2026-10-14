@@ -1,13 +1,22 @@
 import { randomInt, randomUUID } from "node:crypto";
-import { eq, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import pg from "pg";
 import { APIError } from "better-auth/api";
 import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
-import { type Access, type Auth, createAuth } from "@/lib/auth/auth";
+import {
+  type Access,
+  type Auth,
+  type ClientAccess,
+  createAuth,
+  createBetterAuth,
+} from "@/lib/auth/auth";
+import type { OAuthProfile, RegisteredProvider } from "@/lib/auth/providers";
 import { createInvitationEligibilityHook } from "@/lib/auth/invite-eligibility";
 import { createDb } from "@/lib/db/db";
 import {
+  account,
   clients,
+  emailSendQuota,
   invitation,
   member,
   organization,
@@ -27,6 +36,7 @@ const SESSION_DAYS = 90;
 const MAGIC_LINK_LIMIT = 5;
 const MAGIC_LINK_HOURLY_CAP = 10;
 const PASSKEY_OPTIONS_LIMIT = 10;
+const SOCIAL_LIMIT = 10;
 const SESSION_MAX_AGE_S = SESSION_DAYS * 24 * 60 * 60;
 // Better Auth's fallback when no client IP is trusted (test and dev mode).
 const FALLBACK_IP = "127.0.0.1";
@@ -90,6 +100,10 @@ async function deleteAuthRows(): Promise<void> {
     await owner.query(
       `delete from verification where value like '%"expectedChallenge"%'`,
     );
+    // OAuth sign-ins' state, keyed by a random value.
+    await owner.query(
+      "delete from verification where identifier like 'auth-state:%'",
+    );
     await owner.query("delete from email_send_quota");
     await owner.query(
       "delete from rate_limit where split_part(key, '|', 1) = any($1::text[])",
@@ -117,8 +131,9 @@ async function requestMagicLink(
   email: string,
   forwardedFor: string,
   via: Auth = auth,
+  name?: string,
 ): Promise<Response> {
-  const response = await postMagicLinkRequest(email, forwardedFor, via);
+  const response = await postMagicLinkRequest(email, forwardedFor, via, name);
   await settleBackgroundTasks();
   return response;
 }
@@ -127,6 +142,7 @@ function postMagicLinkRequest(
   email: string,
   forwardedFor: string,
   via: Auth = auth,
+  name?: string,
 ): Promise<Response> {
   return via.handler(
     new Request(`${baseUrl}/api/auth/sign-in/magic-link`, {
@@ -136,7 +152,7 @@ function postMagicLinkRequest(
         origin: baseUrl,
         "x-forwarded-for": forwardedFor,
       },
-      body: JSON.stringify({ email, callbackURL: "/" }),
+      body: JSON.stringify({ email, callbackURL: "/", name }),
     }),
   );
 }
@@ -728,7 +744,7 @@ describe("passkey", () => {
     expect((await getAccessFor(secondSignIn.cookie)).kind).toBe("admin");
   });
 
-  it("gives a passkey session for any other email no access", async () => {
+  it("refuses a passkey sign-in for any other email, creating no session", async () => {
     const ip = createIp();
     const authenticator = createAuthenticator();
     await registerPasskey(authenticator, await signInWithMagicLink(ip), ip);
@@ -742,10 +758,20 @@ describe("passkey", () => {
       await tx.update(passkey).set({ userId: other.id });
     });
 
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+
     const signIn = await signInWithPasskey(authenticator, "", ip);
 
-    expect(signIn.response.status).toBe(200);
+    expect(signIn.response.status).toBe(403);
     expect(await getAccessFor(signIn.cookie)).toEqual({ kind: "anonymous" });
+    const sessions = await db.withSystem((tx) =>
+      tx
+        .select({ id: session.id })
+        .from(session)
+        .innerJoin(user, eq(user.id, session.userId))
+        .where(eq(user.email, "other@test.local")),
+    );
+    expect(sessions).toEqual([]);
   });
 });
 
@@ -879,6 +905,7 @@ describe("Clients", () => {
       expiresAt: Date;
       createdAt?: Date;
       email?: string;
+      role?: string;
     },
   ): Promise<string> {
     const inviterId = await addUser(`-inviter-${randomUUID()}@example.test`);
@@ -1178,10 +1205,20 @@ describe("Clients", () => {
       expect(team).toEqual({
         clientId: id,
         name: `${prefix} Acme`,
+        archivedAt: null,
         members: [],
         pendingInvitations: [],
         canInviteFirstOwner: true,
       });
+    });
+
+    it("says when the Client was archived", async () => {
+      const archivedAt = new Date("2026-10-11T09:00:00Z");
+      const id = await addClient("Acme", { archivedAt });
+
+      const team = await clock.getTeam(id);
+
+      expect(team?.archivedAt).toEqual(archivedAt);
     });
 
     it("lists the members, oldest first", async () => {
@@ -1231,11 +1268,13 @@ describe("Clients", () => {
           id: newer,
           email: "newer@example.test",
           sentAt: new Date("2026-10-11"),
+          role: "owner",
         },
         {
           id: older,
           email: "older@example.test",
           sentAt: new Date("2026-10-10"),
+          role: "owner",
         },
       ]);
       expect(team?.canInviteFirstOwner).toBe(false);
@@ -1575,7 +1614,9 @@ describe("Clients", () => {
 
       const team = await clock.getTeam(id);
       const [acme] = await listMine();
-      expect(team?.pendingInvitations).toEqual([result.value]);
+      expect(team?.pendingInvitations).toEqual([
+        { ...result.value, role: "owner" },
+      ]);
       expect(team?.canInviteFirstOwner).toBe(false);
       expect(acme.owner).toEqual({ pending: true });
     });
@@ -1695,26 +1736,15 @@ describe("Clients", () => {
       );
     });
 
-    it("refuses another Client's invitation, or one that isn't an Owner's, as not-found", async () => {
+    it("refuses another Client's invitation as not-found", async () => {
       const { id } = await inviteMaya();
       const other = await addClient("Other");
-      const memberInvite = await addInvitation(other, {
-        expiresAt: new Date(NOW.getTime() + DAY_MS),
-      });
-      await db.withSystem((tx) =>
-        tx
-          .update(invitation)
-          .set({ role: "member" })
-          .where(eq(invitation.id, memberInvite)),
-      );
       mailer.sent.length = 0;
 
       const crossClient = await clock.resendInvitation(other, id);
-      const notOwner = await clock.resendInvitation(other, memberInvite);
       const crossRevoke = await clock.revokeInvitation(other, id);
 
       expect(crossClient.error).toBe("not-found");
-      expect(notOwner.error).toBe("not-found");
       expect(crossRevoke.error).toBe("not-found");
       expect(mailer.sent).toEqual([]);
       expect(await getExpiresAt(id)).toEqual(
@@ -1949,58 +1979,3395 @@ describe("Clients", () => {
       ).resolves.toBeUndefined();
       await expect(inviteVia(id, "leo@example.test")).resolves.toBeUndefined();
     });
+  });
 
-    // Through Better Auth's own invite endpoint, as a Phase 3 Owner would
-    // call it: proves the hook is registered, not just that it works.
-    it("runs on Better Auth's native invite-member", async () => {
-      const ip = createIp();
-      const cookie = await signInWithMagicLink(ip);
-      const id = await addClient("Acme");
-      const other = await addClient("Other");
-      await addMember(other, "-maya@example.test", "owner");
-      const [admin] = await db.withSystem((tx) =>
+  // Owners inviting Members: the auth module's inviteMember,
+  // resendMemberInvitation and revokeMemberInvitation, plus the Admin's
+  // resend and revoke on the rows they leave.
+  describe("Owner invitations", () => {
+    const SEVEN_DAYS_MS = 7 * DAY_MS;
+    const RACE_HOLD_MS = 300;
+    const CLIENT_CAP = 20;
+
+    type Team = { clientId: string; owner: ClientAccess };
+
+    function waitMs(ms: number): Promise<void> {
+      return new Promise((resolve) => setTimeout(resolve, ms));
+    }
+
+    // A Client with one Owner, and that Owner's access as getAccess gives it.
+    async function addTeam(
+      name = "Acme",
+      ownerName = "Maya Chen",
+    ): Promise<Team> {
+      const clientId = await addClient(name);
+      const email = `${prefix}-owner-${randomUUID()}@example.test`;
+      const [row] = await db.withSystem((tx) =>
         tx
-          .select({ id: user.id })
-          .from(user)
-          .where(eq(user.email, env.ADMIN_EMAIL)),
+          .insert(user)
+          .values({ name: ownerName, email, emailVerified: true })
+          .returning({ id: user.id }),
       );
       await db.withSystem((tx) =>
         tx.insert(member).values({
-          organizationId: id,
-          userId: admin.id,
+          organizationId: clientId,
+          userId: row.id,
           role: "owner",
           createdAt: NOW,
         }),
       );
-      vi.spyOn(console, "warn").mockImplementation(() => {});
+      const owner: ClientAccess = {
+        kind: "client",
+        userId: row.id,
+        email,
+        name: ownerName,
+        clientId,
+        clientName: `${prefix} ${name}`,
+        role: "owner",
+      };
+      return { clientId, owner };
+    }
 
-      const refused = await auth.handler(
-        apiRequest("/organization/invite-member", cookie, ip, {
-          email: `${prefix}-maya@example.test`,
-          role: "member",
-          organizationId: id,
-        }),
+    async function getInvitationRows(organizationId: string) {
+      return db.withSystem((tx) =>
+        tx
+          .select()
+          .from(invitation)
+          .where(eq(invitation.organizationId, organizationId)),
       );
-      const allowed = await auth.handler(
-        apiRequest("/organization/invite-member", cookie, ip, {
-          email: "leo@example.test",
-          role: "member",
-          organizationId: id,
-        }),
-      );
+    }
 
-      expect(refused.status).toBe(403);
-      expect(await refused.json()).toMatchObject(GENERIC_REFUSAL.body);
-      expect(allowed.status).toBe(200);
-      const emails = (
+    async function getRow(id: string) {
+      const [row] = await db.withSystem((tx) =>
+        tx.select().from(invitation).where(eq(invitation.id, id)),
+      );
+      return row;
+    }
+
+    async function inviteLeo(team: Team): Promise<string> {
+      const result = await clock.inviteMember(team.owner, "leo@example.test");
+      if (result.value === null) throw new Error("invite failed");
+      return result.value.id;
+    }
+
+    // Sends Owner invitations to fresh addresses until one is refused or
+    // `count` went out; the errors in order.
+    async function inviteMany(
+      team: Team,
+      count: number,
+      label: string,
+    ): Promise<(string | null)[]> {
+      const errors: (string | null)[] = [];
+      for (let send = 0; send < count; send += 1) {
+        const result = await clock.inviteMember(
+          team.owner,
+          `${label}${send}@example.test`,
+        );
+        errors.push(result.error);
+      }
+      return errors;
+    }
+
+    describe("inviteMember", () => {
+      it("saves a plugin-shaped Member invitation from the Owner and emails the exact copy", async () => {
+        const team = await addTeam("Acme & <Co>", "Maya <Chen>");
+
+        const result = await clock.inviteMember(
+          team.owner,
+          "  Leo@Example.TEST ",
+        );
+
+        const rows = await getInvitationRows(team.clientId);
+        expect(rows).toEqual([
+          {
+            id: expect.stringMatching(UUID_V7),
+            organizationId: team.clientId,
+            email: "leo@example.test",
+            role: "member",
+            status: "pending",
+            expiresAt: new Date(NOW.getTime() + SEVEN_DAYS_MS),
+            createdAt: NOW,
+            inviterId: team.owner.userId,
+          },
+        ]);
+        expect(result).toEqual({
+          value: { id: rows[0].id, email: "leo@example.test", sentAt: NOW },
+          error: null,
+          status: 201,
+        });
+        const url = `${baseUrl}/invitations/${rows[0].id}`;
+        expect(mailer.sent).toEqual([
+          {
+            to: "leo@example.test",
+            subject: `You're invited to ${prefix} Acme & <Co> on the Neves Labs portal`,
+            text: `Maya <Chen> (${team.owner.email}) invited you to join ${prefix} Acme & <Co> on the Neves Labs client portal. Accept the invitation: ${url}. It expires in 7 days.`,
+            html: `<p>Maya &lt;Chen&gt; (${team.owner.email}) invited you to join ${prefix} Acme &amp; &lt;Co&gt; on the Neves Labs client portal. Accept the invitation: <a href="${url}">${url}</a>. It expires in 7 days.</p>`,
+          },
+        ]);
+        const listed = await clock.getTeam(team.clientId);
+        expect(listed?.pendingInvitations).toEqual([
+          { ...result.value, role: "member" },
+        ]);
+      });
+
+      it("names the Owner by email when their name is empty", async () => {
+        const team = await addTeam("Acme", "  ");
+
+        await clock.inviteMember(team.owner, "leo@example.test");
+
+        expect(mailer.sent[0].text).toMatch(
+          new RegExp(`^${team.owner.email} invited you to join`),
+        );
+      });
+
+      it("refuses a Member as forbidden before reading the email, saving and sending nothing", async () => {
+        const team = await addTeam();
+        const asMember: ClientAccess = { ...team.owner, role: "member" };
+
+        const result = await clock.inviteMember(asMember, "nope");
+
+        expect(result).toEqual({
+          value: null,
+          error: "forbidden",
+          status: 403,
+        });
+        expect(await getInvitationRows(team.clientId)).toEqual([]);
+        expect(mailer.sent).toEqual([]);
+      });
+
+      it("refuses an Owner demoted since their access was read as forbidden", async () => {
+        const team = await addTeam();
         await db.withSystem((tx) =>
           tx
-            .select({ email: invitation.email })
+            .update(member)
+            .set({ role: "member" })
+            .where(eq(member.userId, team.owner.userId)),
+        );
+
+        const result = await clock.inviteMember(team.owner, "leo@example.test");
+
+        expect(result.error).toBe("forbidden");
+        expect(await getInvitationRows(team.clientId)).toEqual([]);
+      });
+
+      it("refuses an Owner of a Client archived since their access was read as forbidden", async () => {
+        const team = await addTeam();
+        await db.withSystem((tx) =>
+          tx
+            .update(clients)
+            .set({ archivedAt: NOW })
+            .where(eq(clients.id, team.clientId)),
+        );
+
+        const result = await clock.inviteMember(team.owner, "leo@example.test");
+
+        expect(result.error).toBe("forbidden");
+      });
+
+      it.each([
+        ["a blank", "  "],
+        ["a CR/LF-injected", "leo@example.test\r\nBcc: eve@example.test"],
+        ["a zero-width", "le​o@example.test"],
+        ["a bidi-control", "leo‮@example.test"],
+        ["a two-recipient", "leo@example.test, eve@example.test"],
+      ])(
+        "refuses %s email as invalid-email, saving and sending nothing",
+        async (_label, email) => {
+          const team = await addTeam();
+
+          const result = await clock.inviteMember(team.owner, email);
+
+          expect(result).toEqual({
+            value: null,
+            error: "invalid-email",
+            status: 422,
+          });
+          expect(await getInvitationRows(team.clientId)).toEqual([]);
+          expect(mailer.sent).toEqual([]);
+        },
+      );
+
+      it("refuses ADMIN_EMAIL and another Client's user alike, as ineligible", async () => {
+        const team = await addTeam();
+        const archived = await addClient("Gone", { archivedAt: NOW });
+        await addMember(archived, "-ana@example.test", "member");
+
+        const admin = await clock.inviteMember(
+          team.owner,
+          ` ${env.ADMIN_EMAIL.toUpperCase()} `,
+        );
+        const otherClient = await clock.inviteMember(
+          team.owner,
+          `${prefix}-ANA@example.test`,
+        );
+
+        const ineligible = { value: null, error: "ineligible", status: 422 };
+        expect(admin).toEqual(ineligible);
+        expect(otherClient).toEqual(ineligible);
+        expect(await getInvitationRows(team.clientId)).toEqual([]);
+      });
+
+      it("refuses someone already on the team as already-member", async () => {
+        const team = await addTeam();
+        await addMember(team.clientId, "-jo@example.test", "member");
+
+        const teammate = await clock.inviteMember(
+          team.owner,
+          `${prefix}-JO@example.test`,
+        );
+        const self = await clock.inviteMember(team.owner, team.owner.email);
+
+        expect(teammate).toEqual({
+          value: null,
+          error: "already-member",
+          status: 409,
+        });
+        expect(self.error).toBe("already-member");
+      });
+
+      it("checks other Clients before this Client's members", async () => {
+        const team = await addTeam();
+        const other = await addClient("Other");
+        await addMember(other, "-jo@example.test", "member");
+        await db.withSystem(async (tx) => {
+          const [jo] = await tx
+            .select({ id: user.id })
+            .from(user)
+            .where(eq(user.email, `${prefix}-jo@example.test`));
+          await tx.insert(member).values({
+            organizationId: team.clientId,
+            userId: jo.id,
+            role: "member",
+            createdAt: NOW,
+          });
+        });
+
+        const result = await clock.inviteMember(
+          team.owner,
+          `${prefix}-jo@example.test`,
+        );
+
+        expect(result.error).toBe("ineligible");
+      });
+
+      it("refuses a second live invitation to the same email as pending-exists, until it expires", async () => {
+        const team = await addTeam();
+        await inviteLeo(team);
+
+        const again = await clock.inviteMember(team.owner, "LEO@example.test");
+        const someoneElse = await clock.inviteMember(
+          team.owner,
+          "ana@example.test",
+        );
+        now = new Date(NOW.getTime() + SEVEN_DAYS_MS);
+        const afterExpiry = await clock.inviteMember(
+          team.owner,
+          "leo@example.test",
+        );
+
+        expect(again).toEqual({
+          value: null,
+          error: "pending-exists",
+          status: 409,
+        });
+        expect(someoneElse.error).toBeNull();
+        expect(afterExpiry.error).toBeNull();
+      });
+
+      it("checks members before a live invitation", async () => {
+        const team = await addTeam();
+        const email = `${prefix}-jo@example.test`;
+        await clock.inviteMember(team.owner, email);
+        await addMember(team.clientId, "-jo@example.test", "member");
+
+        const result = await clock.inviteMember(team.owner, email);
+
+        expect(result.error).toBe("already-member");
+      });
+
+      it("saves one invitation when two invites to one email race", async () => {
+        const team = await addTeam();
+        // Two pooled connections, so both invites start at once.
+        await Promise.all(
+          [1, 2].map(() => db.withSystem((tx) => tx.execute(sql`select 1`))),
+        );
+        // Holding the organization row stalls each insert's foreign-key
+        // check; without a lock of their own both would pass the checks.
+        const holder = new pg.Client({
+          connectionString: getMigrateEnv().DATABASE_URL_OWNER,
+        });
+        await holder.connect();
+        let results: Awaited<ReturnType<Auth["inviteMember"]>>[];
+        try {
+          await holder.query("begin");
+          await holder.query(
+            "select 1 from organization where id = $1 for update",
+            [team.clientId],
+          );
+          const racing = Promise.all([
+            clock.inviteMember(team.owner, "leo@example.test"),
+            clock.inviteMember(team.owner, "Leo@example.test"),
+          ]);
+          await Promise.race([racing, waitMs(RACE_HOLD_MS)]);
+          await holder.query("commit");
+          results = await racing;
+        } finally {
+          await holder.end();
+        }
+
+        expect(results.map((result) => result.error).sort()).toEqual([
+          null,
+          "pending-exists",
+        ]);
+        expect(await getInvitationRows(team.clientId)).toHaveLength(1);
+        expect(mailer.sent).toHaveLength(1);
+      });
+
+      it("shares the per-address cap of 5 an hour with the Admin", async () => {
+        const team = await addTeam();
+        const id = await inviteLeo(team);
+        for (let resend = 0; resend < 3; resend += 1) {
+          await clock.resendMemberInvitation(team.owner, id);
+        }
+        // The Admin's resend is the 5th email to Leo.
+        const fifth = await clock.resendInvitation(team.clientId, id);
+
+        const sixth = await clock.resendMemberInvitation(team.owner, id);
+        await clock.revokeMemberInvitation(team.owner, id);
+        const fresh = await clock.inviteMember(team.owner, "LEO@example.test");
+
+        expect(fifth.error).toBeNull();
+        expect(sixth).toEqual({
+          value: null,
+          error: "too-many-emails",
+          status: 429,
+        });
+        expect(fresh.error).toBe("too-many-emails");
+        expect(mailer.sent).toHaveLength(5);
+      });
+
+      it("counts the Admin's first-Owner sends to an address against Owners too", async () => {
+        await db.withSystem((tx) =>
+          tx
+            .insert(user)
+            .values({ name: env.ADMIN_EMAIL, email: env.ADMIN_EMAIL }),
+        );
+        const empty = await addClient("Empty");
+        const first = await clock.inviteFirstOwner(empty, "leo@example.test");
+        if (first.value === null) throw new Error("invite failed");
+        for (let resend = 0; resend < 4; resend += 1) {
+          await clock.resendInvitation(empty, first.value.id);
+        }
+        const team = await addTeam();
+
+        const result = await clock.inviteMember(team.owner, "leo@example.test");
+
+        expect(result.error).toBe("too-many-emails");
+      });
+
+      it("caps a Client's Owners at 20 emails an hour, leaving other Clients alone", async () => {
+        const team = await addTeam();
+        const otherTeam = await addTeam("Other");
+
+        const errors = await inviteMany(team, CLIENT_CAP + 1, "person");
+        const id = (await getInvitationRows(team.clientId))[0].id;
+        const resend = await clock.resendMemberInvitation(team.owner, id);
+        const other = await clock.inviteMember(
+          otherTeam.owner,
+          "elsewhere@example.test",
+        );
+
+        expect(errors.slice(0, CLIENT_CAP)).toEqual(
+          Array(CLIENT_CAP).fill(null),
+        );
+        expect(errors[CLIENT_CAP]).toBe("too-many-for-client");
+        expect(resend).toEqual({
+          value: null,
+          error: "too-many-for-client",
+          status: 429,
+        });
+        expect(other.error).toBeNull();
+        expect(mailer.sent).toHaveLength(CLIENT_CAP + 1);
+      });
+
+      it("frees the Client's cap after an hour", async () => {
+        const team = await addTeam();
+        await inviteMany(team, CLIENT_CAP, "person");
+        now = new Date(NOW.getTime() + 60 * MINUTE_MS);
+
+        const result = await clock.inviteMember(
+          team.owner,
+          "late@example.test",
+        );
+
+        expect(result.error).toBeNull();
+      });
+
+      it("leaves the Admin's global cap untouched", async () => {
+        const team = await addTeam();
+        await inviteMany(team, CLIENT_CAP, "person");
+        await db.withSystem((tx) =>
+          tx
+            .insert(user)
+            .values({ name: env.ADMIN_EMAIL, email: env.ADMIN_EMAIL }),
+        );
+        const empty = await addClient("Empty");
+
+        // The Admin's full 20 still go out after the Owner's 20.
+        let current: string | null = null;
+        const errors: (string | null)[] = [];
+        for (let send = 0; send < 20; send += 1) {
+          if (current !== null) await clock.revokeInvitation(empty, current);
+          const result = await clock.inviteFirstOwner(
+            empty,
+            `admin-sent${send}@example.test`,
+          );
+          errors.push(result.error);
+          current = result.value?.id ?? null;
+        }
+
+        expect(errors).toEqual(Array(20).fill(null));
+      });
+
+      it("keeps the invitation and succeeds when the email fails, logging no address or link", async () => {
+        const team = await addTeam();
+        mailer.failWith = Object.assign(
+          new Error("550 leo@example.test rejected"),
+          { code: "EENVELOPE" },
+        );
+        const errorLog = vi
+          .spyOn(console, "error")
+          .mockImplementation(() => {});
+
+        const result = await clock.inviteMember(team.owner, "leo@example.test");
+
+        const rows = await getInvitationRows(team.clientId);
+        expect(result.status).toBe(201);
+        expect(rows).toHaveLength(1);
+        expect(errorLog).toHaveBeenCalledTimes(1);
+        const logged = JSON.stringify(errorLog.mock.calls);
+        expect(logged).toContain("EENVELOPE");
+        expect(logged).not.toContain("leo");
+        expect(logged).not.toContain(rows[0].id);
+      });
+
+      it("logs refusals without the address", async () => {
+        const team = await addTeam();
+        await inviteLeo(team);
+        const warnLog = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+        await clock.inviteMember(team.owner, "leo@example.test");
+
+        expect(warnLog).toHaveBeenCalled();
+        expect(JSON.stringify(warnLog.mock.calls)).not.toContain("leo");
+      });
+    });
+
+    describe("resendMemberInvitation", () => {
+      it("resets the expiry to now + 7 days and sends the same email again", async () => {
+        const team = await addTeam();
+        const id = await inviteLeo(team);
+        now = new Date(NOW.getTime() + 3 * DAY_MS);
+
+        const result = await clock.resendMemberInvitation(team.owner, id);
+
+        expect(result).toEqual({
+          value: { id, email: "leo@example.test", sentAt: NOW },
+          error: null,
+          status: 200,
+        });
+        expect((await getRow(id)).expiresAt).toEqual(
+          new Date(now.getTime() + SEVEN_DAYS_MS),
+        );
+        expect(mailer.sent).toHaveLength(2);
+        expect(mailer.sent[1]).toEqual(mailer.sent[0]);
+        expect(mailer.sent[1].text).toContain(`${baseUrl}/invitations/${id}.`);
+      });
+
+      it("keeps the new expiry and succeeds when the email fails", async () => {
+        const team = await addTeam();
+        const id = await inviteLeo(team);
+        mailer.failWith = new Error("down");
+        vi.spyOn(console, "error").mockImplementation(() => {});
+
+        const result = await clock.resendMemberInvitation(team.owner, id);
+
+        expect(result.status).toBe(200);
+      });
+
+      it("refuses another Client's, an expired, canceled, unknown or malformed invitation as not-found", async () => {
+        const team = await addTeam();
+        const otherTeam = await addTeam("Other");
+        const id = await inviteLeo(team);
+        const theirs = await inviteLeo(otherTeam);
+        const canceled = await clock.inviteMember(
+          team.owner,
+          "ana@example.test",
+        );
+        if (canceled.value === null) throw new Error("invite failed");
+        await clock.revokeMemberInvitation(team.owner, canceled.value.id);
+        const expired = await addInvitation(team.clientId, {
+          email: "old@example.test",
+          expiresAt: new Date(NOW.getTime() - MINUTE_MS),
+        });
+        mailer.sent.length = 0;
+
+        const results = [];
+        for (const target of [
+          theirs,
+          canceled.value.id,
+          expired,
+          randomUUID(),
+          "nope",
+        ]) {
+          results.push(await clock.resendMemberInvitation(team.owner, target));
+        }
+
+        for (const result of results) {
+          expect(result).toEqual({
+            value: null,
+            error: "not-found",
+            status: 404,
+          });
+        }
+        expect(mailer.sent).toEqual([]);
+        expect((await getRow(id)).status).toBe("pending");
+      });
+
+      it("refuses a Member as forbidden", async () => {
+        const team = await addTeam();
+        const id = await inviteLeo(team);
+        mailer.sent.length = 0;
+
+        const result = await clock.resendMemberInvitation(
+          { ...team.owner, role: "member" },
+          id,
+        );
+
+        expect(result).toEqual({
+          value: null,
+          error: "forbidden",
+          status: 403,
+        });
+        expect(mailer.sent).toEqual([]);
+      });
+    });
+
+    describe("revokeMemberInvitation", () => {
+      it("cancels the invitation, which drops off the Team", async () => {
+        const team = await addTeam();
+        const id = await inviteLeo(team);
+
+        const result = await clock.revokeMemberInvitation(team.owner, id);
+
+        expect(result).toEqual({ value: null, error: null, status: 200 });
+        expect((await getRow(id)).status).toBe("canceled");
+        expect(await clock.getTeam(team.clientId)).toMatchObject({
+          pendingInvitations: [],
+        });
+      });
+
+      it("refuses another Client's, an already canceled or a malformed invitation as not-found", async () => {
+        const team = await addTeam();
+        const otherTeam = await addTeam("Other");
+        const id = await inviteLeo(team);
+        const theirs = await inviteLeo(otherTeam);
+        await clock.revokeMemberInvitation(team.owner, id);
+
+        const results = [];
+        for (const target of [id, theirs, "nope"]) {
+          results.push(await clock.revokeMemberInvitation(team.owner, target));
+        }
+
+        for (const result of results) {
+          expect(result.error).toBe("not-found");
+          expect(result.status).toBe(404);
+        }
+        expect((await getRow(theirs)).status).toBe("pending");
+      });
+
+      it("refuses a Member as forbidden, leaving it pending", async () => {
+        const team = await addTeam();
+        const id = await inviteLeo(team);
+
+        const result = await clock.revokeMemberInvitation(
+          { ...team.owner, role: "member" },
+          id,
+        );
+
+        expect(result).toEqual({
+          value: null,
+          error: "forbidden",
+          status: 403,
+        });
+        expect((await getRow(id)).status).toBe("pending");
+      });
+    });
+
+    describe("the Admin on Member invitations", () => {
+      it("resends one with the Member copy, naming the Owner who sent it", async () => {
+        const team = await addTeam("Acme", "Maya Chen");
+        const id = await inviteLeo(team);
+        now = new Date(NOW.getTime() + DAY_MS);
+
+        const result = await clock.resendInvitation(team.clientId, id);
+
+        expect(result.error).toBeNull();
+        expect(mailer.sent).toHaveLength(2);
+        expect(mailer.sent[1]).toEqual(mailer.sent[0]);
+        expect(mailer.sent[1].text).toMatch(
+          new RegExp(
+            `^Maya Chen \\(${team.owner.email}\\) invited you to join`,
+          ),
+        );
+        expect((await getRow(id)).expiresAt).toEqual(
+          new Date(now.getTime() + SEVEN_DAYS_MS),
+        );
+      });
+
+      it("revokes one", async () => {
+        const team = await addTeam();
+        const id = await inviteLeo(team);
+
+        const result = await clock.revokeInvitation(team.clientId, id);
+
+        expect(result.error).toBeNull();
+        expect((await getRow(id)).status).toBe("canceled");
+      });
+
+      it("still lists Owner invitations alongside Member ones", async () => {
+        const team = await addTeam();
+        const owners = await addInvitation(team.clientId, {
+          email: "maya@example.test",
+          expiresAt: new Date(NOW.getTime() + DAY_MS),
+        });
+        const members = await inviteLeo(team);
+
+        const listed = await clock.getTeam(team.clientId);
+
+        expect(
+          listed?.pendingInvitations.map(({ id, role }) => ({ id, role })),
+        ).toEqual(
+          expect.arrayContaining([
+            { id: owners, role: "owner" },
+            { id: members, role: "member" },
+          ]),
+        );
+      });
+    });
+
+    describe("Owners on Owner invitations", () => {
+      it("refuses an Owner's resend or revoke of the Admin's Owner invitation as not-found", async () => {
+        const team = await addTeam();
+        const id = await addInvitation(team.clientId, {
+          email: "maya@example.test",
+          expiresAt: new Date(NOW.getTime() + DAY_MS),
+        });
+
+        const resend = await clock.resendMemberInvitation(team.owner, id);
+        const revoke = await clock.revokeMemberInvitation(team.owner, id);
+
+        expect(resend).toEqual({
+          value: null,
+          error: "not-found",
+          status: 404,
+        });
+        expect(revoke).toEqual({
+          value: null,
+          error: "not-found",
+          status: 404,
+        });
+        expect(mailer.sent).toEqual([]);
+        const row = await getRow(id);
+        expect(row.status).toBe("pending");
+        expect(row.expiresAt).toEqual(new Date(NOW.getTime() + DAY_MS));
+      });
+    });
+
+    describe("the Admin's sends and the per-Client cap", () => {
+      async function readClientQuotaCount(clientId: string): Promise<number> {
+        const rows = await db.withSystem((tx) =>
+          tx
+            .select({ count: emailSendQuota.count })
+            .from(emailSendQuota)
+            .where(eq(emailSendQuota.key, `invitation-client:${clientId}`)),
+        );
+        return rows[0]?.count ?? 0;
+      }
+
+      it("leaves an Owner's 20 an hour untouched by Admin resends of either role", async () => {
+        await db.withSystem((tx) =>
+          tx
+            .insert(user)
+            .values({ name: env.ADMIN_EMAIL, email: env.ADMIN_EMAIL }),
+        );
+        const team = await addTeam();
+        const memberInvitation = await inviteLeo(team);
+        const ownerInvitation = await addInvitation(team.clientId, {
+          email: "maya@example.test",
+          expiresAt: new Date(NOW.getTime() + DAY_MS),
+        });
+        for (let resend = 0; resend < 4; resend += 1) {
+          const toMember = await clock.resendInvitation(
+            team.clientId,
+            memberInvitation,
+          );
+          const toOwner = await clock.resendInvitation(
+            team.clientId,
+            ownerInvitation,
+          );
+          expect([toMember.error, toOwner.error]).toEqual([null, null]);
+        }
+
+        // Only the Owner's own invite to Leo counts.
+        expect(await readClientQuotaCount(team.clientId)).toBe(1);
+        const errors = await inviteMany(team, CLIENT_CAP - 1, "person");
+        const over = await clock.inviteMember(team.owner, "late@example.test");
+
+        expect(errors).toEqual(Array(CLIENT_CAP - 1).fill(null));
+        expect(over.error).toBe("too-many-for-client");
+      });
+
+      it("leaves the per-Client count untouched by the Admin's first-Owner invite", async () => {
+        await db.withSystem((tx) =>
+          tx
+            .insert(user)
+            .values({ name: env.ADMIN_EMAIL, email: env.ADMIN_EMAIL }),
+        );
+        const empty = await addClient("Empty");
+
+        const first = await clock.inviteFirstOwner(empty, "maya@example.test");
+        if (first.value === null) throw new Error("invite failed");
+        await clock.resendInvitation(empty, first.value.id);
+
+        expect(await readClientQuotaCount(empty)).toBe(0);
+      });
+    });
+
+    describe("a refused send", () => {
+      async function addAdmin(): Promise<void> {
+        await db.withSystem((tx) =>
+          tx
+            .insert(user)
+            .values({ name: env.ADMIN_EMAIL, email: env.ADMIN_EMAIL }),
+        );
+      }
+
+      it("spends none of the address's slots when the Client's cap refuses it", async () => {
+        const team = await addTeam();
+        await inviteMany(team, CLIENT_CAP, "person");
+        for (let attempt = 0; attempt < 5; attempt += 1) {
+          const result = await clock.inviteMember(
+            team.owner,
+            "victim@example.test",
+          );
+          expect(result.error).toBe("too-many-for-client");
+        }
+        await addAdmin();
+        const empty = await addClient("Empty");
+
+        // All 5 of the address's emails are still there for the Admin.
+        const first = await clock.inviteFirstOwner(
+          empty,
+          "victim@example.test",
+        );
+        if (first.value === null) throw new Error("invite failed");
+        const errors: (string | null)[] = [];
+        for (let resend = 0; resend < 4; resend += 1) {
+          const result = await clock.resendInvitation(empty, first.value.id);
+          errors.push(result.error);
+        }
+
+        expect(errors).toEqual([null, null, null, null]);
+      });
+
+      it("spends none of the address's slots when the Admin's global cap refuses it", async () => {
+        await addAdmin();
+        const empty = await addClient("Empty");
+        let current: string | null = null;
+        for (let send = 0; send < 20; send += 1) {
+          if (current !== null) await clock.revokeInvitation(empty, current);
+          const result = await clock.inviteFirstOwner(
+            empty,
+            `admin-sent${send}@example.test`,
+          );
+          current = result.value?.id ?? null;
+        }
+        if (current !== null) await clock.revokeInvitation(empty, current);
+        for (let attempt = 0; attempt < 5; attempt += 1) {
+          const result = await clock.inviteFirstOwner(
+            empty,
+            "victim@example.test",
+          );
+          expect(result.error).toBe("too-many-invitations");
+        }
+        const team = await addTeam();
+
+        // All 5 of the address's emails are still there for an Owner.
+        const first = await clock.inviteMember(
+          team.owner,
+          "victim@example.test",
+        );
+        if (first.value === null) throw new Error("invite failed");
+        const errors: (string | null)[] = [];
+        for (let resend = 0; resend < 4; resend += 1) {
+          const result = await clock.resendMemberInvitation(
+            team.owner,
+            first.value.id,
+          );
+          errors.push(result.error);
+        }
+
+        expect(errors).toEqual([null, null, null, null]);
+      });
+    });
+
+    // /organization/* is closed over HTTP, so this calls Better Auth's
+    // native createInvitation directly, as an Owner's session.
+    it("registers the eligibility check as Better Auth's beforeCreateInvitation hook", async () => {
+      const team = await addTeam();
+      const ip = createIp();
+      await requestMagicLink(team.owner.email, ip, clock);
+      const signIn = await clock.handler(
+        new Request(getLinkFromLastMessage(), {
+          headers: { "x-forwarded-for": ip },
+        }),
+      );
+      const native = createBetterAuth(
+        { ...authDeps, trustForwardedFor: true },
+        env.ADMIN_EMAIL,
+        {},
+      );
+      vi.spyOn(console, "warn").mockImplementation(() => {});
+
+      const refusal = native.api.createInvitation({
+        headers: new Headers({ cookie: getCookieHeader(signIn) }),
+        body: {
+          email: env.ADMIN_EMAIL,
+          role: "member",
+          organizationId: team.clientId,
+        },
+      });
+
+      await expect(refusal).rejects.toBeInstanceOf(APIError);
+      await expect(refusal).rejects.toMatchObject({
+        body: { message: "This email can't be invited." },
+      });
+      expect(await getInvitationRows(team.clientId)).toEqual([]);
+    });
+  });
+
+  // Client Users and invitees signing in, through the HTTP handler, with a
+  // fake OAuth provider registered as "google" (Better Auth's generic OAuth
+  // serves it on the same /sign-in/social and /callback/:id endpoints).
+  describe("Client User sign-in", () => {
+    const profiles = new Map<string, OAuthProfile>();
+    const fakeGoogle: RegisteredProvider = {
+      clientId: "fake-client-id",
+      clientSecret: "fake-client-secret",
+      signInMethod: "google",
+      custom: {
+        authorizationUrl: "https://oauth.fake.test/authorize",
+        // The code is the access token, and names the profile.
+        getToken: async (code) => ({ accessToken: code }),
+        getProfile: async (accessToken) => profiles.get(accessToken) ?? null,
+      },
+    };
+    const portal = createAuth({
+      ...authDeps,
+      trustForwardedFor: true,
+      now: () => now,
+      providers: { google: fakeGoogle },
+    });
+    const DAY_AFTER = new Date(NOW.getTime() + DAY_MS);
+    const WEEK_AFTER = new Date(NOW.getTime() + 7 * DAY_MS);
+    const NO_ACCESS = {
+      notInvited: `${baseUrl}/no-access?reason=not-invited`,
+      archived: `${baseUrl}/no-access?reason=archived`,
+    };
+
+    afterEach(() => {
+      profiles.clear();
+    });
+
+    // A member as a magic-link sign-in leaves one: the email verified.
+    async function addVerifiedMember(
+      organizationId: string,
+      email: string,
+      role = "owner",
+    ): Promise<string> {
+      const [row] = await db.withSystem((tx) =>
+        tx
+          .insert(user)
+          .values({ name: "Maya", email, emailVerified: true })
+          .returning({ id: user.id }),
+      );
+      await db.withSystem((tx) =>
+        tx
+          .insert(member)
+          .values({ organizationId, userId: row.id, role, createdAt: NOW }),
+      );
+      return row.id;
+    }
+
+    async function archive(clientId: string): Promise<void> {
+      await db.withSystem((tx) =>
+        tx
+          .update(clients)
+          .set({ archivedAt: NOW })
+          .where(eq(clients.id, clientId)),
+      );
+    }
+
+    // The whole redirect flow, as a browser runs it against the provider.
+    async function signInWithGoogle(
+      profile: Omit<OAuthProfile, "id" | "name"> & { name?: string },
+      ip: string,
+      via: Auth = portal,
+      callbackURL = "/",
+    ): Promise<Response> {
+      const start = await via.handler(
+        apiRequest("/sign-in/social", "", ip, {
+          provider: "google",
+          callbackURL,
+          errorCallbackURL: "/sign-in",
+        }),
+      );
+      expect(start.status).toBe(200);
+      const { url } = (await start.json()) as { url: string };
+      const state = new URL(url).searchParams.get("state") ?? "";
+      const code = randomUUID();
+      profiles.set(code, {
+        id: `sub-${profile.email}`,
+        name: "Maya",
+        ...profile,
+      });
+      const query = new URLSearchParams({ code, state });
+      return via.handler(
+        new Request(`${baseUrl}/api/auth/callback/google?${query}`, {
+          headers: {
+            cookie: getCookieHeader(start),
+            "x-forwarded-for": ip,
+          },
+        }),
+      );
+    }
+
+    async function requestLink(
+      email: string,
+      ip: string,
+      name?: string,
+    ): Promise<Response> {
+      const response = await requestMagicLink(email, ip, portal, name);
+      return response;
+    }
+
+    async function followLastLink(ip: string): Promise<Response> {
+      return portal.handler(
+        new Request(getLinkFromLastMessage(), {
+          headers: { "x-forwarded-for": ip },
+        }),
+      );
+    }
+
+    async function accessOf(response: Response): Promise<Access> {
+      const { access } = await portal.getAccess(
+        pageRequest(getCookieHeader(response)),
+      );
+      return access;
+    }
+
+    async function readSessionsOf(email: string) {
+      return db.withSystem((tx) =>
+        tx
+          .select({ signInMethod: session.signInMethod })
+          .from(session)
+          .innerJoin(user, eq(user.id, session.userId))
+          .where(eq(user.email, email)),
+      );
+    }
+
+    async function readGoogleAccounts(email: string): Promise<string[]> {
+      const rows = await db.withSystem((tx) =>
+        tx
+          .select({ id: account.id })
+          .from(account)
+          .innerJoin(user, eq(user.id, account.userId))
+          .where(and(eq(user.email, email), eq(account.providerId, "google"))),
+      );
+      return rows.map((row) => row.id);
+    }
+
+    async function readGoogleTokens(email: string) {
+      return db.withSystem((tx) =>
+        tx
+          .select({
+            accessToken: account.accessToken,
+            refreshToken: account.refreshToken,
+            idToken: account.idToken,
+            accessTokenExpiresAt: account.accessTokenExpiresAt,
+            refreshTokenExpiresAt: account.refreshTokenExpiresAt,
+          })
+          .from(account)
+          .innerJoin(user, eq(user.id, account.userId))
+          .where(and(eq(user.email, email), eq(account.providerId, "google"))),
+      );
+    }
+
+    // A user row as a past magic-link sign-in leaves it, with no member row.
+    async function addVerifiedUser(email: string): Promise<void> {
+      await db.withSystem((tx) =>
+        tx.insert(user).values({ name: "Ex", email, emailVerified: true }),
+      );
+    }
+
+    async function readUserName(email: string): Promise<string | undefined> {
+      const [row] = await db.withSystem((tx) =>
+        tx.select({ name: user.name }).from(user).where(eq(user.email, email)),
+      );
+      return row?.name;
+    }
+
+    async function readUserIds(email: string): Promise<string[]> {
+      const rows = await db.withSystem((tx) =>
+        tx.select({ id: user.id }).from(user).where(eq(user.email, email)),
+      );
+      return rows.map((row) => row.id);
+    }
+
+    function silenceWarnings(): void {
+      vi.spyOn(console, "warn").mockImplementation(() => {});
+    }
+
+    describe("getAccess", () => {
+      it("is client for a member of an active Client, with its Client and role", async () => {
+        const clientId = await addClient("Acme");
+        const email = `${prefix}-maya@example.test`;
+        const userId = await addVerifiedMember(clientId, email, "member");
+        const ip = createIp();
+        await requestLink(email, ip);
+
+        const access = await accessOf(await followLastLink(ip));
+
+        expect(access).toEqual({
+          kind: "client",
+          userId,
+          email,
+          name: "Maya",
+          clientId,
+          clientName: `${prefix} Acme`,
+          role: "member",
+        });
+      });
+
+      it("is no-access (archived) once the member's Client is archived", async () => {
+        const clientId = await addClient("Acme");
+        const email = `${prefix}-maya@example.test`;
+        await addVerifiedMember(clientId, email);
+        const ip = createIp();
+        await requestLink(email, ip);
+        const signIn = await followLastLink(ip);
+
+        await archive(clientId);
+
+        expect(await accessOf(signIn)).toEqual({
+          kind: "no-access",
+          reason: "archived",
+        });
+      });
+
+      it("is invitee for a session with a live Invitation and no member row", async () => {
+        const clientId = await addClient("Acme");
+        const email = `${prefix}-leo@example.test`;
+        await addInvitation(clientId, { email, expiresAt: WEEK_AFTER });
+
+        const signIn = await signInWithGoogle(
+          { email, isEmailVerified: true },
+          createIp(),
+        );
+
+        const [userId] = await readUserIds(email);
+        expect(await accessOf(signIn)).toEqual({
+          kind: "invitee",
+          userId,
+          email,
+        });
+      });
+
+      it("is no-access (not-invited) once that Invitation has expired", async () => {
+        const clientId = await addClient("Acme");
+        const email = `${prefix}-leo@example.test`;
+        await addInvitation(clientId, { email, expiresAt: DAY_AFTER });
+        const signIn = await signInWithGoogle(
+          { email, isEmailVerified: true },
+          createIp(),
+        );
+
+        now = new Date(DAY_AFTER.getTime() + MINUTE_MS);
+
+        expect(await accessOf(signIn)).toEqual({
+          kind: "no-access",
+          reason: "not-invited",
+        });
+      });
+    });
+
+    describe("Google", () => {
+      it("is offered only when registered", () => {
+        expect(portal.listSocialProviders()).toEqual(["google"]);
+        expect(auth.listSocialProviders()).toEqual([]);
+      });
+
+      it("is unreachable when not registered", async () => {
+        const ip = createIp();
+
+        const start = await auth.handler(
+          apiRequest("/sign-in/social", "", ip, {
+            provider: "google",
+            callbackURL: "/",
+          }),
+        );
+        const callback = await auth.handler(
+          new Request(`${baseUrl}/api/auth/callback/google?code=x&state=y`),
+        );
+
+        expect(start.status).toBe(404);
+        expect(callback.status).toBe(404);
+      });
+
+      it("refuses the id-token variant of the social sign-in", async () => {
+        silenceWarnings();
+
+        const response = await portal.handler(
+          apiRequest("/sign-in/social", "", createIp(), {
+            provider: "google",
+            idToken: { token: "header.payload.signature" },
+          }),
+        );
+
+        expect(response.status).toBe(403);
+      });
+
+      it("refuses an uninvited email: no account, no session, the No access page", async () => {
+        silenceWarnings();
+        const email = `${prefix}-eve@example.test`;
+
+        const response = await signInWithGoogle(
+          { email, isEmailVerified: true },
+          createIp(),
+        );
+
+        expect(response.status).toBe(302);
+        expect(response.headers.get("location")).toBe(NO_ACCESS.notInvited);
+        expect(getCookieHeader(response)).not.toContain("session_token");
+        expect(await readUserIds(email)).toEqual([]);
+      });
+
+      it("gives an invitee an account and a google session", async () => {
+        const clientId = await addClient("Acme");
+        const email = `${prefix}-leo@example.test`;
+        await addInvitation(clientId, { email, expiresAt: WEEK_AFTER });
+
+        const response = await signInWithGoogle(
+          { email, isEmailVerified: true },
+          createIp(),
+        );
+
+        expect(response.status).toBe(302);
+        expect(response.headers.get("location")).toBe("/");
+        expect(await readUserIds(email)).toHaveLength(1);
+        expect(await readSessionsOf(email)).toEqual([
+          { signInMethod: "google" },
+        ]);
+        expect((await accessOf(response)).kind).toBe("invitee");
+      });
+
+      it("stores the Google profile name, normalised", async () => {
+        const clientId = await addClient("Acme");
+        const email = `${prefix}-leo@example.test`;
+        await addInvitation(clientId, { email, expiresAt: WEEK_AFTER });
+
+        await signInWithGoogle(
+          { email, isEmailVerified: true, name: "  Leo   Park " },
+          createIp(),
+        );
+
+        expect(await readUserName(email)).toBe("Leo Park");
+      });
+
+      it("stores an empty name, not a refusal, for a Google name with hidden characters", async () => {
+        const clientId = await addClient("Acme");
+        const email = `${prefix}-leo@example.test`;
+        await addInvitation(clientId, { email, expiresAt: WEEK_AFTER });
+
+        const response = await signInWithGoogle(
+          { email, isEmailVerified: true, name: "Leo\u202EPark" },
+          createIp(),
+        );
+
+        expect(response.headers.get("location")).toBe("/");
+        expect(await readUserName(email)).toBe("");
+      });
+
+      it("stores an empty name for a Google name containing an @", async () => {
+        const clientId = await addClient("Acme");
+        const email = `${prefix}-leo@example.test`;
+        await addInvitation(clientId, { email, expiresAt: WEEK_AFTER });
+
+        await signInWithGoogle(
+          { email, isEmailVerified: true, name: "Leo (ceo@acme.test)" },
+          createIp(),
+        );
+
+        expect(await readUserName(email)).toBe("");
+      });
+
+      it("refuses an email Google hasn't verified, creating nothing", async () => {
+        silenceWarnings();
+        const clientId = await addClient("Acme");
+        const email = `${prefix}-leo@example.test`;
+        await addInvitation(clientId, { email, expiresAt: WEEK_AFTER });
+
+        const response = await signInWithGoogle(
+          { email, isEmailVerified: false },
+          createIp(),
+        );
+
+        expect(response.headers.get("location")).toBe(NO_ACCESS.notInvited);
+        expect(await readUserIds(email)).toEqual([]);
+      });
+
+      it("refuses ADMIN_EMAIL, before and after the Admin has an account", async () => {
+        silenceWarnings();
+        const ip = createIp();
+        const profile = { email: env.ADMIN_EMAIL, isEmailVerified: true };
+
+        const beforeAccount = await signInWithGoogle(profile, ip);
+        await signInWithMagicLink(ip);
+        const afterAccount = await signInWithGoogle(profile, ip);
+
+        expect(beforeAccount.headers.get("location")).toBe(
+          NO_ACCESS.notInvited,
+        );
+        expect(afterAccount.headers.get("location")).toBe(NO_ACCESS.notInvited);
+        expect(await readSessionsOf(env.ADMIN_EMAIL)).toEqual([
+          { signInMethod: "magic-link" },
+        ]);
+      });
+
+      it("refuses a member of an archived Client with the archived reason", async () => {
+        silenceWarnings();
+        const clientId = await addClient("Acme");
+        const email = `${prefix}-maya@example.test`;
+        await addVerifiedMember(clientId, email);
+        await archive(clientId);
+
+        const response = await signInWithGoogle(
+          { email, isEmailVerified: true },
+          createIp(),
+        );
+
+        expect(response.headers.get("location")).toBe(NO_ACCESS.archived);
+        expect(await readSessionsOf(email)).toEqual([]);
+      });
+
+      it("links no Google account to a user it refuses", async () => {
+        silenceWarnings();
+        const clientId = await addClient("Acme");
+        const archivedMember = `${prefix}-maya@example.test`;
+        const removed = `${prefix}-removed@example.test`;
+        await addVerifiedMember(clientId, archivedMember);
+        await archive(clientId);
+        await addVerifiedUser(removed);
+        const ip = createIp();
+        await signInWithMagicLink(ip);
+
+        const locations: (string | null)[] = [];
+        for (const email of [env.ADMIN_EMAIL, archivedMember, removed]) {
+          const response = await signInWithGoogle(
+            { email, isEmailVerified: true },
+            ip,
+          );
+          locations.push(response.headers.get("location"));
+        }
+
+        expect(locations).toEqual([
+          NO_ACCESS.notInvited,
+          NO_ACCESS.archived,
+          NO_ACCESS.notInvited,
+        ]);
+        expect(await readGoogleAccounts(env.ADMIN_EMAIL)).toEqual([]);
+        expect(await readGoogleAccounts(archivedMember)).toEqual([]);
+        expect(await readGoogleAccounts(removed)).toEqual([]);
+      });
+
+      it("answers the 11th sign-in or callback request from one IP within 60 s with 429", async () => {
+        const ip = createIp();
+        const signIns: number[] = [];
+        const callbacks: number[] = [];
+        for (let count = 0; count <= SOCIAL_LIMIT; count += 1) {
+          const start = await portal.handler(
+            apiRequest("/sign-in/social", "", ip, {
+              provider: "google",
+              callbackURL: "/",
+            }),
+          );
+          signIns.push(start.status);
+          const callback = await portal.handler(
+            new Request(`${baseUrl}/api/auth/callback/google?code=x&state=y`, {
+              headers: { "x-forwarded-for": ip },
+            }),
+          );
+          callbacks.push(callback.status);
+        }
+
+        expect(signIns.slice(0, SOCIAL_LIMIT)).not.toContain(429);
+        expect(signIns.at(-1)).toBe(429);
+        expect(callbacks.slice(0, SOCIAL_LIMIT)).not.toContain(429);
+        expect(callbacks.at(-1)).toBe(429);
+      });
+
+      it("links to the account a magic link created for the same email", async () => {
+        const clientId = await addClient("Acme");
+        const email = `${prefix}-leo@example.test`;
+        await addInvitation(clientId, { email, expiresAt: WEEK_AFTER });
+        const ip = createIp();
+        await requestLink(email, ip);
+        await followLastLink(ip);
+
+        const response = await signInWithGoogle(
+          { email, isEmailVerified: true },
+          ip,
+        );
+
+        expect(response.headers.get("location")).toBe("/");
+        expect(await readUserIds(email)).toHaveLength(1);
+        expect(await readSessionsOf(email)).toEqual(
+          expect.arrayContaining([
+            { signInMethod: "magic-link" },
+            { signInMethod: "google" },
+          ]),
+        );
+      });
+    });
+
+    // Better Auth's own Google provider, with only Google's token endpoint
+    // faked (the network boundary). Its ID token is read unverified there, as
+    // Better Auth does on the redirect flow.
+    describe("built-in Google", () => {
+      const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
+      const builtIn = createAuth({
+        ...authDeps,
+        trustForwardedFor: true,
+        now: () => now,
+        providers: {
+          google: {
+            clientId: "client-id.apps.googleusercontent.com",
+            clientSecret: "GOCSPX-test",
+            signInMethod: "google",
+          },
+        },
+      });
+
+      function encodePart(value: object): string {
+        return Buffer.from(JSON.stringify(value)).toString("base64url");
+      }
+
+      function fakeGoogleToken(claims: {
+        email: string;
+        email_verified: boolean;
+      }): void {
+        const idToken = [
+          encodePart({ alg: "RS256", typ: "JWT" }),
+          encodePart({ sub: `sub-${claims.email}`, name: "Leo", ...claims }),
+          "signature",
+        ].join(".");
+        const realFetch = globalThis.fetch;
+        vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+          const url = input instanceof Request ? input.url : String(input);
+          if (!url.startsWith(GOOGLE_TOKEN_URL)) return realFetch(input, init);
+
+          return Promise.resolve(
+            Response.json({
+              access_token: "google-access-token",
+              id_token: idToken,
+              token_type: "Bearer",
+              expires_in: 3600,
+            }),
+          );
+        });
+      }
+
+      async function signInWithBuiltInGoogle(ip: string): Promise<Response> {
+        const start = await builtIn.handler(
+          apiRequest("/sign-in/social", "", ip, {
+            provider: "google",
+            callbackURL: "/",
+          }),
+        );
+        const { url } = (await start.json()) as { url: string };
+        const authorization = new URL(url);
+        expect(authorization.origin).toBe("https://accounts.google.com");
+        const query = new URLSearchParams({
+          code: "google-code",
+          state: authorization.searchParams.get("state") ?? "",
+        });
+        return builtIn.handler(
+          new Request(`${baseUrl}/api/auth/callback/google?${query}`, {
+            headers: {
+              cookie: getCookieHeader(start),
+              "x-forwarded-for": ip,
+            },
+          }),
+        );
+      }
+
+      it("gives an invitee Google verified a google session", async () => {
+        const clientId = await addClient("Acme");
+        const email = `${prefix}-leo@example.test`;
+        await addInvitation(clientId, { email, expiresAt: WEEK_AFTER });
+        fakeGoogleToken({ email, email_verified: true });
+
+        const response = await signInWithBuiltInGoogle(createIp());
+
+        expect(response.headers.get("location")).toBe("/");
+        expect(await readSessionsOf(email)).toEqual([
+          { signInMethod: "google" },
+        ]);
+      });
+
+      it("stores no Google tokens, on the first sign-in or a repeat one", async () => {
+        const clientId = await addClient("Acme");
+        const email = `${prefix}-leo@example.test`;
+        await addInvitation(clientId, { email, expiresAt: WEEK_AFTER });
+        fakeGoogleToken({ email, email_verified: true });
+        const ip = createIp();
+
+        await signInWithBuiltInGoogle(ip);
+        const afterFirst = await readGoogleTokens(email);
+        await signInWithBuiltInGoogle(ip);
+        const afterRepeat = await readGoogleTokens(email);
+
+        const noTokens = {
+          accessToken: null,
+          refreshToken: null,
+          idToken: null,
+          accessTokenExpiresAt: null,
+          refreshTokenExpiresAt: null,
+        };
+        expect(afterFirst).toEqual([noTokens]);
+        expect(afterRepeat).toEqual([noTokens]);
+        expect(await readSessionsOf(email)).toHaveLength(2);
+      });
+
+      it("refuses an email Google hasn't verified as not-invited, creating nothing", async () => {
+        silenceWarnings();
+        const clientId = await addClient("Acme");
+        const email = `${prefix}-leo@example.test`;
+        await addInvitation(clientId, { email, expiresAt: WEEK_AFTER });
+        fakeGoogleToken({ email, email_verified: false });
+
+        const response = await signInWithBuiltInGoogle(createIp());
+
+        expect(response.headers.get("location")).toBe(NO_ACCESS.notInvited);
+        expect(await readUserIds(email)).toEqual([]);
+      });
+    });
+
+    describe("magic link", () => {
+      it("is sent to a member of an active or an archived Client", async () => {
+        const active = await addClient("Acme");
+        const archived = await addClient("Gone");
+        const activeEmail = `${prefix}-maya@example.test`;
+        const archivedEmail = `${prefix}-ana@example.test`;
+        await addVerifiedMember(active, activeEmail);
+        await addVerifiedMember(archived, archivedEmail);
+        await archive(archived);
+
+        await requestLink(activeEmail, createIp());
+        await requestLink(archivedEmail, createIp());
+
+        expect(mailer.sent.map((message) => message.to)).toEqual([
+          activeEmail,
+          archivedEmail,
+        ]);
+        expect(mailer.sent[0].subject).toBe(
+          "Your Neves Labs portal sign-in link",
+        );
+      });
+
+      it("is sent to a live invitee, who gets an account on following it", async () => {
+        const clientId = await addClient("Acme");
+        const email = `${prefix}-leo@example.test`;
+        await addInvitation(clientId, { email, expiresAt: WEEK_AFTER });
+        const ip = createIp();
+
+        await requestLink(email.toUpperCase(), ip);
+        const signIn = await followLastLink(ip);
+
+        expect(mailer.sent.map((message) => message.to)).toEqual([email]);
+        expect((await accessOf(signIn)).kind).toBe("invitee");
+        const [account] = await db.withSystem((tx) =>
+          tx
+            .select({ emailVerified: user.emailVerified })
+            .from(user)
+            .where(eq(user.email, email)),
+        );
+        expect(account.emailVerified).toBe(true);
+      });
+
+      it("ignores a name sent with the request: a new invitee's name is empty", async () => {
+        const clientId = await addClient("Acme");
+        const email = `${prefix}-leo@example.test`;
+        await addInvitation(clientId, { email, expiresAt: WEEK_AFTER });
+        const ip = createIp();
+
+        await requestLink(email, ip, "Spoofed Name");
+        await followLastLink(ip);
+
+        expect(await readUserName(email)).toBe("");
+      });
+
+      it("sends nothing to an uninvited, removed or expired-invitee email, with the same response", async () => {
+        const clientId = await addClient("Acme");
+        const removed = `${prefix}-removed@example.test`;
+        const expired = `${prefix}-expired@example.test`;
+        await addUser("-removed@example.test");
+        await addInvitation(clientId, {
+          email: expired,
+          expiresAt: new Date(NOW.getTime() - MINUTE_MS),
+        });
+        const member = `${prefix}-maya@example.test`;
+        await addVerifiedMember(clientId, member);
+        const baseline = await requestLink(member, createIp());
+        mailer.sent.length = 0;
+
+        const responses = [];
+        for (const email of [`${prefix}-eve@example.test`, removed, expired]) {
+          responses.push(await requestLink(email, createIp()));
+        }
+
+        expect(mailer.sent).toEqual([]);
+        const expected = {
+          status: baseline.status,
+          body: await baseline.json(),
+        };
+        for (const response of responses) {
+          expect({
+            status: response.status,
+            body: await response.json(),
+          }).toEqual(expected);
+        }
+      });
+
+      it("skips the 11th link to one address within an hour", async () => {
+        silenceWarnings();
+        const clientId = await addClient("Acme");
+        const email = `${prefix}-maya@example.test`;
+        await addVerifiedMember(clientId, email);
+
+        for (let count = 0; count <= MAGIC_LINK_HOURLY_CAP; count += 1) {
+          await requestLink(email, createIp());
+        }
+
+        expect(mailer.sent).toHaveLength(MAGIC_LINK_HOURLY_CAP);
+      });
+
+      it("refuses a passkey registration from a Client User's magic-link session", async () => {
+        silenceWarnings();
+        const clientId = await addClient("Acme");
+        const email = `${prefix}-leo@example.test`;
+        await addInvitation(clientId, { email, expiresAt: WEEK_AFTER });
+        const ip = createIp();
+        await requestLink(email, ip);
+        const cookie = getCookieHeader(await followLastLink(ip));
+
+        const registration = await registerPasskey(
+          createAuthenticator(),
+          cookie,
+          ip,
+        );
+
+        expect(registration.response.status).toBe(403);
+        const passkeys = await db.withSystem((tx) =>
+          tx
+            .select({ id: passkey.id })
+            .from(passkey)
+            .innerJoin(user, eq(user.id, passkey.userId))
+            .where(eq(user.email, email)),
+        );
+        expect(passkeys).toEqual([]);
+      });
+
+      it("refuses an archived member following the link, with the archived reason", async () => {
+        silenceWarnings();
+        const clientId = await addClient("Acme");
+        const email = `${prefix}-maya@example.test`;
+        await addVerifiedMember(clientId, email);
+        await archive(clientId);
+        const ip = createIp();
+        await requestLink(email, ip);
+
+        const response = await followLastLink(ip);
+
+        expect(response.status).toBe(302);
+        expect(response.headers.get("location")).toBe(NO_ACCESS.archived);
+        expect(await readSessionsOf(email)).toEqual([]);
+      });
+
+      it("creates no account when the Invitation expired before the link was followed", async () => {
+        silenceWarnings();
+        const clientId = await addClient("Acme");
+        const email = `${prefix}-leo@example.test`;
+        await addInvitation(clientId, { email, expiresAt: DAY_AFTER });
+        const ip = createIp();
+        await requestLink(email, ip);
+
+        now = new Date(DAY_AFTER.getTime() + MINUTE_MS);
+        const response = await followLastLink(ip);
+
+        expect(response.headers.get("location")).toBe(NO_ACCESS.notInvited);
+        expect(await readUserIds(email)).toEqual([]);
+      });
+
+      it("keeps a same-origin path as the callback and turns anything else into /", async () => {
+        const kept = ["/", "/invitations/0199b0c4-0000-7000-8000-000000000000"];
+        const replaced = [
+          `${baseUrl}/team`,
+          "//evil.example/x",
+          "/\\evil.example",
+          "team",
+          "/%0d%0aevil",
+          "/%2F%2Fevil.example",
+          "/%E0%A4%A",
+        ];
+
+        const callbacks: string[] = [];
+        for (const callbackURL of [...kept, ...replaced]) {
+          mailer.sent.length = 0;
+          await portal.handler(
+            new Request(`${baseUrl}/api/auth/sign-in/magic-link`, {
+              method: "POST",
+              headers: {
+                "content-type": "application/json",
+                origin: baseUrl,
+                "x-forwarded-for": createIp(),
+              },
+              body: JSON.stringify({
+                email: env.ADMIN_EMAIL,
+                callbackURL,
+                errorCallbackURL: "https://evil.example",
+              }),
+            }),
+          );
+          await settleBackgroundTasks();
+          // Better Auth refuses some outright; any link sent must be safe.
+          const message = mailer.sent.at(-1);
+          if (message) {
+            const link = new URL(getLinkFromLastMessage());
+            callbacks.push(link.searchParams.get("callbackURL") ?? "");
+            expect(link.searchParams.get("errorCallbackURL")).toBe("/sign-in");
+          } else {
+            callbacks.push("(none sent)");
+          }
+        }
+
+        expect(callbacks.slice(0, kept.length)).toEqual(kept);
+        for (const callback of callbacks.slice(kept.length)) {
+          expect(["/", "(none sent)"]).toContain(callback);
+        }
+      });
+    });
+
+    describe("HTTP lockdown", () => {
+      it("answers 404 on every organization endpoint, however spelled", async () => {
+        const ip = createIp();
+        const cookie = await signInWithMagicLink(ip);
+        const paths = [
+          "/organization/accept-invitation",
+          "/organization/invite-member",
+          "/organization/update-member-role",
+          "/organization/remove-member",
+          "/organization/leave",
+          "/organization/set-active",
+          "/organization/cancel-invitation",
+          "/organization/list-members",
+          "/organization/get-full-organization",
+          "/organization/create",
+          "/organization/leave/",
+          "/Organization/leave",
+          "//organization/leave",
+          "/%6Frganization/leave",
+        ];
+
+        const statuses: number[] = [];
+        for (const path of paths) {
+          const response = await portal.handler(
+            apiRequest(path, cookie, ip, { organizationId: randomUUID() }),
+          );
+          statuses.push(response.status);
+        }
+
+        expect(statuses).toEqual(paths.map(() => 404));
+      });
+
+      it("limits an Admin magic-link session to its allowlist, and it still registers a passkey", async () => {
+        silenceWarnings();
+        const ip = createIp();
+        const cookie = await signInWithMagicLink(ip);
+        const outside = [
+          apiRequest("/sign-in/magic-link", cookie, ip, {
+            email: env.ADMIN_EMAIL,
+          }),
+          apiRequest("/send-verification-email", cookie, ip, {
+            email: env.ADMIN_EMAIL,
+          }),
+          apiRequest("/sign-up/email", cookie, ip, {
+            email: env.ADMIN_EMAIL,
+            password: "correct-horse-battery",
+            name: "Admin",
+          }),
+          apiRequest("/request-password-reset", cookie, ip, {
+            email: env.ADMIN_EMAIL,
+          }),
+        ];
+
+        const statuses: number[] = [];
+        for (const request of outside) {
+          statuses.push((await auth.handler(request)).status);
+        }
+        const getSession = await auth.handler(
+          apiRequest("/get-session", cookie, ip),
+        );
+        const registration = await registerPasskey(
+          createAuthenticator(),
+          cookie,
+          ip,
+        );
+
+        expect(statuses).toEqual(outside.map(() => 403));
+        expect(getSession.status).toBe(200);
+        expect(registration.response.status).toBe(200);
+      });
+    });
+
+    // Joining runs from the /invitations/:id and / loaders, with the
+    // signed-in browser's request.
+    describe("joinInvitation", () => {
+      const LIVE = { expiresAt: WEEK_AFTER };
+
+      // An invitee's browser after following their emailed magic link.
+      async function signInByLink(email: string): Promise<Request> {
+        const ip = createIp();
+        await requestLink(email, ip);
+        return pageRequest(getCookieHeader(await followLastLink(ip)));
+      }
+
+      async function readMembers(email: string) {
+        return db.withSystem((tx) =>
+          tx
+            .select({ clientId: member.organizationId, role: member.role })
+            .from(member)
+            .innerJoin(user, eq(user.id, member.userId))
+            .where(eq(user.email, email)),
+        );
+      }
+
+      async function readStatus(invitationId: string): Promise<string> {
+        const [row] = await db.withSystem((tx) =>
+          tx
+            .select({ status: invitation.status })
             .from(invitation)
-            .where(eq(invitation.organizationId, id)),
-        )
-      ).map((row) => row.email);
-      expect(emails).toEqual(["leo@example.test"]);
+            .where(eq(invitation.id, invitationId)),
+        );
+        return row.status;
+      }
+
+      it("joins the linked Invitation's Client with its role and uses it up", async () => {
+        const clientId = await addClient("Acme");
+        const email = `${prefix}-leo@example.test`;
+        const invitationId = await addInvitation(clientId, {
+          ...LIVE,
+          email,
+          role: "member",
+        });
+        const request = await signInByLink(email);
+
+        const result = await portal.joinInvitation(request, invitationId);
+
+        expect(result).toEqual({
+          value: { clientId, clientName: `${prefix} Acme` },
+          error: null,
+          status: 201,
+        });
+        expect(await readMembers(email)).toEqual([
+          { clientId, role: "member" },
+        ]);
+        expect(await readStatus(invitationId)).toBe("accepted");
+        const { access } = await portal.getAccess(request);
+        expect(access).toMatchObject({ kind: "client", clientId });
+      });
+
+      it("joins the newest live Invitation when no id is given", async () => {
+        const older = await addClient("Older");
+        const newer = await addClient("Newer");
+        const email = `${prefix}-leo@example.test`;
+        await addInvitation(older, {
+          ...LIVE,
+          email,
+          createdAt: new Date(NOW.getTime() - DAY_MS),
+        });
+        await addInvitation(newer, { ...LIVE, email, createdAt: NOW });
+        const request = await signInByLink(email);
+
+        const result = await portal.joinInvitation(request, null);
+
+        expect(result.value).toEqual({
+          clientId: newer,
+          clientName: `${prefix} Newer`,
+        });
+        expect(await readMembers(email)).toEqual([
+          { clientId: newer, role: "owner" },
+        ]);
+      });
+
+      it("returns the same Client when its member re-opens their accepted Invitation", async () => {
+        const clientId = await addClient("Acme");
+        const email = `${prefix}-leo@example.test`;
+        const invitationId = await addInvitation(clientId, { ...LIVE, email });
+        const request = await signInByLink(email);
+        await portal.joinInvitation(request, invitationId);
+
+        const again = await portal.joinInvitation(request, invitationId);
+
+        expect(again).toEqual({
+          value: { clientId, clientName: `${prefix} Acme` },
+          error: null,
+          status: 200,
+        });
+        expect(await readMembers(email)).toHaveLength(1);
+      });
+
+      it("is not-found for an unknown, malformed, expired, canceled or someone else's accepted Invitation", async () => {
+        silenceWarnings();
+        const clientId = await addClient("Acme");
+        const email = `${prefix}-leo@example.test`;
+        // Keeps the session an invitee's.
+        await addInvitation(clientId, { ...LIVE, email });
+        const expired = await addInvitation(clientId, {
+          email,
+          expiresAt: new Date(NOW.getTime() - MINUTE_MS),
+        });
+        const canceled = await addInvitation(clientId, {
+          ...LIVE,
+          email,
+          status: "canceled",
+        });
+        const usedByOther = await addInvitation(clientId, {
+          ...LIVE,
+          email: `${prefix}-ana@example.test`,
+          status: "accepted",
+        });
+        const request = await signInByLink(email);
+
+        const ids = [
+          randomUUID(),
+          "not-a-uuid",
+          "'; drop table member; --",
+          expired,
+          canceled,
+          usedByOther,
+        ];
+        const errors: (string | null)[] = [];
+        for (const id of ids) {
+          const result = await portal.joinInvitation(request, id);
+          errors.push(result.error);
+        }
+
+        expect(errors).toEqual(ids.map(() => "not-found"));
+        expect(await readMembers(email)).toEqual([]);
+      });
+
+      it("is not-found without a session, or with no live Invitation for the email", async () => {
+        silenceWarnings();
+        const clientId = await addClient("Acme");
+        const email = `${prefix}-leo@example.test`;
+        const invitationId = await addInvitation(clientId, {
+          email,
+          expiresAt: DAY_AFTER,
+        });
+        const request = await signInByLink(email);
+        now = new Date(DAY_AFTER.getTime() + MINUTE_MS);
+
+        const anonymous = await portal.joinInvitation(pageRequest(null), null);
+        const lapsed = await portal.joinInvitation(request, null);
+        const lapsedById = await portal.joinInvitation(request, invitationId);
+
+        expect([anonymous, lapsed, lapsedById]).toEqual(
+          [1, 2, 3].map(() => ({
+            value: null,
+            error: "not-found",
+            status: 404,
+          })),
+        );
+      });
+
+      it("is email-mismatch for a live Invitation to another email, and joins nothing", async () => {
+        silenceWarnings();
+        const clientId = await addClient("Acme");
+        const email = `${prefix}-leo@example.test`;
+        await addInvitation(clientId, { ...LIVE, email });
+        const othersId = await addInvitation(clientId, {
+          ...LIVE,
+          email: `${prefix}-ana@example.test`,
+        });
+        const request = await signInByLink(email);
+
+        const result = await portal.joinInvitation(request, othersId);
+
+        expect(result).toEqual({
+          value: null,
+          error: "email-mismatch",
+          status: 403,
+        });
+        expect(await readStatus(othersId)).toBe("pending");
+        expect(await readMembers(email)).toEqual([]);
+      });
+
+      it("is ineligible for a second Client's Invitation once the email joined one", async () => {
+        silenceWarnings();
+        const first = await addClient("First");
+        const second = await addClient("Second");
+        const email = `${prefix}-leo@example.test`;
+        const firstId = await addInvitation(first, { ...LIVE, email });
+        const secondId = await addInvitation(second, { ...LIVE, email });
+        const request = await signInByLink(email);
+        await portal.joinInvitation(request, firstId);
+
+        const result = await portal.joinInvitation(request, secondId);
+
+        expect(result).toEqual({
+          value: null,
+          error: "ineligible",
+          status: 409,
+        });
+        expect(await readMembers(email)).toEqual([
+          { clientId: first, role: "owner" },
+        ]);
+        expect(await readStatus(secondId)).toBe("pending");
+      });
+
+      it("is archived for a live Invitation of an archived Client", async () => {
+        silenceWarnings();
+        const clientId = await addClient("Acme");
+        const email = `${prefix}-leo@example.test`;
+        const invitationId = await addInvitation(clientId, { ...LIVE, email });
+        const request = await signInByLink(email);
+        await archive(clientId);
+
+        const result = await portal.joinInvitation(request, invitationId);
+
+        expect(result).toEqual({
+          value: null,
+          error: "archived",
+          status: 403,
+        });
+        expect(await readMembers(email)).toEqual([]);
+      });
+
+      it("writes one member row for racing joins of the same Invitation", async () => {
+        const clientId = await addClient("Acme");
+        const email = `${prefix}-leo@example.test`;
+        const invitationId = await addInvitation(clientId, { ...LIVE, email });
+        const request = await signInByLink(email);
+
+        const results = await Promise.all([
+          portal.joinInvitation(request, invitationId),
+          portal.joinInvitation(request, invitationId),
+          portal.joinInvitation(request, null),
+        ]);
+
+        expect(results.map((result) => result.value?.clientId)).toEqual([
+          clientId,
+          clientId,
+          clientId,
+        ]);
+        expect(results.map((result) => result.status).sort()).toEqual([
+          200, 200, 201,
+        ]);
+        expect(await readMembers(email)).toHaveLength(1);
+      });
+
+      it("returns the joiner's Client when no id is given and they already joined another", async () => {
+        const older = await addClient("Older");
+        const newer = await addClient("Newer");
+        const email = `${prefix}-leo@example.test`;
+        await addInvitation(older, {
+          ...LIVE,
+          email,
+          createdAt: new Date(NOW.getTime() - DAY_MS),
+        });
+        const newerId = await addInvitation(newer, { ...LIVE, email });
+        const request = await signInByLink(email);
+        // As a racing tab would: it joined the newer one first.
+        await portal.joinInvitation(request, newerId);
+
+        const result = await portal.joinInvitation(request, null);
+
+        expect(result).toEqual({
+          value: { clientId: newer, clientName: `${prefix} Newer` },
+          error: null,
+          status: 200,
+        });
+        expect(await readMembers(email)).toHaveLength(1);
+      });
+
+      // /organization/* is closed over HTTP, so this calls Better Auth's
+      // native acceptInvitation directly, as the invitee's session.
+      it("registers the eligibility check as Better Auth's beforeAcceptInvitation hook", async () => {
+        silenceWarnings();
+        const first = await addClient("First");
+        const second = await addClient("Second");
+        const email = `${prefix}-leo@example.test`;
+        const firstId = await addInvitation(first, { ...LIVE, email });
+        const secondId = await addInvitation(second, { ...LIVE, email });
+        const request = await signInByLink(email);
+        await portal.joinInvitation(request, firstId);
+        const native = createBetterAuth(
+          { ...authDeps, trustForwardedFor: true },
+          env.ADMIN_EMAIL,
+          {},
+        );
+
+        const refusal = native.api.acceptInvitation({
+          headers: request.headers,
+          body: { invitationId: secondId },
+        });
+
+        await expect(refusal).rejects.toBeInstanceOf(APIError);
+        await expect(refusal).rejects.toMatchObject({
+          body: { message: "This email can't be invited." },
+        });
+        expect(await readMembers(email)).toEqual([
+          { clientId: first, role: "owner" },
+        ]);
+        expect(await readStatus(secondId)).toBe("pending");
+      });
+
+      it("joins one Client only when two Clients' Invitations race", async () => {
+        silenceWarnings();
+        const first = await addClient("First");
+        const second = await addClient("Second");
+        const email = `${prefix}-leo@example.test`;
+        const firstId = await addInvitation(first, { ...LIVE, email });
+        const secondId = await addInvitation(second, { ...LIVE, email });
+        const request = await signInByLink(email);
+
+        const results = await Promise.all([
+          portal.joinInvitation(request, firstId),
+          portal.joinInvitation(request, secondId),
+        ]);
+
+        expect(results.map((result) => result.error).sort()).toEqual([
+          "ineligible",
+          null,
+        ]);
+        expect(await readMembers(email)).toHaveLength(1);
+      });
+
+      it("joins after a Google sign-in that returns to the Invitation page", async () => {
+        const clientId = await addClient("Acme");
+        const email = `${prefix}-leo@example.test`;
+        const invitationId = await addInvitation(clientId, { ...LIVE, email });
+        const invitationPath = `/invitations/${invitationId}`;
+
+        const callback = await signInWithGoogle(
+          { email, isEmailVerified: true },
+          createIp(),
+          portal,
+          invitationPath,
+        );
+        const location = callback.headers.get("location") ?? "";
+        const pageId = new URL(location, baseUrl).pathname.split("/").at(-1);
+        // What the /invitations/:id loader then runs.
+        const result = await portal.joinInvitation(
+          pageRequest(getCookieHeader(callback)),
+          pageId ?? null,
+        );
+
+        expect(new URL(location, baseUrl).pathname).toBe(invitationPath);
+        expect(result.value?.clientId).toBe(clientId);
+        expect(await readMembers(email)).toEqual([{ clientId, role: "owner" }]);
+      });
+    });
+
+    describe("Invitation page", () => {
+      const LIVE = { expiresAt: WEEK_AFTER };
+
+      it("reads a live Invitation's email and Client name, and nothing for a dead one", async () => {
+        const clientId = await addClient("Acme");
+        const email = `${prefix}-leo@example.test`;
+        const live = await addInvitation(clientId, { ...LIVE, email });
+        const canceled = await addInvitation(clientId, {
+          ...LIVE,
+          email,
+          status: "canceled",
+        });
+        const expired = await addInvitation(clientId, {
+          email,
+          expiresAt: new Date(NOW.getTime() - MINUTE_MS),
+        });
+
+        const found = await portal.getLiveInvitation(live);
+        const dead = await Promise.all(
+          [canceled, expired, randomUUID(), "nope"].map((id) =>
+            portal.getLiveInvitation(id),
+          ),
+        );
+
+        expect(found).toEqual({ email, clientName: `${prefix} Acme` });
+        expect(dead).toEqual([null, null, null, null]);
+      });
+
+      it("emails the invited address a link back to the Invitation page", async () => {
+        const clientId = await addClient("Acme");
+        const email = `${prefix}-leo@example.test`;
+        const invitationId = await addInvitation(clientId, { ...LIVE, email });
+        const ip = createIp();
+        // The page's own form POST: an empty urlencoded body, whose length
+        // header must not travel with the JSON request.
+        const page = new Request(`${baseUrl}/invitations/${invitationId}`, {
+          method: "POST",
+          headers: {
+            "x-forwarded-for": ip,
+            "content-type": "application/x-www-form-urlencoded",
+            "content-length": "0",
+          },
+          body: "",
+        });
+
+        const result = await portal.requestInvitationLink(page, invitationId);
+        await settleBackgroundTasks();
+        const verify = await followLastLink(ip);
+
+        expect(result).toEqual({ value: null, error: null, status: 200 });
+        expect(mailer.sent.map((message) => message.to)).toEqual([email]);
+        expect(verify.headers.get("location")).toBe(
+          `${baseUrl}/invitations/${invitationId}`,
+        );
+      });
+
+      it("refuses a dead Invitation's link, and caps requests per IP", async () => {
+        silenceWarnings();
+        const clientId = await addClient("Acme");
+        const email = `${prefix}-leo@example.test`;
+        const invitationId = await addInvitation(clientId, { ...LIVE, email });
+        const ip = createIp();
+        const page = new Request(`${baseUrl}/invitations/${invitationId}`, {
+          method: "POST",
+          headers: { "x-forwarded-for": ip },
+        });
+
+        const dead = await portal.requestInvitationLink(page, randomUUID());
+        const statuses: (string | null)[] = [];
+        for (let attempt = 0; attempt <= MAGIC_LINK_LIMIT; attempt += 1) {
+          const result = await portal.requestInvitationLink(page, invitationId);
+          statuses.push(result.error);
+        }
+
+        expect(dead).toEqual({ value: null, error: "not-found", status: 404 });
+        expect(statuses).toEqual([
+          ...Array.from({ length: MAGIC_LINK_LIMIT }, () => null),
+          "rate-limited",
+        ]);
+      });
+    });
+
+    describe("archive", () => {
+      // A member's session, signed in by magic link as a browser would.
+      async function signInByLink(email: string): Promise<string> {
+        const ip = createIp();
+        await requestLink(email, ip);
+        const response = await followLastLink(ip);
+        expect(response.status).toBe(302);
+        return getCookieHeader(response);
+      }
+
+      async function accessFor(cookie: string): Promise<Access> {
+        const { access } = await portal.getAccess(pageRequest(cookie));
+        return access;
+      }
+
+      async function readStatus(invitationId: string): Promise<string> {
+        const [row] = await db.withSystem((tx) =>
+          tx
+            .select({ status: invitation.status })
+            .from(invitation)
+            .where(eq(invitation.id, invitationId)),
+        );
+        return row.status;
+      }
+
+      async function readArchivedAt(clientId: string): Promise<Date | null> {
+        const [row] = await db.withSystem((tx) =>
+          tx
+            .select({ archivedAt: clients.archivedAt })
+            .from(clients)
+            .where(eq(clients.id, clientId)),
+        );
+        return row.archivedAt;
+      }
+
+      async function listMyArchived() {
+        const all = await portal.listArchivedClients();
+        return all.filter((client) => client.name.startsWith(prefix));
+      }
+
+      describe("archiveClient", () => {
+        it("archives the Client: it leaves listClients for listArchivedClients", async () => {
+          const clientId = await addClient("Acme");
+
+          const result = await portal.archiveClient(clientId);
+
+          expect(result).toEqual({ value: null, error: null, status: 200 });
+          expect(await readArchivedAt(clientId)).toEqual(NOW);
+          const active = await portal.listClients();
+          expect(active.map((client) => client.id)).not.toContain(clientId);
+          expect(await listMyArchived()).toEqual([
+            { id: clientId, name: `${prefix} Acme`, archivedAt: NOW },
+          ]);
+        });
+
+        it("is idempotent: archiving again succeeds and keeps the first date", async () => {
+          const clientId = await addClient("Acme");
+          await portal.archiveClient(clientId);
+          now = DAY_AFTER;
+
+          const result = await portal.archiveClient(clientId);
+
+          expect(result).toEqual({ value: null, error: null, status: 200 });
+          expect(await readArchivedAt(clientId)).toEqual(NOW);
+        });
+
+        it("archiving again still signs out and cancels what slipped in since", async () => {
+          const clientId = await addClient("Acme");
+          const email = `${prefix}-maya@example.test`;
+          await addVerifiedMember(clientId, email);
+          await portal.archiveClient(clientId);
+          // As a sign-in and a resend racing the first archive would leave.
+          const [{ userId }] = await db.withSystem((tx) =>
+            tx
+              .select({ userId: user.id })
+              .from(user)
+              .where(eq(user.email, email)),
+          );
+          await db.withSystem((tx) =>
+            tx.insert(session).values({
+              token: randomUUID(),
+              userId,
+              signInMethod: "magic-link",
+              expiresAt: WEEK_AFTER,
+              updatedAt: NOW,
+            }),
+          );
+          const slipped = await addInvitation(clientId, {
+            email: `${prefix}-leo@example.test`,
+            expiresAt: WEEK_AFTER,
+          });
+
+          await portal.archiveClient(clientId);
+
+          expect(await readSessionsOf(email)).toEqual([]);
+          expect(await readStatus(slipped)).toBe("canceled");
+        });
+
+        it("is not-found for an unknown or malformed id", async () => {
+          silenceWarnings();
+          const notFound = { value: null, error: "not-found", status: 404 };
+
+          expect(await portal.archiveClient(randomUUID())).toEqual(notFound);
+          expect(await portal.archiveClient("not-a-uuid")).toEqual(notFound);
+        });
+
+        it("signs every member out at once, and leaves other Clients' sessions alone", async () => {
+          const clientId = await addClient("Acme");
+          const otherId = await addClient("Globex");
+          const ownerEmail = `${prefix}-maya@example.test`;
+          const memberEmail = `${prefix}-leo@example.test`;
+          const otherEmail = `${prefix}-ana@example.test`;
+          await addVerifiedMember(clientId, ownerEmail, "owner");
+          await addVerifiedMember(clientId, memberEmail, "member");
+          await addVerifiedMember(otherId, otherEmail, "owner");
+          const ownerCookie = await signInByLink(ownerEmail);
+          const memberCookie = await signInByLink(memberEmail);
+          const otherCookie = await signInByLink(otherEmail);
+
+          await portal.archiveClient(clientId);
+
+          expect(await accessFor(ownerCookie)).toEqual({ kind: "anonymous" });
+          expect(await accessFor(memberCookie)).toEqual({ kind: "anonymous" });
+          expect(await readSessionsOf(ownerEmail)).toEqual([]);
+          expect(await readSessionsOf(memberEmail)).toEqual([]);
+          expect((await accessFor(otherCookie)).kind).toBe("client");
+        });
+
+        it("cancels the live pending Invitations and deletes nothing", async () => {
+          const clientId = await addClient("Acme");
+          const ownerEmail = `${prefix}-maya@example.test`;
+          await addVerifiedMember(clientId, ownerEmail, "owner");
+          const live = await addInvitation(clientId, {
+            email: `${prefix}-leo@example.test`,
+            role: "member",
+            expiresAt: WEEK_AFTER,
+          });
+          const accepted = await addInvitation(clientId, {
+            email: `${prefix}-ana@example.test`,
+            status: "accepted",
+            expiresAt: WEEK_AFTER,
+          });
+
+          await portal.archiveClient(clientId);
+
+          expect(await readStatus(live)).toBe("canceled");
+          expect(await readStatus(accepted)).toBe("accepted");
+          expect(await portal.getLiveInvitation(live)).toBeNull();
+          const team = await portal.getTeam(clientId);
+          expect(team?.members.map((row) => row.email)).toEqual([ownerEmail]);
+          expect(team?.pendingInvitations).toEqual([]);
+          expect(await readUserIds(ownerEmail)).toHaveLength(1);
+        });
+
+        it("takes away an empty Client's Invite first Owner", async () => {
+          const clientId = await addClient("Acme");
+          expect((await portal.getTeam(clientId))?.canInviteFirstOwner).toBe(
+            true,
+          );
+
+          await portal.archiveClient(clientId);
+
+          const team = await portal.getTeam(clientId);
+          expect(team?.members).toEqual([]);
+          expect(team?.canInviteFirstOwner).toBe(false);
+        });
+
+        it("refuses the member's later Google sign-in with the archived reason", async () => {
+          silenceWarnings();
+          const clientId = await addClient("Acme");
+          const email = `${prefix}-maya@example.test`;
+          await addVerifiedMember(clientId, email);
+          await portal.archiveClient(clientId);
+
+          const response = await signInWithGoogle(
+            { email, isEmailVerified: true },
+            createIp(),
+          );
+
+          expect(response.status).toBe(302);
+          expect(response.headers.get("location")).toBe(NO_ACCESS.archived);
+          expect(await readSessionsOf(email)).toEqual([]);
+        });
+
+        it("still mails the member a magic link, which opens on the archived reason", async () => {
+          silenceWarnings();
+          const clientId = await addClient("Acme");
+          const email = `${prefix}-maya@example.test`;
+          await addVerifiedMember(clientId, email);
+          await portal.archiveClient(clientId);
+          const ip = createIp();
+
+          await requestLink(email, ip);
+          const response = await followLastLink(ip);
+
+          expect(mailer.sent.map((message) => message.to)).toEqual([email]);
+          expect(response.headers.get("location")).toBe(NO_ACCESS.archived);
+          expect(await readSessionsOf(email)).toEqual([]);
+        });
+      });
+
+      describe("unarchiveClient", () => {
+        it("lets the members sign in again, and the canceled Invitations stay canceled", async () => {
+          const clientId = await addClient("Acme");
+          const email = `${prefix}-maya@example.test`;
+          await addVerifiedMember(clientId, email);
+          const canceled = await addInvitation(clientId, {
+            email: `${prefix}-leo@example.test`,
+            role: "member",
+            expiresAt: WEEK_AFTER,
+          });
+          await portal.archiveClient(clientId);
+
+          const result = await portal.unarchiveClient(clientId);
+          const cookie = await signInByLink(email);
+
+          expect(result).toEqual({ value: null, error: null, status: 200 });
+          expect(await readArchivedAt(clientId)).toBeNull();
+          expect(await accessFor(cookie)).toMatchObject({
+            kind: "client",
+            clientId,
+          });
+          expect(await readStatus(canceled)).toBe("canceled");
+          expect(await listMyArchived()).toEqual([]);
+        });
+
+        it("is idempotent on an active Client", async () => {
+          const clientId = await addClient("Acme");
+
+          const result = await portal.unarchiveClient(clientId);
+
+          expect(result).toEqual({ value: null, error: null, status: 200 });
+          expect(await readArchivedAt(clientId)).toBeNull();
+        });
+
+        it("is not-found for an unknown or malformed id", async () => {
+          silenceWarnings();
+          const notFound = { value: null, error: "not-found", status: 404 };
+
+          expect(await portal.unarchiveClient(randomUUID())).toEqual(notFound);
+          expect(await portal.unarchiveClient("not-a-uuid")).toEqual(notFound);
+        });
+      });
+
+      describe("listArchivedClients", () => {
+        it("lists archived Clients only, by name case-insensitively", async () => {
+          const umbrella = await addClient("umbrella");
+          const initech = await addClient("Initech");
+          const banana = await addClient("Banana");
+          await addClient("Active");
+          await portal.archiveClient(umbrella);
+          now = DAY_AFTER;
+          await portal.archiveClient(initech);
+          await portal.archiveClient(banana);
+
+          expect(await listMyArchived()).toEqual([
+            { id: banana, name: `${prefix} Banana`, archivedAt: DAY_AFTER },
+            { id: initech, name: `${prefix} Initech`, archivedAt: DAY_AFTER },
+            { id: umbrella, name: `${prefix} umbrella`, archivedAt: NOW },
+          ]);
+        });
+      });
+
+      describe("while archived", () => {
+        it("refuses the Admin's first-Owner invite as archived", async () => {
+          silenceWarnings();
+          const clientId = await addClient("Acme");
+          await portal.archiveClient(clientId);
+
+          const result = await portal.inviteFirstOwner(
+            clientId,
+            `${prefix}-maya@example.test`,
+          );
+
+          expect(result).toEqual({
+            value: null,
+            error: "archived",
+            status: 403,
+          });
+          expect(mailer.sent).toEqual([]);
+        });
+
+        it("refuses the Admin's resend and revoke as archived", async () => {
+          silenceWarnings();
+          const clientId = await addClient("Acme");
+          const invitationId = await addInvitation(clientId, {
+            email: `${prefix}-leo@example.test`,
+            expiresAt: WEEK_AFTER,
+          });
+          await portal.archiveClient(clientId);
+          // As if a resend had renewed it after the archive.
+          await db.withSystem((tx) =>
+            tx
+              .update(invitation)
+              .set({ status: "pending" })
+              .where(eq(invitation.id, invitationId)),
+          );
+          const archived = { value: null, error: "archived", status: 403 };
+
+          expect(await portal.resendInvitation(clientId, invitationId)).toEqual(
+            archived,
+          );
+          expect(await portal.revokeInvitation(clientId, invitationId)).toEqual(
+            archived,
+          );
+          expect(mailer.sent).toEqual([]);
+        });
+      });
+    });
+  });
+
+  describe("roster", () => {
+    const ADMIN_ACTOR = { kind: "admin" } as const;
+    const RACE_HOLD_MS = 300;
+    const SESSION_TTL_MS = DAY_MS;
+    // Joined after addRoster's two.
+    const LATER = new Date(NOW.getTime() + 2 * MINUTE_MS);
+
+    function waitMs(ms: number): Promise<void> {
+      return new Promise((resolve) => setTimeout(resolve, ms));
+    }
+
+    // A Client User with a verified email, and their access as getAccess
+    // gives it.
+    async function addPerson(
+      clientId: string,
+      role: "owner" | "member",
+      label: string,
+      createdAt: Date = NOW,
+    ): Promise<ClientAccess> {
+      const email = `${prefix}-${label}-${randomUUID()}@example.test`;
+      const [row] = await db.withSystem((tx) =>
+        tx
+          .insert(user)
+          .values({ name: label, email, emailVerified: true })
+          .returning({ id: user.id }),
+      );
+      await db.withSystem((tx) =>
+        tx.insert(member).values({
+          organizationId: clientId,
+          userId: row.id,
+          role,
+          createdAt,
+        }),
+      );
+      const [client] = await db.withSystem((tx) =>
+        tx
+          .select({ name: organization.name })
+          .from(organization)
+          .where(eq(organization.id, clientId)),
+      );
+      return {
+        kind: "client",
+        userId: row.id,
+        email,
+        name: label,
+        clientId,
+        clientName: client.name,
+        role,
+      };
+    }
+
+    // A Client with an Owner and a Member, joined in that order.
+    async function addRoster(name = "Acme") {
+      const clientId = await addClient(name);
+      const owner = await addPerson(clientId, "owner", "maya", NOW);
+      const memberAccess = await addPerson(
+        clientId,
+        "member",
+        "leo",
+        new Date(NOW.getTime() + MINUTE_MS),
+      );
+      return { clientId, owner, member: memberAccess };
+    }
+
+    // Two open sessions, as two browsers signed in by magic link leave.
+    async function addSessions(userId: string): Promise<void> {
+      await db.withSystem((tx) =>
+        tx.insert(session).values(
+          [1, 2].map(() => ({
+            token: randomUUID(),
+            userId,
+            expiresAt: new Date(Date.now() + SESSION_TTL_MS),
+            signInMethod: "magic-link" as const,
+          })),
+        ),
+      );
+    }
+
+    async function countSessions(userId: string): Promise<number> {
+      const rows = await db.withSystem((tx) =>
+        tx
+          .select({ id: session.id })
+          .from(session)
+          .where(eq(session.userId, userId)),
+      );
+      return rows.length;
+    }
+
+    async function readRoles(clientId: string) {
+      const team = await clock.getTeam(clientId);
+      return (team?.members ?? []).map(({ name, role }) => ({ name, role }));
+    }
+
+    async function userExists(userId: string): Promise<boolean> {
+      const rows = await db.withSystem((tx) =>
+        tx.select({ id: user.id }).from(user).where(eq(user.id, userId)),
+      );
+      return rows.length === 1;
+    }
+
+    async function archive(clientId: string): Promise<void> {
+      await db.withSystem((tx) =>
+        tx
+          .update(clients)
+          .set({ archivedAt: NOW })
+          .where(eq(clients.id, clientId)),
+      );
+    }
+
+    function silenceWarnings(): void {
+      vi.spyOn(console, "warn").mockImplementation(() => {});
+    }
+
+    describe("changeRole", () => {
+      it("lets an Owner make a Member an Owner and back, revoking nothing", async () => {
+        const team = await addRoster();
+        await addSessions(team.member.userId);
+
+        const promoted = await clock.changeRole(
+          team.owner,
+          team.clientId,
+          team.member.userId,
+          "owner",
+        );
+        const rolesAfterPromote = await readRoles(team.clientId);
+        const demoted = await clock.changeRole(
+          team.owner,
+          team.clientId,
+          team.member.userId,
+          "member",
+        );
+
+        expect(promoted).toEqual({ value: null, error: null, status: 200 });
+        expect(rolesAfterPromote).toEqual([
+          { name: "maya", role: "owner" },
+          { name: "leo", role: "owner" },
+        ]);
+        expect(demoted).toEqual({ value: null, error: null, status: 200 });
+        expect(await readRoles(team.clientId)).toEqual([
+          { name: "maya", role: "owner" },
+          { name: "leo", role: "member" },
+        ]);
+        expect(await countSessions(team.member.userId)).toBe(2);
+      });
+
+      it("lets the Admin change anyone's role", async () => {
+        const team = await addRoster();
+
+        const result = await clock.changeRole(
+          ADMIN_ACTOR,
+          team.clientId,
+          team.member.userId,
+          "owner",
+        );
+
+        expect(result.error).toBeNull();
+        expect(await readRoles(team.clientId)).toEqual([
+          { name: "maya", role: "owner" },
+          { name: "leo", role: "owner" },
+        ]);
+      });
+
+      it("refuses the role a user already has as no-change", async () => {
+        silenceWarnings();
+        const team = await addRoster();
+
+        const result = await clock.changeRole(
+          team.owner,
+          team.clientId,
+          team.member.userId,
+          "member",
+        );
+
+        expect(result).toEqual({
+          value: null,
+          error: "no-change",
+          status: 409,
+        });
+      });
+
+      it("refuses an Owner's change to their own row as self", async () => {
+        silenceWarnings();
+        const team = await addRoster();
+        await addPerson(team.clientId, "owner", "ana", LATER);
+
+        const result = await clock.changeRole(
+          team.owner,
+          team.clientId,
+          team.owner.userId,
+          "member",
+        );
+
+        expect(result).toEqual({ value: null, error: "self", status: 422 });
+        expect((await readRoles(team.clientId))[0].role).toBe("owner");
+      });
+
+      it("refuses a Member, another Client's Owner and a demoted Owner as forbidden", async () => {
+        silenceWarnings();
+        const team = await addRoster();
+        const other = await addRoster("Globex");
+        const staleOwner = await addPerson(
+          team.clientId,
+          "member",
+          "ana",
+          LATER,
+        );
+
+        const results = await Promise.all([
+          clock.changeRole(
+            team.member,
+            team.clientId,
+            team.owner.userId,
+            "member",
+          ),
+          clock.changeRole(
+            other.owner,
+            team.clientId,
+            team.member.userId,
+            "owner",
+          ),
+          // Access is read per request: this one still says Owner.
+          clock.changeRole(
+            { ...staleOwner, role: "owner" },
+            team.clientId,
+            team.member.userId,
+            "owner",
+          ),
+        ]);
+
+        expect(results).toEqual(
+          Array.from({ length: 3 }, () => ({
+            value: null,
+            error: "forbidden",
+            status: 403,
+          })),
+        );
+        expect(await readRoles(team.clientId)).toEqual([
+          { name: "maya", role: "owner" },
+          { name: "leo", role: "member" },
+          { name: "ana", role: "member" },
+        ]);
+      });
+
+      it("refuses someone outside the Client, an unknown Client and bad ids as not-found", async () => {
+        silenceWarnings();
+        const team = await addRoster();
+        const other = await addRoster("Globex");
+        const notFound = { value: null, error: "not-found", status: 404 };
+
+        expect(
+          await clock.changeRole(
+            team.owner,
+            team.clientId,
+            other.member.userId,
+            "owner",
+          ),
+        ).toEqual(notFound);
+        expect(
+          await clock.changeRole(
+            ADMIN_ACTOR,
+            randomUUID(),
+            team.member.userId,
+            "owner",
+          ),
+        ).toEqual(notFound);
+        expect(
+          await clock.changeRole(
+            ADMIN_ACTOR,
+            "not-a-uuid",
+            team.member.userId,
+            "owner",
+          ),
+        ).toEqual(notFound);
+        expect(
+          await clock.changeRole(team.owner, team.clientId, "nope", "owner"),
+        ).toEqual(notFound);
+        expect((await readRoles(team.clientId))[1].role).toBe("member");
+      });
+
+      it("refuses any change on an archived Client, the Admin's too", async () => {
+        silenceWarnings();
+        const team = await addRoster();
+        await archive(team.clientId);
+        const archived = { value: null, error: "archived", status: 403 };
+
+        expect(
+          await clock.changeRole(
+            ADMIN_ACTOR,
+            team.clientId,
+            team.member.userId,
+            "owner",
+          ),
+        ).toEqual(archived);
+        expect(
+          await clock.changeRole(
+            team.owner,
+            team.clientId,
+            team.member.userId,
+            "owner",
+          ),
+        ).toEqual(archived);
+      });
+
+      it("refuses to demote the last Owner, even for the Admin", async () => {
+        silenceWarnings();
+        const team = await addRoster();
+        const sole = await addClient("Solo");
+        const soleOwner = await addPerson(sole, "owner", "sam");
+
+        const withOthers = await clock.changeRole(
+          ADMIN_ACTOR,
+          team.clientId,
+          team.owner.userId,
+          "member",
+        );
+        const alone = await clock.changeRole(
+          ADMIN_ACTOR,
+          sole,
+          soleOwner.userId,
+          "member",
+        );
+
+        const lastOwner = { value: null, error: "last-owner", status: 409 };
+        expect(withOthers).toEqual(lastOwner);
+        expect(alone).toEqual(lastOwner);
+        expect((await readRoles(team.clientId))[0].role).toBe("owner");
+      });
+
+      it("lets an Owner demote the only other Owner", async () => {
+        const team = await addRoster();
+        const ana = await addPerson(team.clientId, "owner", "ana", LATER);
+
+        const result = await clock.changeRole(
+          team.owner,
+          team.clientId,
+          ana.userId,
+          "member",
+        );
+
+        expect(result.error).toBeNull();
+        expect(await readRoles(team.clientId)).toEqual([
+          { name: "maya", role: "owner" },
+          { name: "leo", role: "member" },
+          { name: "ana", role: "member" },
+        ]);
+      });
+
+      it("leaves one Owner when two Owners' demotions race", async () => {
+        silenceWarnings();
+        const clientId = await addClient("Acme");
+        const maya = await addPerson(clientId, "owner", "maya");
+        const ana = await addPerson(clientId, "owner", "ana");
+        // Two pooled connections, so both demotions start at once.
+        await Promise.all(
+          [1, 2].map(() => db.withSystem((tx) => tx.execute(sql`select 1`))),
+        );
+        // Holding the member rows stalls each demotion's write until the
+        // commit. Without the Client's lock, both would count two Owners
+        // first and both write.
+        const holder = new pg.Client({
+          connectionString: getMigrateEnv().DATABASE_URL_OWNER,
+        });
+        await holder.connect();
+        let results: Awaited<ReturnType<Auth["changeRole"]>>[];
+        try {
+          await holder.query("begin");
+          await holder.query(
+            "select 1 from member where organization_id = $1 for update",
+            [clientId],
+          );
+          const racing = Promise.all([
+            clock.changeRole(ADMIN_ACTOR, clientId, maya.userId, "member"),
+            clock.changeRole(ADMIN_ACTOR, clientId, ana.userId, "member"),
+          ]);
+          await Promise.race([racing, waitMs(RACE_HOLD_MS)]);
+          await holder.query("commit");
+          results = await racing;
+        } finally {
+          await holder.end();
+        }
+
+        expect(results.map((result) => result.error).sort()).toEqual([
+          "last-owner",
+          null,
+        ]);
+        const roles = await readRoles(clientId);
+        expect(roles.filter(({ role }) => role === "owner")).toHaveLength(1);
+      });
+    });
+
+    describe("removeMember", () => {
+      it("removes a Member for an Owner: every session ends, the user row stays", async () => {
+        const team = await addRoster();
+        // The Member signed in by magic link, plus a second browser.
+        const ip = createIp();
+        await requestMagicLink(team.member.email, ip, clock);
+        const signedIn = await clock.handler(
+          new Request(getLinkFromLastMessage(), {
+            headers: { "x-forwarded-for": ip },
+          }),
+        );
+        const cookie = getCookieHeader(signedIn);
+        await addSessions(team.member.userId);
+        const before = await clock.getAccess(pageRequest(cookie));
+        mailer.sent.length = 0;
+
+        const result = await clock.removeMember(
+          team.owner,
+          team.clientId,
+          team.member.userId,
+        );
+
+        expect(before.access.kind).toBe("client");
+        expect(result).toEqual({ value: null, error: null, status: 200 });
+        expect(await readRoles(team.clientId)).toEqual([
+          { name: "maya", role: "owner" },
+        ]);
+        expect(await countSessions(team.member.userId)).toBe(0);
+        expect(await userExists(team.member.userId)).toBe(true);
+        const after = await clock.getAccess(pageRequest(cookie));
+        expect(after.access).toEqual({ kind: "anonymous" });
+        // No member row and no Invitation: a new link sends nothing.
+        await requestMagicLink(team.member.email, createIp(), clock);
+        expect(mailer.sent).toHaveLength(0);
+      });
+
+      it("refuses an Owner removing themselves as self", async () => {
+        silenceWarnings();
+        const team = await addRoster();
+
+        const result = await clock.removeMember(
+          team.owner,
+          team.clientId,
+          team.owner.userId,
+        );
+
+        expect(result).toEqual({ value: null, error: "self", status: 422 });
+        expect(await readRoles(team.clientId)).toHaveLength(2);
+      });
+
+      it("refuses a Member and another Client's Owner as forbidden", async () => {
+        silenceWarnings();
+        const team = await addRoster();
+        const other = await addRoster("Globex");
+        const forbidden = { value: null, error: "forbidden", status: 403 };
+
+        expect(
+          await clock.removeMember(
+            team.member,
+            team.clientId,
+            team.owner.userId,
+          ),
+        ).toEqual(forbidden);
+        expect(
+          await clock.removeMember(
+            other.owner,
+            team.clientId,
+            team.member.userId,
+          ),
+        ).toEqual(forbidden);
+        expect(await readRoles(team.clientId)).toHaveLength(2);
+      });
+
+      it("refuses someone outside the Client as not-found", async () => {
+        silenceWarnings();
+        const team = await addRoster();
+        const other = await addRoster("Globex");
+
+        const result = await clock.removeMember(
+          ADMIN_ACTOR,
+          team.clientId,
+          other.member.userId,
+        );
+
+        expect(result).toEqual({
+          value: null,
+          error: "not-found",
+          status: 404,
+        });
+        expect(await readRoles(other.clientId)).toHaveLength(2);
+      });
+
+      it("refuses an Owner's removal on an archived Client, but not the Admin's", async () => {
+        silenceWarnings();
+        const team = await addRoster();
+        await archive(team.clientId);
+
+        const byOwner = await clock.removeMember(
+          team.owner,
+          team.clientId,
+          team.member.userId,
+        );
+        const byAdmin = await clock.removeMember(
+          ADMIN_ACTOR,
+          team.clientId,
+          team.member.userId,
+        );
+
+        expect(byOwner).toEqual({
+          value: null,
+          error: "archived",
+          status: 403,
+        });
+        expect(byAdmin.error).toBeNull();
+        expect(await readRoles(team.clientId)).toEqual([
+          { name: "maya", role: "owner" },
+        ]);
+      });
+
+      it("refuses the Admin's removal of the last Owner while others remain", async () => {
+        silenceWarnings();
+        const team = await addRoster();
+
+        const result = await clock.removeMember(
+          ADMIN_ACTOR,
+          team.clientId,
+          team.owner.userId,
+        );
+
+        expect(result).toEqual({
+          value: null,
+          error: "last-owner",
+          status: 409,
+        });
+        expect(await readRoles(team.clientId)).toHaveLength(2);
+      });
+
+      it("lets the Admin remove a sole Owner who is the only user, emptying the Client", async () => {
+        const clientId = await addClient("Solo");
+        const sam = await addPerson(clientId, "owner", "sam");
+        await addSessions(sam.userId);
+
+        const result = await clock.removeMember(
+          ADMIN_ACTOR,
+          clientId,
+          sam.userId,
+        );
+
+        expect(result.error).toBeNull();
+        expect(await countSessions(sam.userId)).toBe(0);
+        expect(await clock.getTeam(clientId)).toMatchObject({
+          members: [],
+          canInviteFirstOwner: true,
+        });
+        const [summary] = (await listMine()).filter(
+          ({ id }) => id === clientId,
+        );
+        expect(summary).toMatchObject({ userCount: 0, owner: null });
+      });
+    });
+
+    describe("emptying a Client", () => {
+      async function readStatus(invitationId: string): Promise<string> {
+        const [row] = await db.withSystem((tx) =>
+          tx
+            .select({ status: invitation.status })
+            .from(invitation)
+            .where(eq(invitation.id, invitationId)),
+        );
+        return row.status;
+      }
+
+      const emptyBy = {
+        "the Admin's remove": (sam: ClientAccess) =>
+          clock.removeMember(ADMIN_ACTOR, sam.clientId, sam.userId),
+        "the only user leaving": (sam: ClientAccess) => clock.leaveClient(sam),
+      };
+
+      for (const [how, empty] of Object.entries(emptyBy)) {
+        it(`cancels its pending Invitations on ${how}, so the Admin invites a first Owner again`, async () => {
+          const clientId = await addClient("Solo");
+          const sam = await addPerson(clientId, "owner", "sam");
+          const invited = await clock.inviteMember(sam, "lee@example.test");
+          if (invited.value === null) throw new Error("invite failed");
+          const invitationId = invited.value.id;
+
+          const result = await empty(sam);
+
+          expect(result.error).toBeNull();
+          expect(await readStatus(invitationId)).toBe("canceled");
+          expect(await clock.getLiveInvitation(invitationId)).toBeNull();
+          expect(await clock.getTeam(clientId)).toMatchObject({
+            members: [],
+            pendingInvitations: [],
+            canInviteFirstOwner: true,
+          });
+        });
+      }
+
+      it("keeps the pending Invitations while users remain", async () => {
+        const team = await addRoster();
+        const invited = await clock.inviteMember(
+          team.owner,
+          "ana@example.test",
+        );
+        if (invited.value === null) throw new Error("invite failed");
+
+        const removed = await clock.removeMember(
+          team.owner,
+          team.clientId,
+          team.member.userId,
+        );
+
+        expect(removed.error).toBeNull();
+        expect(await readStatus(invited.value.id)).toBe("pending");
+      });
+    });
+
+    describe("leaveClient", () => {
+      it("lets a Member leave, ending every session", async () => {
+        const team = await addRoster();
+        await addSessions(team.member.userId);
+
+        const result = await clock.leaveClient(team.member);
+
+        expect(result).toEqual({ value: null, error: null, status: 200 });
+        expect(await readRoles(team.clientId)).toEqual([
+          { name: "maya", role: "owner" },
+        ]);
+        expect(await countSessions(team.member.userId)).toBe(0);
+        expect(await userExists(team.member.userId)).toBe(true);
+      });
+
+      it("refuses the last Owner while others remain", async () => {
+        silenceWarnings();
+        const team = await addRoster();
+        await addSessions(team.owner.userId);
+
+        const result = await clock.leaveClient(team.owner);
+
+        expect(result).toEqual({
+          value: null,
+          error: "last-owner",
+          status: 409,
+        });
+        expect(await readRoles(team.clientId)).toHaveLength(2);
+        expect(await countSessions(team.owner.userId)).toBe(2);
+      });
+
+      it("lets an Owner leave while another Owner remains", async () => {
+        const team = await addRoster();
+        await addPerson(team.clientId, "owner", "ana", LATER);
+
+        const result = await clock.leaveClient(team.owner);
+
+        expect(result.error).toBeNull();
+        expect(await readRoles(team.clientId)).toEqual([
+          { name: "leo", role: "member" },
+          { name: "ana", role: "owner" },
+        ]);
+      });
+
+      it("lets a sole Owner who is the only user leave, emptying the Client", async () => {
+        const clientId = await addClient("Solo");
+        const sam = await addPerson(clientId, "owner", "sam");
+        await addSessions(sam.userId);
+
+        const result = await clock.leaveClient(sam);
+
+        expect(result.error).toBeNull();
+        expect(await countSessions(sam.userId)).toBe(0);
+        expect(await clock.getTeam(clientId)).toMatchObject({
+          members: [],
+          canInviteFirstOwner: true,
+        });
+      });
+
+      it("refuses a user no longer on the team as not-found", async () => {
+        silenceWarnings();
+        const team = await addRoster();
+        await clock.leaveClient(team.member);
+
+        const again = await clock.leaveClient(team.member);
+
+        expect(again).toEqual({
+          value: null,
+          error: "not-found",
+          status: 404,
+        });
+      });
+
+      it("refuses leaving an archived Client", async () => {
+        silenceWarnings();
+        const team = await addRoster();
+        await archive(team.clientId);
+
+        const result = await clock.leaveClient(team.member);
+
+        expect(result).toEqual({
+          value: null,
+          error: "archived",
+          status: 403,
+        });
+        expect(await readRoles(team.clientId)).toHaveLength(2);
+      });
+    });
+
+    describe("getProfile", () => {
+      async function linkGoogle(userId: string): Promise<void> {
+        await db.withSystem((tx) =>
+          tx.insert(account).values({
+            accountId: randomUUID(),
+            providerId: "google",
+            userId,
+          }),
+        );
+      }
+
+      it("describes a Member who signed in by magic link", async () => {
+        const team = await addRoster();
+
+        const profile = await clock.getProfile(team.member);
+
+        expect(profile).toEqual({
+          name: "leo",
+          email: team.member.email,
+          role: "member",
+          clientName: team.member.clientName,
+          isGoogleLinked: false,
+          canLeave: "yes",
+        });
+      });
+
+      it("reports Google as linked once the user has a Google account", async () => {
+        const team = await addRoster();
+        await linkGoogle(team.member.userId);
+
+        const [mine, theirs] = await Promise.all([
+          clock.getProfile(team.member),
+          clock.getProfile(team.owner),
+        ]);
+
+        expect(mine.isGoogleLinked).toBe(true);
+        expect(theirs.isGoogleLinked).toBe(false);
+      });
+
+      it("ignores accounts of other providers", async () => {
+        const team = await addRoster();
+        await db.withSystem((tx) =>
+          tx.insert(account).values({
+            accountId: team.member.userId,
+            providerId: "credential",
+            userId: team.member.userId,
+          }),
+        );
+
+        const profile = await clock.getProfile(team.member);
+
+        expect(profile.isGoogleLinked).toBe(false);
+      });
+
+      it("blocks the only Owner from leaving while others remain", async () => {
+        const team = await addRoster();
+
+        const profile = await clock.getProfile(team.owner);
+
+        expect(profile.canLeave).toBe("last-owner");
+      });
+
+      it("warns the Client's sole user that it will be left empty", async () => {
+        const clientId = await addClient("Solo");
+        const sam = await addPerson(clientId, "owner", "sam");
+
+        const profile = await clock.getProfile(sam);
+
+        expect(profile.canLeave).toBe("only-user");
+      });
+
+      it("lets an Owner leave while another Owner remains", async () => {
+        const team = await addRoster();
+        await addPerson(team.clientId, "owner", "ana", LATER);
+
+        const profile = await clock.getProfile(team.owner);
+
+        expect(profile.canLeave).toBe("yes");
+      });
+
+      it("reads the stored name, not the access's", async () => {
+        const team = await addRoster();
+        await clock.updateDisplayName(team.member, "Leo Park");
+
+        const profile = await clock.getProfile(team.member);
+
+        expect(profile.name).toBe("Leo Park");
+      });
+    });
+
+    describe("updateDisplayName", () => {
+      async function readName(userId: string): Promise<string | undefined> {
+        const [row] = await db.withSystem((tx) =>
+          tx.select({ name: user.name }).from(user).where(eq(user.id, userId)),
+        );
+        return row?.name;
+      }
+
+      it("stores the name trimmed, in NFC and with whitespace collapsed", async () => {
+        const team = await addRoster();
+
+        const result = await clock.updateDisplayName(
+          team.member,
+          "  Zoe\u0301   Park  ",
+        );
+
+        expect(result).toEqual({ value: null, error: null, status: 200 });
+        expect(await readName(team.member.userId)).toBe("Zo\u00e9 Park");
+      });
+
+      it("accepts a name of exactly 100 characters, counting code points", async () => {
+        const team = await addRoster();
+        const name = "\u{1F600}".repeat(100);
+
+        const result = await clock.updateDisplayName(team.member, name);
+
+        expect(result.error).toBeNull();
+        expect(await readName(team.member.userId)).toBe(name);
+      });
+
+      it.each([
+        ["blank", "   "],
+        ["empty", ""],
+        ["over 100 characters", "a".repeat(101)],
+        ["a line break", "Leo\nPark"],
+        ["a tab", "Leo\tPark"],
+        ["a zero-width space", "Leo\u200BPark"],
+        ["a right-to-left override", "Leo\u202EPark"],
+        ["a line separator", "Leo\u2028Park"],
+        ["a blank filler", "\u3164"],
+        ["a stack of combining marks", "x\u0301\u0302\u0303\u0304 Park"],
+        [
+          "combining marks split by joiners",
+          "x" + "\u0301\u0302\u0303\u200D".repeat(24),
+        ],
+        ["an @", "Maya (maya@acme.test)"],
+      ])("refuses a name that is %s, changing nothing", async (_, name) => {
+        silenceWarnings();
+        const team = await addRoster();
+
+        const result = await clock.updateDisplayName(team.member, name);
+
+        expect(result).toEqual({
+          value: null,
+          error: "invalid-name",
+          status: 422,
+        });
+        expect(await readName(team.member.userId)).toBe("leo");
+      });
+
+      it("accepts the few combining marks real names stack", async () => {
+        const team = await addRoster();
+
+        const result = await clock.updateDisplayName(
+          team.member,
+          "x\u0301\u0302\u0303 Park",
+        );
+
+        expect(result.error).toBeNull();
+      });
+
+      it("renames only the caller", async () => {
+        const team = await addRoster();
+
+        await clock.updateDisplayName(team.member, "Leo Park");
+
+        expect(await readName(team.owner.userId)).toBe("maya");
+      });
+
+      it("never logs the name", async () => {
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        const team = await addRoster();
+
+        await clock.updateDisplayName(team.member, "Secret\nName");
+
+        expect(JSON.stringify(warn.mock.calls)).not.toContain("Secret");
+      });
     });
   });
 });

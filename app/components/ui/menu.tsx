@@ -7,7 +7,8 @@ type MenuProps = {
   children: React.ReactNode;
 };
 
-// Opens upward by default: it lives at the sidebar foot.
+// Opens upward by default: it lives at the sidebar foot. Capped in width
+// (and never past the viewport) so long header lines wrap.
 export default function Menu({
   trigger,
   side = "top",
@@ -23,7 +24,7 @@ export default function Menu({
           align={align}
           sideOffset={4}
           collisionPadding={12}
-          className="z-50 min-w-[200px] rounded-[3px] border border-line-strong bg-surface p-1.5 text-fg shadow-[0_10px_30px_rgb(0_0_0/0.18)] duration-(--dur-base) ease-out data-[side=bottom]:slide-in-from-top-1 data-[side=top]:slide-in-from-bottom-1 data-[state=closed]:animate-out data-[state=closed]:duration-(--dur-fast) data-[state=closed]:ease-in data-[state=closed]:fade-out-0 data-[state=open]:animate-in data-[state=open]:fade-in-0 motion-reduce:data-[side=bottom]:slide-in-from-top-0 motion-reduce:data-[side=top]:slide-in-from-bottom-0 motion-reduce:data-[state=closed]:duration-(--dur-instant) motion-reduce:data-[state=open]:duration-(--dur-instant)"
+          className="z-50 max-w-[min(320px,var(--radix-dropdown-menu-content-available-width))] min-w-[200px] rounded-[3px] border border-line-strong bg-surface p-1.5 text-fg shadow-[0_10px_30px_rgb(0_0_0/0.18)] duration-(--dur-base) ease-out data-[side=bottom]:slide-in-from-top-1 data-[side=top]:slide-in-from-bottom-1 data-[state=closed]:animate-out data-[state=closed]:duration-(--dur-fast) data-[state=closed]:ease-in data-[state=closed]:fade-out-0 data-[state=open]:animate-in data-[state=open]:fade-in-0 motion-reduce:data-[side=bottom]:slide-in-from-top-0 motion-reduce:data-[side=top]:slide-in-from-bottom-0 motion-reduce:data-[state=closed]:duration-(--dur-instant) motion-reduce:data-[state=open]:duration-(--dur-instant)"
         >
           {children}
         </DropdownMenu.Content>

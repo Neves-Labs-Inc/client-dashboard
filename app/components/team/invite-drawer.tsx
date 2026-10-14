@@ -3,7 +3,8 @@ import Button from "@/components/ui/button";
 import Drawer from "@/components/ui/drawer";
 import Field from "@/components/ui/field";
 import Input from "@/components/ui/input";
-import { useInviteOwnerForm } from "@/hooks/use-invite-owner-form";
+import { useInviteForm } from "@/hooks/use-invite-form";
+import type { InviteFeedback, RefusalCode } from "@/lib/team-invitations";
 
 const DIRTY_CONFIRM = {
   message: "Discard this invitation?",
@@ -11,33 +12,42 @@ const DIRTY_CONFIRM = {
   cancelLabel: "Keep editing",
 };
 
-type InviteOwnerDrawerProps = {
+type InviteDrawerProps = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  clientId: string;
-  clientName: string;
+  title: string;
+  // Under the field: who the invitee joins, and as what.
+  help: string;
+  // The route the invite posts to.
+  action: string;
+  // Words a refused invite for this surface. Stable (module-level).
+  getFeedback: (error: RefusalCode) => InviteFeedback;
   onSent: (invitationId: string) => void;
   // Where focus goes when the drawer closes.
   getReturnFocusTarget: () => HTMLElement | null;
 };
 
-export default function InviteOwnerDrawer({
+// The invite-by-email drawer, shared by the Admin's "Invite first Owner"
+// and an Owner's "Invite teammate".
+export default function InviteDrawer({
   open,
   onOpenChange,
-  clientId,
-  clientName,
+  title,
+  help,
+  action,
+  getFeedback,
   onSent,
   getReturnFocusTarget,
-}: InviteOwnerDrawerProps): React.ReactNode {
+}: InviteDrawerProps): React.ReactNode {
   const formId = useId();
   const helpId = useId();
-  const form = useInviteOwnerForm(open, clientId, onSent);
+  const form = useInviteForm(open, action, getFeedback, onSent);
 
   return (
     <Drawer
       open={open}
       onOpenChange={onOpenChange}
-      title="Invite first Owner"
+      title={title}
       error={form.banner}
       isDirty={form.isDirty}
       dirtyConfirm={DIRTY_CONFIRM}
@@ -80,8 +90,7 @@ export default function InviteOwnerDrawer({
         </Field>
       </form>
       <p id={helpId} className="text-sm/5 text-fg-2">
-        They&apos;ll join {clientName} as its Owner. The invitation expires in 7
-        days.
+        {help}
       </p>
     </Drawer>
   );

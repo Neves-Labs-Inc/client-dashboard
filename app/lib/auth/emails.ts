@@ -31,6 +31,25 @@ export function buildInvitationEmail(
   };
 }
 
+// An Owner's invitation; `inviterName` is the Owner's name and email, as
+// getSenderLabel gives it.
+export function buildMemberInvitationEmail(
+  to: string,
+  clientName: string,
+  inviterName: string,
+  url: string,
+): MailMessage {
+  const before = `${inviterName} invited you to join ${clientName} on the Neves Labs client portal. Accept the invitation: `;
+  const after = ". It expires in 7 days.";
+  const link = escapeHtml(url);
+  return {
+    to,
+    subject: `You're invited to ${clientName} on the Neves Labs portal`,
+    text: `${before}${url}${after}`,
+    html: `<p>${escapeHtml(before)}<a href="${link}">${link}</a>${escapeHtml(after)}</p>`,
+  };
+}
+
 const HTML_ESCAPES: Record<string, string> = {
   "&": "&amp;",
   "<": "&lt;",

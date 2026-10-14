@@ -1,8 +1,11 @@
+import { useRef } from "react";
 import {
   data,
+  useRouteLoaderData,
   useSearchParams,
   type ShouldRevalidateFunctionArgs,
 } from "react-router";
+import ArchivedClientsPanel from "@/components/admin/archived-clients-panel";
 import ClientsPanel from "@/components/admin/clients-panel";
 import CreateClientDrawer from "@/components/admin/create-client-drawer";
 import NewClientLink from "@/components/admin/new-client-link";
@@ -23,6 +26,9 @@ import {
 } from "@/lib/auth/require-access.server";
 import { revalidateUnlessThemeFailed } from "@/lib/theme";
 import type { Route } from "./+types/index";
+import type { loader as adminLayoutLoader } from "./layout";
+
+const ADMIN_LAYOUT_ROUTE_ID = "routes/admin/layout";
 
 const UNPROCESSABLE = 422;
 const SERVER_ERROR = 500;
@@ -121,6 +127,12 @@ export default function AdminHome({
   loaderData,
 }: Route.ComponentProps): React.ReactNode {
   const [searchParams, setSearchParams] = useSearchParams();
+  const titleRef = useRef<HTMLHeadingElement>(null);
+  // The layout's awaited list, also the sidebar's: one query, no loading
+  // state of its own.
+  const layoutData = useRouteLoaderData<typeof adminLayoutLoader>(
+    ADMIN_LAYOUT_ROUTE_ID,
+  );
   const isCreating = searchParams.get(NEW_CLIENT_PARAM) === NEW_CLIENT_VALUE;
 
   function handleCreateOpenChange(open: boolean): void {
@@ -141,9 +153,16 @@ export default function AdminHome({
       <PageHeader
         breadcrumb={[{ label: "Admin" }, { label: "Home" }]}
         title="Clients"
+        titleRef={titleRef}
         action={<NewClientLink />}
       />
       <ClientsPanel clients={loaderData.clients} />
+      {layoutData && (
+        <ArchivedClientsPanel
+          clients={layoutData.archivedClients}
+          fallbackFocusRef={titleRef}
+        />
+      )}
       <CreateClientDrawer
         open={isCreating}
         onOpenChange={handleCreateOpenChange}

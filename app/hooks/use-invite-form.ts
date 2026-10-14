@@ -1,16 +1,16 @@
 import { useEffect, useRef, useState } from "react";
 import { useFetcher, useRevalidator } from "react-router";
 import { INVITE_EMAIL_COPY, normalizeInviteEmail } from "@/lib/invite-email";
-import { getTeamPath } from "@/lib/new-client";
 import {
-  getInviteFeedback,
   INVITATION_COPY,
   INVITATION_INTENT_FIELD,
   INVITE_EMAIL_FIELD,
   type InvitationOutcome,
+  type InviteFeedback,
+  type RefusalCode,
 } from "@/lib/team-invitations";
 
-type InviteOwnerForm = {
+type InviteForm = {
   email: string;
   fieldError: string | null;
   banner: string | null;
@@ -30,12 +30,14 @@ function getEmailError(email: string): string | null {
 
 // The invite drawer's form: validation (on blur and on submit, then live
 // while an error shows), the post, and what follows its outcome. Starts
-// fresh each time `isOpen` turns true.
-export function useInviteOwnerForm(
+// fresh each time `isOpen` turns true. It posts to `action`; `getFeedback`
+// words a refusal for this surface.
+export function useInviteForm(
   isOpen: boolean,
-  clientId: string,
+  action: string,
+  getFeedback: (error: RefusalCode) => InviteFeedback,
   onSent: (invitationId: string) => void,
-): InviteOwnerForm {
+): InviteForm {
   const fetcher = useFetcher<InvitationOutcome>();
   const revalidator = useRevalidator();
   const [email, setEmail] = useState("");
@@ -69,7 +71,7 @@ export function useInviteOwnerForm(
     if (outcome.kind === "sent") {
       onSent(outcome.invitationId);
     } else if (outcome.kind === "refused") {
-      const feedback = getInviteFeedback(outcome.error);
+      const feedback = getFeedback(outcome.error);
       if (feedback.target === "field") {
         setFieldError(feedback.message);
       } else {
@@ -82,7 +84,7 @@ export function useInviteOwnerForm(
       setBanner(INVITATION_COPY.inviteFailed);
       inputRef.current?.focus();
     }
-  }, [fetcher.data, fetcher.state, onSent, revalidator]);
+  }, [fetcher.data, fetcher.state, getFeedback, onSent, revalidator]);
 
   function handleChange(event: React.ChangeEvent<HTMLInputElement>): void {
     const next = event.target.value;
@@ -111,7 +113,7 @@ export function useInviteOwnerForm(
     setBanner(null);
     void fetcher.submit(
       { [INVITATION_INTENT_FIELD]: "invite", [INVITE_EMAIL_FIELD]: email },
-      { method: "post", action: getTeamPath(clientId) },
+      { method: "post", action },
     );
   }
 

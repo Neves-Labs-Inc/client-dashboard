@@ -57,11 +57,13 @@ Env is read and validated in one place, `app/lib/env.ts`. A missing or malformed
 | `DB_QUERY_TIMEOUT_MS` | App runtime: time limit in ms for every query on both pools. Optional: default `10000`, must be a positive integer, max `600000`. Migrations aren't bound by it. | `.env` (optional), Vercel env (optional; leave unset for the default) |
 | `BETTER_AUTH_SECRET` | App runtime: Better Auth's signing secret (session cookies). At least 32 characters. Rotating it signs everyone out (section 5). | `.env`, `.env.test`, CI inline (`test` job), Vercel env (prod: `openssl rand -base64 32`, sensitive) |
 | `BETTER_AUTH_URL` | App runtime: the portal's public origin, with no trailing slash or path. Must be `https`, except `http` on `localhost` / `127.0.0.1`. Drives cookies, trusted origins, the passkey `rpID` (its hostname) and `origin`, and the links in emails. | `.env`, `.env.test`, CI inline (`test` job), Vercel env (prod: `https://portal.neveslabs.dev`) |
-| `ADMIN_EMAIL` | App runtime: the Admin's email, compared case-insensitively. Magic links are sent only to it, and it is the only account that can exist in Phase 2. | `.env` (your own address), `.env.test`, CI inline (`test` job), Vercel env (sensitive) |
+| `ADMIN_EMAIL` | App runtime: the Admin's email, compared case-insensitively. It signs in by magic link (to register a passkey) and passkey only, never Google, and can never be invited. | `.env` (your own address), `.env.test`, CI inline (`test` job), Vercel env (sensitive) |
 | `SMTP_HOST` | App runtime: SMTP server for all email. | `.env` / `.env.test` (`localhost`, Mailpit), CI inline (`test` job), Vercel env (prod: `smtp.gmail.com`) |
 | `SMTP_PORT` | App runtime: SMTP port, 1–65535. Port `465` means implicit TLS; any other port is plain. | `.env` / `.env.test` (`1025`, Mailpit), CI inline (`test` job), Vercel env (prod: `465`) |
 | `SMTP_USER` | App runtime: SMTP login. Optional, but set together with `SMTP_PASSWORD` or not at all. | Unset locally and in CI (Mailpit needs no auth). Vercel env (prod: the dedicated Gmail account, sensitive) |
 | `SMTP_PASSWORD` | App runtime: SMTP password. Optional, but set together with `SMTP_USER` or not at all. When set, `SMTP_PORT` must be `465`, so the credentials never cross a plain connection. | Unset locally and in CI. Vercel env (prod: the dedicated Gmail account's app password, sensitive) |
+| `GOOGLE_CLIENT_ID` | App runtime: the Google OAuth client id for Client User sign-in. Set together with `GOOGLE_CLIENT_SECRET` or not at all; unset, Google sign-in is off and its button is hidden. **Required on prod.** | `.env` (Franklin's dev client, optional), unset in `.env.test` and CI, Vercel env (prod, not sensitive) |
+| `GOOGLE_CLIENT_SECRET` | App runtime: that client's secret. Set together with `GOOGLE_CLIENT_ID` or not at all. Rotation: section 5. **Required on prod.** | `.env` (optional), unset in `.env.test` and CI, Vercel env (prod, sensitive) |
 | `MAIL_FROM` | App runtime: sender address. The display name is always "Neves Labs". | `.env` / `.env.test` (`portal@localhost.test`), CI inline (`test` job), Vercel env (prod: the dedicated Gmail address) |
 | `DATABASE_URL_OWNER` | Migrate command: runs migrations as `neondb_owner`. | `.env`, `.env.test`, CI inline (`test` job), GitHub `production` environment secret (prod: Neon **direct** URL) |
 | `APP_TENANT_PASSWORD` | Migrate command: the password it sets for `app_tenant`. Must match the password in `DATABASE_URL_TENANT`. | `.env`, `.env.test`, CI inline (`test` job), GitHub `production` environment secret |
@@ -183,6 +185,21 @@ Phase 2 adds sign-in and email. The app fails at startup until all eight vars be
    `SMTP_PORT` must be `465` (implicit TLS) whenever `SMTP_PASSWORD` is set; the app refuses to start otherwise.
 3. Confirm `neveslabs.dev` receives no mail: `dig MX neveslabs.dev +short` must print nothing. Mail is sent from the Gmail address, never from the domain.
 
+### 3.7 Phase 3 before prod deploy
+
+Phase 3 adds Client User sign-in with Google. Without these two vars the portal still starts, but Google sign-in is off, so set them before the Phase 3 deploy.
+
+1. Vercel project **Settings → Environment Variables**, environment **Production**:
+
+   | Var | Value | Sensitive |
+   |---|---|---|
+   | `GOOGLE_CLIENT_ID` | the Google OAuth client's id | no |
+   | `GOOGLE_CLIENT_SECRET` | that client's secret | yes |
+
+   Set both or neither: the app refuses to start with only one.
+2. In Google Cloud Console (**APIs & Services → Credentials →** the OAuth client), confirm the two authorized redirect URIs are exactly `http://localhost:5173/api/auth/callback/google` and `https://portal.neveslabs.dev/api/auth/callback/google`.
+3. In **OAuth consent screen**, confirm the publishing status is **In production**. While it is **Testing**, only the listed test users can sign in, and anyone else gets Google's own error page.
+
 ## 4. How a deploy works
 
 Every push to `main` (a merged PR) runs `.github/workflows/ci.yml`:
@@ -234,6 +251,15 @@ For `VERCEL_TOKEN`: create a new token, update the environment secret, then dele
 
 For `BETTER_AUTH_SECRET`: generate a new one (`openssl rand -base64 32`), update the Vercel env var, then redeploy (re-run the latest run on `main`). **Rotating it signs everyone out**: every session cookie was signed with the old secret. The Admin signs in again with the passkey.
 
+For the Google OAuth client secret (`GOOGLE_CLIENT_SECRET`):
+
+1. In Google Cloud Console (**APIs & Services → Credentials →** the OAuth client), add a new secret. The old one keeps working until you disable it.
+2. Update `GOOGLE_CLIENT_SECRET` in Vercel (Production).
+3. Redeploy (re-run the latest run on `main`), then sign in with Google to check it works.
+4. Disable, then delete, the old secret in the console.
+
+If the old secret may have leaked, disable it first (Google sign-in fails until the redeploy), then do steps 1 to 3. Signed-in sessions aren't affected: the secret is only used during sign-in.
+
 For the Gmail app password (`SMTP_PASSWORD`):
 
 1. In the dedicated Gmail account, create a new app password.
@@ -245,7 +271,7 @@ If the old app password may have leaked, revoke it first (mail stops until the r
 
 ### Magic links stop arriving: the hourly cap
 
-`ADMIN_EMAIL` gets at most 10 magic links per hour, whatever IPs ask for them. Once the cap is spent, the sign-in screen still says "Check your email" but nothing is sent, and the Vercel function logs show `auth: magic-link email skipped (hourly cap reached)`. That line means someone (you, or anyone who knows the address) burned the 10/hour cap. If you didn't send the requests, someone is trying to mail-bomb the address.
+Each address (`ADMIN_EMAIL` and every Client User or invitee) gets at most 10 magic links per hour, whatever IPs ask for them. Once the cap is spent, the sign-in screen still says "Check your email" but nothing is sent, and the Vercel function logs show `auth: magic-link email skipped (hourly cap reached)`. That line means someone (you, or anyone who knows the address) burned the 10/hour cap. If you didn't send the requests, someone is trying to mail-bomb the address.
 
 To recover:
 
@@ -278,11 +304,32 @@ After the first Phase 2 deploy, on `https://portal.neveslabs.dev` (not a preview
 3. Sign out from the user menu, then on `/sign-in` choose **Sign in with a passkey**. You're back on Admin Home.
 4. Create a Client with **New client**. You land on its Team tab with the "Invite first Owner" drawer open.
 5. Invite a first Owner at one of your own test addresses (never a real client's). The toast says "Invitation sent", the row shows under Pending invitations, Home's Owner column says "Invitation pending", and the email "You're invited to <Client> on the Neves Labs portal" arrives.
-6. Open the email's link (`https://portal.neveslabs.dev/invitations/<id>`). It shows "Page not found": acceptance arrives in Phase 3.
+6. Open the email's link (`https://portal.neveslabs.dev/invitations/<id>`). It showed "Page not found" in Phase 2; from Phase 3 it opens the acceptance page ("Join <Client>"), where signing in as the invited email joins.
 7. **Resend**: a second, identical email arrives with the same link. **Revoke** (then confirm): the row disappears and "Invite first Owner" returns.
 
 If an invitation email doesn't arrive, the action still reports success (the Invitation is saved, so you can resend). The Vercel function logs show `auth: invitation email failed (<error name and code>)`, with the Client's id but no address or link; check the `SMTP_*` vars, then resend.
 
-## 8. Adding to this runbook
+## 8. Phase 3 prod walkthrough
+
+After the Phase 3 deploy (§3.7 done first), on `https://portal.neveslabs.dev`. Use test addresses you own, never a real client's: one Gmail address for the first Owner (it must be a Google account, to test Google), a second for the Member, and a third Google account that is never invited. Use a second browser profile (or a private window) for the Member.
+
+1. As the Admin, create a Client and invite the first Owner's Gmail address (§7, steps 4 and 5). The invitation email arrives in Gmail.
+2. Open the email's link signed out. The page says "Join <Client>" and shows **Continue with Google** and **Email me a sign-in link**. Choose **Continue with Google** with the invited Gmail account. You land on `/team` as an Owner.
+3. Sign out from the user menu. On `/sign-in`, request a magic link for the same address and check it **arrives in Gmail**. Open it: you land on `/team` again, with no second account created.
+4. Sign out. On `/sign-in`, request a magic link for an address nobody invited: the check-your-email page appears, but nothing arrives. Then choose **Continue with Google** with the **uninvited** Google account. You land on "No access", and the Admin's Home shows no new user.
+5. While signed in as the Owner, open an invitation link addressed to a different email (create one for a fourth address). The page says the invitation is for that address and offers **Sign out**.
+6. As the Owner, **Invite teammate** with the Member's address. The email reads "<name> (<your email>) invited you to join <Client>…". Open it in the second browser profile and join (by Google or by magic link). The Member lands on `/team` with a read-only roster: no invite, role or remove controls.
+7. As the Admin, open the Client's **Team** tab. It lists both users with their role and remove controls, and the Owner's pending invitations.
+8. As the Owner, **Make Owner** on the Member (the toast says "Role updated"), then **Make Member** again. Your own row has no controls.
+9. As the Owner, **Remove** the Member and confirm. In the Member's browser profile, the next page load sends them to `/sign-in`: they are signed out.
+10. Invite the Member again and let them rejoin. Then, in the Member's profile, open **Profile** from the user menu. Rename yourself: the toast says "Name saved" and the sidebar shows the new name. Google reads "Linked" if the Member joined with Google, otherwise "Not linked".
+11. As the Owner (the only Owner, with the Member still on the team), open **Profile**. **Leave** is disabled, with "You're the only Owner. Make someone else an Owner first."
+12. As the Member, **Leave** from Profile and confirm. You land on `/sign-in` with "You left your Client." (a reload no longer shows it). The Owner's roster no longer lists them.
+13. As the Admin, open the Client and choose **Archive client**, then confirm. The Client moves to the **Archived** group in the sidebar. In the Owner's browser profile the next page load signs them out, and both **Continue with Google** and a magic link then show "no longer has access".
+14. As the Admin, **Unarchive** the Client. It leaves the Archived group. The Owner signs in again by Google and by magic link, and lands on `/team`.
+
+If a magic link or invitation email doesn't arrive, see §5 ("Magic links stop arriving") and §7. If Google sign-in shows Google's own error page, the OAuth consent screen is still in Testing or the redirect URI is wrong (§3.7).
+
+## 9. Adding to this runbook
 
 Every Phase adds its settings here and to `.env.example` (roadmap gate 3): new env vars and secrets in section 2, new manual setup in section 3, new checks in a Phase walkthrough.

@@ -16,7 +16,7 @@ Stack assumptions: React Router v7 (SSR), TypeScript, Tailwind CSS v4 (CSS-first
 4. **Numbers are mono.** IDs, dates, amounts, counts and percentages use IBM Plex Mono with tabular figures, so columns align.
 5. **Every async surface has four states**: loading (structural skeleton), empty, error, success. No spinner-only screens.
 6. **Mobile-first.** Design at 375px first; touch targets 44px; no horizontal page scroll.
-7. **Tokens only.** Components never use raw hex, raw Tailwind palette colors (`text-red-600`), or `dark:` color overrides. Light/dark comes from the tokens.
+7. **Tokens only.** Components never use raw hex, raw Tailwind palette colors (`text-red-600`), or `dark:` color overrides. Light/dark comes from the tokens. Exception: the Google logo (`GoogleMark`) carries Google's brand hexes, its white tile included, inside `app/components/auth/google-mark.tsx` only.
 
 ---
 

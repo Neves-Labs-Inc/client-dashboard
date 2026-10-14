@@ -1,4 +1,4 @@
-import { Suspense } from "react";
+import { Suspense, useRef } from "react";
 import { Await } from "react-router";
 import ClientRow from "@/components/admin/client-row";
 import ClientRowSkeleton from "@/components/admin/client-row-skeleton";
@@ -27,17 +27,24 @@ type ClientsPanelProps = {
 export default function ClientsPanel({
   clients,
 }: ClientsPanelProps): React.ReactNode {
+  // Focused after a successful retry: the error's "Try again" goes away.
+  const titleRef = useRef<HTMLHeadingElement>(null);
+
   return (
     <Suspense fallback={<ClientsPanelLoading />}>
       <Await resolve={clients}>
         {(resolved) =>
           resolved === null ? (
-            <Panel title="Clients">
-              <PanelError message="Couldn't load Clients." />
+            <Panel title="Clients" titleRef={titleRef}>
+              <PanelError
+                message="Couldn't load Clients."
+                getReturnFocusTarget={() => titleRef.current}
+              />
             </Panel>
           ) : (
             <Panel
               title="Clients"
+              titleRef={titleRef}
               meta={
                 resolved.length > 0 ? `${resolved.length} active` : undefined
               }

@@ -6,18 +6,25 @@ import { createAuthClient } from "better-auth/react";
 import { magicLinkClient } from "better-auth/client/plugins";
 
 // The browser's one Better Auth client (ADR 0001 allows it for the
-// magic-link request and the WebAuthn ceremonies). UI code calls the
-// functions below, never the client itself.
+// magic-link request, the Google redirect and the WebAuthn ceremonies). UI
+// code calls the functions below, never the client itself.
 
 const TOO_MANY_REQUESTS = 429;
-// Where Better Auth sends the browser after the emailed link is opened.
-const MAGIC_LINK_CALLBACK_URL = "/passkey";
+// Where a bad or reused emailed link lands (Better Auth adds ?error=).
 const MAGIC_LINK_ERROR_CALLBACK_URL = "/sign-in";
+const GOOGLE_PROVIDER = "google";
+// Where a failed Google round trip lands (state mismatch, consent denied):
+// Better Auth adds &error=, and the flag picks the Google banner. A refused
+// sign-in goes to /no-access instead (the server's redirect).
+export const GOOGLE_ERROR_FLAG = "google";
+const GOOGLE_ERROR_CALLBACK_URL = `/sign-in?${GOOGLE_ERROR_FLAG}`;
 // What the browser library reports when its ceremony was aborted (by a newer
 // ceremony, e.g. the button superseding autofill), not refused by the user.
 const CEREMONY_ABORTED = "ERROR_CEREMONY_ABORTED";
 
 export type MagicLinkOutcome = "sent" | "rate-limited" | "failed";
+// "redirecting": the browser is leaving for Google.
+export type GoogleSignInOutcome = "redirecting" | "failed";
 export type PasskeyRegistrationOutcome = "registered" | "failed";
 // "aborted": superseded by another ceremony. "cancelled": the browser's
 // ceremony ended without a passkey (dismissed, or no authenticator), so the
@@ -43,16 +50,18 @@ function buildAuthClient() {
   return createAuthClient({ plugins: [magicLinkClient(), passkeyClient()] });
 }
 
-// "sent" whatever the email: the server mails only ADMIN_EMAIL and answers
-// every address the same way.
+// "sent" whatever the email: the server decides who is mailed and answers
+// every address the same way. `callbackURL` is where the opened link lands:
+// a same-origin path ("/" from /sign-in, routing each access home).
 export async function requestMagicLink(
   email: string,
+  callbackURL: string,
 ): Promise<MagicLinkOutcome> {
   let outcome: MagicLinkOutcome;
   try {
     const { error } = await getAuthClient().signIn.magicLink({
       email,
-      callbackURL: MAGIC_LINK_CALLBACK_URL,
+      callbackURL,
       errorCallbackURL: MAGIC_LINK_ERROR_CALLBACK_URL,
     });
     if (error === null) {
@@ -64,6 +73,31 @@ export async function requestMagicLink(
   } catch (error) {
     // A network failure throws instead of returning an error.
     console.warn("auth-client: magic-link request threw", error);
+    outcome = "failed";
+  }
+  return outcome;
+}
+
+// Starts the Google redirect; Google sends the browser back to `callbackURL`
+// (a same-origin path) once signed in. On success the page is unloading, so
+// callers stay pending.
+export async function signInWithGoogle(
+  callbackURL: string,
+): Promise<GoogleSignInOutcome> {
+  let outcome: GoogleSignInOutcome;
+  try {
+    const { error } = await getAuthClient().signIn.social({
+      provider: GOOGLE_PROVIDER,
+      callbackURL,
+      errorCallbackURL: GOOGLE_ERROR_CALLBACK_URL,
+    });
+    outcome = error === null ? "redirecting" : "failed";
+    if (error !== null) {
+      console.warn(`auth-client: Google sign-in failed (${error.status})`);
+    }
+  } catch (error) {
+    // A network failure throws instead of returning an error.
+    console.warn("auth-client: Google sign-in threw", error);
     outcome = "failed";
   }
   return outcome;

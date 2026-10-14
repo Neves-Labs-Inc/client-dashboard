@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router";
-import type { Team } from "@/lib/auth/auth";
+import type { PendingInvitation } from "@/lib/auth/auth";
 import { clearHistoryState } from "@/lib/history-state";
 import { getCreatedClientId, INVITE_PARAM } from "@/lib/new-client";
 import { INVITATION_COPY } from "@/lib/team-invitations";
@@ -21,10 +21,29 @@ type TeamInvitations = {
   pendingTitleRef: React.RefObject<HTMLHeadingElement | null>;
 };
 
-// The Team tab's invitation state: the invite drawer (auto-opened by
+type InvitationsTeam = {
+  // Null on the client /team page, which no create arrives at (its
+  // INVITE_PARAM is ignored).
+  clientId: string | null;
+  // The Admin's "Invite first Owner" may show (and INVITE_PARAM opens it).
+  canInviteFirstOwner: boolean;
+  pendingInvitations: PendingInvitation[];
+};
+
+type TeamInvitationsOptions = {
+  // After a revoke or a stale row, whether focus may go back up to the
+  // invite action when it has just returned (the Admin's "Invite first
+  // Owner"). Otherwise it always goes to the Pending invitations heading.
+  canReturnToInvite: boolean;
+};
+
+// A Team page's invitation state: the invite drawer (auto-opened by
 // INVITE_PARAM after a create), the pending panel's notice and highlight,
 // and where focus lands after a send or a revoke.
-export function useTeamInvitations(team: Team): TeamInvitations {
+export function useTeamInvitations(
+  team: InvitationsTeam,
+  { canReturnToInvite }: TeamInvitationsOptions,
+): TeamInvitations {
   const location = useLocation();
   const navigate = useNavigate();
   const [isInviteOpen, setIsInviteOpen] = useState(false);
@@ -43,7 +62,7 @@ export function useTeamInvitations(team: Team): TeamInvitations {
   // highlight isn't cut short; once the URL is replaced, the history entry
   // loses it, as the h1 focus effect does on arrival.
   useEffect(() => {
-    if (!hasInviteFlag) return;
+    if (!hasInviteFlag || team.clientId === null) return;
 
     // The drawer opening confirms the create. A toast would cover its
     // footer, and the open modal would make the toast inert.
@@ -64,20 +83,20 @@ export function useTeamInvitations(team: Team): TeamInvitations {
     // Only the flag's arrival matters, not the values read alongside it.
   }, [hasInviteFlag]);
 
-  // After a revoke or a stale row: once the page has revalidated, focus the returned
-  // "Invite first Owner", or the panel heading when it doesn't return.
+  // After a revoke or a stale row: once the page has revalidated, focus the
+  // returned "Invite first Owner" (when allowed), or the panel heading.
   useEffect(() => {
     if (goneId === null) return;
 
     const isRowGone = !pendingInvitations.some(({ id }) => id === goneId);
-    if (canInviteFirstOwner && inviteButtonRef.current) {
+    if (canReturnToInvite && canInviteFirstOwner && inviteButtonRef.current) {
       inviteButtonRef.current.focus();
       setGoneId(null);
     } else if (isRowGone) {
       pendingTitleRef.current?.focus();
       setGoneId(null);
     }
-  }, [goneId, canInviteFirstOwner, pendingInvitations]);
+  }, [goneId, canReturnToInvite, canInviteFirstOwner, pendingInvitations]);
 
   function openInvite(): void {
     hasSentRef.current = false;
@@ -105,8 +124,8 @@ export function useTeamInvitations(team: Team): TeamInvitations {
     setGoneId(invitationId);
   }, []);
 
-  // The primary action unmounts after a send, so focus goes to the panel
-  // heading; otherwise back to the action (also after an auto-open, which
+  // After a send, focus goes to the panel heading, where the new row is (the
+  // Admin's primary action unmounts then); otherwise back to the action (also after an auto-open, which
   // had no click to return to).
   function getDrawerReturnFocus(): HTMLElement | null {
     if (hasSentRef.current) return pendingTitleRef.current;

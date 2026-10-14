@@ -50,6 +50,9 @@ const appEnvSchema = z
     SMTP_USER: z.string().min(1).optional(),
     SMTP_PASSWORD: z.string().min(1).optional(),
     MAIL_FROM: z.email(),
+    // Google sign-in, both or neither. Unset, Google is off (CI and tests).
+    GOOGLE_CLIENT_ID: z.string().min(1).optional(),
+    GOOGLE_CLIENT_SECRET: z.string().min(1).optional(),
     // Set to 1 by Vercel at build and run time. Vercel overwrites
     // x-forwarded-for with the client IP, so only then is it trusted.
     VERCEL: z
@@ -77,6 +80,26 @@ const appEnvSchema = z
         code: "custom",
         path: ["SMTP_PORT"],
         message: `must be ${SMTPS_PORT} when SMTP_PASSWORD is set`,
+      });
+    }
+    if (
+      env.GOOGLE_CLIENT_ID !== undefined &&
+      env.GOOGLE_CLIENT_SECRET === undefined
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["GOOGLE_CLIENT_SECRET"],
+        message: "must be set when GOOGLE_CLIENT_ID is",
+      });
+    }
+    if (
+      env.GOOGLE_CLIENT_SECRET !== undefined &&
+      env.GOOGLE_CLIENT_ID === undefined
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["GOOGLE_CLIENT_ID"],
+        message: "must be set when GOOGLE_CLIENT_SECRET is",
       });
     }
   });

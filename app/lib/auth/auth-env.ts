@@ -1,3 +1,7 @@
+import {
+  getProviderRegistry,
+  type ProviderRegistry,
+} from "@/lib/auth/providers";
 import type { AppEnv } from "@/lib/env";
 
 type AuthSettings = {
@@ -5,6 +9,7 @@ type AuthSettings = {
   baseUrl: string;
   secret: string;
   trustForwardedFor: boolean;
+  providers: ProviderRegistry;
 };
 
 // The env-derived part of createAuth's deps, for the server-only instance.
@@ -16,5 +21,6 @@ export function getAuthSettings(env: AppEnv): AuthSettings {
     baseUrl: env.BETTER_AUTH_URL,
     secret: env.BETTER_AUTH_SECRET,
     trustForwardedFor: env.VERCEL,
+    providers: getProviderRegistry(env),
   };
 }
