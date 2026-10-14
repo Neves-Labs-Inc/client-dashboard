@@ -1,6 +1,20 @@
 import type { PgColumn, PgTable } from "drizzle-orm/pg-core";
 import type { Tx } from "@/lib/db/db";
-import { clients } from "@/lib/db/schema";
+import {
+  clients,
+  milestones,
+  projects,
+  projectStatusMappings,
+  statusUpdates,
+  tasks,
+} from "@/lib/db/schema";
+import {
+  insertMilestone,
+  insertProject,
+  insertStatusMapping,
+  insertStatusUpdate,
+  insertTask,
+} from "../../support/board";
 import { insertClients } from "../../support/clients";
 
 export type RlsTableEntry = {
@@ -34,6 +48,52 @@ export const RLS_REGISTRY: RlsTableEntry[] = [
     // clients.id references organization.id, so the organization goes first.
     seed: async (tx, clientId) => {
       await insertClients(tx, [clientId]);
+    },
+  },
+  {
+    table: projects,
+    tenantColumn: projects.clientId,
+    seed: async (tx, clientId) => {
+      await insertClients(tx, [clientId]);
+      await insertProject(tx, { clientId });
+    },
+  },
+  {
+    table: statusUpdates,
+    tenantColumn: statusUpdates.clientId,
+    seed: async (tx, clientId) => {
+      await insertClients(tx, [clientId]);
+      const projectId = await insertProject(tx, { clientId });
+      await insertStatusUpdate(tx, { clientId, projectId });
+    },
+  },
+  {
+    table: milestones,
+    tenantColumn: milestones.clientId,
+    seed: async (tx, clientId) => {
+      await insertClients(tx, [clientId]);
+      const projectId = await insertProject(tx, { clientId });
+      await insertMilestone(tx, { clientId, projectId });
+    },
+  },
+  {
+    table: tasks,
+    tenantColumn: tasks.clientId,
+    // With a milestone, so the (milestone_id, project_id, client_id) FK is in play too.
+    seed: async (tx, clientId) => {
+      await insertClients(tx, [clientId]);
+      const projectId = await insertProject(tx, { clientId });
+      const milestoneId = await insertMilestone(tx, { clientId, projectId });
+      await insertTask(tx, { clientId, projectId, milestoneId });
+    },
+  },
+  {
+    table: projectStatusMappings,
+    tenantColumn: projectStatusMappings.clientId,
+    seed: async (tx, clientId) => {
+      await insertClients(tx, [clientId]);
+      const projectId = await insertProject(tx, { clientId });
+      await insertStatusMapping(tx, { clientId, projectId });
     },
   },
 ];

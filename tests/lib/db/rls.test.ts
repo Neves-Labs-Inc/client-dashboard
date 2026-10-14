@@ -5,7 +5,7 @@ import type { PgTable } from "drizzle-orm/pg-core";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import pg from "pg";
 import { createDb } from "@/lib/db/db";
-import { AUTH_TABLES, organization } from "@/lib/db/schema";
+import { AUTH_TABLES, githubBoards, organization } from "@/lib/db/schema";
 import { getAppEnv, getMigrateEnv } from "@/lib/env";
 import { getPgError } from "../../support/pg-error";
 import { RLS_REGISTRY } from "./rls-registry";
@@ -175,20 +175,20 @@ describe.each(REGISTERED_TABLES)(
     it("refuses Client A inserting a row for Client B", async () => {
       // A copy of B's real row, so belonging to B is the only reason to
       // refuse it. WITH CHECK runs before unique checks, so the duplicate key
-      // can't mask the outcome.
+      // can't mask the outcome. The row travels as jsonb so every column
+      // type (jsonb, enums, dates) round-trips without per-type handling.
       const [rowOfB] = await db
-        .withSystem((tx) => tx.execute<Record<string, unknown>>(rowsOfB))
+        .withSystem((tx) =>
+          tx.execute<{ row: unknown }>(
+            sql`select to_jsonb(row_of_b) as "row"
+              from (${rowsOfB}) as row_of_b limit 1`,
+          ),
+        )
         .then((result) => result.rows);
-      const columns = Object.keys(rowOfB);
       const insert = sql`insert into ${table}
-        (${sql.join(
-          columns.map((name) => sql.identifier(name)),
-          sql`, `,
-        )})
-        values (${sql.join(
-          columns.map((name) => sql`${rowOfB[name]}`),
-          sql`, `,
-        )})`;
+        select * from jsonb_populate_record(
+          null::${table}, ${JSON.stringify(rowOfB.row)}::jsonb
+        )`;
 
       const write = await runTenantWrite({
         table,
@@ -337,6 +337,70 @@ describe("Better Auth tables", () => {
     });
 
     expect(withRls).toEqual([]);
+  });
+});
+
+describe("github_boards", () => {
+  const tableName = getTableName(githubBoards);
+
+  it("gives app_tenant no privileges", async () => {
+    const granted = await db.withSystem(async (tx) => {
+      const result = await tx.execute<{ privilege: string }>(
+        sql`select privilege_type as privilege
+          from information_schema.role_table_grants
+          where grantee = 'app_tenant'
+            and table_schema = 'public'
+            and table_name = ${tableName}`,
+      );
+      return result.rows;
+    });
+
+    expect(granted).toEqual([]);
+  });
+
+  it("refuses app_tenant reading it", async () => {
+    const tenant = new pg.Client({
+      connectionString: env.DATABASE_URL_TENANT,
+    });
+    await tenant.connect();
+    try {
+      const outcome = await tenant
+        .query(`select 1 from ${tenant.escapeIdentifier(tableName)} limit 1`)
+        .then(() => "read")
+        .catch((error: unknown) => getPgError(error)?.code);
+
+      expect(outcome).toBe("42501");
+    } finally {
+      await tenant.end();
+    }
+  });
+
+  it("gives app_system read and write", async () => {
+    const privileges = await db.withSystem(async (tx) => {
+      const result = await tx.execute<{ privilege: string }>(
+        sql`select privilege_type as privilege
+          from information_schema.role_table_grants
+          where grantee = 'app_system'
+            and table_schema = 'public'
+            and table_name = ${tableName}
+          order by privilege_type`,
+      );
+      return result.rows.map((row) => row.privilege);
+    });
+
+    expect(privileges).toEqual(["DELETE", "INSERT", "SELECT", "UPDATE"]);
+  });
+
+  it("has no RLS", async () => {
+    const isEnabled = await db.withSystem(async (tx) => {
+      const result = await tx.execute<{ isEnabled: boolean }>(
+        sql`select relrowsecurity as "isEnabled"
+          from pg_class where oid = to_regclass(${tableName})`,
+      );
+      return result.rows[0].isEnabled;
+    });
+
+    expect(isEnabled).toBe(false);
   });
 });
 
