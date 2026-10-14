@@ -22,6 +22,7 @@ export const CLIENT_FIELD = "clientId";
 export const OPTIONS_FIELD = "options";
 // One field per Status option: `mapping.<optionId>`, "" for Unmapped.
 export const MAPPING_FIELD_PREFIX = "mapping.";
+const UNMAPPED_FIELD_VALUE = "";
 export const PROJECTS_ROUTE_PATTERN = "/admin/clients/:clientId/projects";
 
 export const CLIENT_STATUSES = [
@@ -192,14 +193,22 @@ function parseJson(value: string): unknown {
   }
 }
 
-// Each `mapping.<optionId>` field; anything but a client status is
-// Unmapped.
-export function parseMapping(form: FormData | null): Mapping {
-  const entries = [...(form?.entries() ?? [])]
-    .filter(([name]) => name.startsWith(MAPPING_FIELD_PREFIX))
-    .map(([name, value]): [string, ClientStatus | null] => [
+// Each `mapping.<optionId>` field: a client status, or "" for Unmapped.
+// Null when any field is anything else, so a malformed post is refused
+// instead of silently clearing a mapping.
+export function parseMapping(form: FormData | null): Mapping | null {
+  const fields = [...(form?.entries() ?? [])].filter(([name]) =>
+    name.startsWith(MAPPING_FIELD_PREFIX),
+  );
+  const isValid = fields.every(
+    ([, value]) => value === UNMAPPED_FIELD_VALUE || isClientStatus(value),
+  );
+  if (!isValid) return null;
+
+  return Object.fromEntries(
+    fields.map(([name, value]): [string, ClientStatus | null] => [
       name.slice(MAPPING_FIELD_PREFIX.length),
       isClientStatus(value) ? value : null,
-    ]);
-  return Object.fromEntries(entries);
+    ]),
+  );
 }

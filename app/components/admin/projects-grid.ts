@@ -18,5 +18,5 @@ export const CELL_CLASS = {
     "col-start-2 row-start-1 self-start text-right whitespace-nowrap md:col-auto md:row-auto md:self-auto md:text-left md:whitespace-normal",
   synced: "col-start-1 row-start-2 md:col-auto md:row-auto",
   actions:
-    "col-start-1 row-start-3 mt-1.5 md:col-span-full md:row-auto md:mt-0 md:flex md:justify-end lg:col-auto",
+    "col-span-full row-start-3 mt-1.5 md:col-span-full md:row-auto md:mt-0 md:flex md:justify-end lg:col-auto",
 } as const;

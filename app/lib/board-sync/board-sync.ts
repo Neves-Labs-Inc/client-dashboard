@@ -85,6 +85,13 @@ export type ProjectRow = {
   unmappedCount: number;
 };
 
+export type MappingEdit = {
+  projectName: string;
+  options: { id: string; name: string; clientStatus: ClientStatus | null }[];
+};
+
+export type SaveMappingError = "not-found" | "unlinked" | "archived";
+
 export type BoardSync = {
   // False when GitHub is off: no board can be linked or synced.
   isGithubConnected: boolean;
@@ -104,6 +111,17 @@ export type BoardSync = {
   // The Client's Projects: linked and closed ones by name, then unlinked
   // ones by name (case-insensitive).
   listProjects(clientId: string): Promise<ProjectRow[]>;
+  // The Map columns drawer's data: the Project's stored Status options,
+  // as the last sync saw them, by name. Null for an unknown Project. Never
+  // calls GitHub.
+  getMapping(projectId: string): Promise<MappingEdit | null>;
+  // Sets client_status on the options the Project already has; ids it
+  // doesn't know are ignored (the sync owns which options exist). Takes
+  // effect at once, as a Task's client status is derived at read time.
+  saveMapping(
+    projectId: string,
+    mapping: Mapping,
+  ): Promise<Result<null, SaveMappingError>>;
   // The Admin's Sync now: syncProject.
   syncNow(projectId: string): Promise<Result<null, SyncError>>;
   // Refreshes the org board pool cache from GitHub.
@@ -475,12 +493,71 @@ export function createBoardSync(deps: BoardSyncDeps): BoardSync {
     }));
   }
 
+  async function getMapping(projectId: string): Promise<MappingEdit | null> {
+    if (!UUID_PATTERN.test(projectId)) return null;
+
+    const rows = await db.withSystem((tx) =>
+      tx
+        .select({
+          projectName: projects.name,
+          optionId: projectStatusMappings.githubOptionId,
+          optionName: projectStatusMappings.optionName,
+          clientStatus: projectStatusMappings.clientStatus,
+        })
+        .from(projects)
+        .leftJoin(
+          projectStatusMappings,
+          eq(projectStatusMappings.projectId, projects.id),
+        )
+        .where(eq(projects.id, projectId))
+        .orderBy(
+          asc(sql`lower(${projectStatusMappings.optionName})`),
+          asc(projectStatusMappings.optionName),
+        ),
+    );
+    if (rows.length === 0) return null;
+
+    return {
+      projectName: rows[0].projectName,
+      // A Project with no options still yields one row, with null option.
+      options: rows.flatMap((row) =>
+        row.optionId === null || row.optionName === null
+          ? []
+          : [
+              {
+                id: row.optionId,
+                name: row.optionName,
+                clientStatus: row.clientStatus,
+              },
+            ],
+      ),
+    };
+  }
+
+  async function saveMapping(
+    projectId: string,
+    mapping: Mapping,
+  ): Promise<Result<null, SaveMappingError>> {
+    if (!UUID_PATTERN.test(projectId)) return failSave("not-found", projectId);
+
+    const refusal = await db.withSystem(async (tx) => {
+      const eligibility = await getEligibility(tx, projectId, true);
+      if (eligibility.error !== null) return eligibility.error;
+
+      await updateMappings(tx, projectId, mapping);
+      return null;
+    });
+    return refusal === null ? OK_SAVED : failSave(refusal, projectId);
+  }
+
   return {
     isGithubConnected: pmSource !== null,
     listUnassignedBoards,
     getLinkDraft,
     link,
     listProjects,
+    getMapping,
+    saveMapping,
     syncNow: syncProject,
     refreshPool,
     syncBoardByNodeId,
@@ -495,6 +572,22 @@ const OK: Result<null, SyncError> = { value: null, error: null, status: 200 };
 
 function fail(error: SyncError, projectId: string): Result<null, SyncError> {
   console.warn(`board-sync: skipped project ${projectId} (${error})`);
+  return { value: null, error, status: STATUS_BY_ERROR[error] };
+}
+
+const OK_SAVED: Result<null, SaveMappingError> = {
+  value: null,
+  error: null,
+  status: 200,
+};
+
+function failSave(
+  error: SaveMappingError,
+  projectId: string,
+): Result<null, SaveMappingError> {
+  console.warn(
+    `board-sync: refused to save mapping of ${projectId} (${error})`,
+  );
   return { value: null, error, status: STATUS_BY_ERROR[error] };
 }
 
@@ -670,6 +763,33 @@ async function replaceMappings(
   }
 }
 
+// Updates only the options the Project already has: never inserts or
+// deletes a mapping row.
+async function updateMappings(
+  tx: Tx,
+  projectId: string,
+  mapping: Mapping,
+): Promise<void> {
+  const stored = await tx
+    .select({ optionId: projectStatusMappings.githubOptionId })
+    .from(projectStatusMappings)
+    .where(eq(projectStatusMappings.projectId, projectId));
+  for (const { optionId } of stored) {
+    // Own keys only: "constructor" mustn't read Object.prototype.
+    if (!Object.hasOwn(mapping, optionId)) continue;
+
+    await tx
+      .update(projectStatusMappings)
+      .set({ clientStatus: mapping[optionId] })
+      .where(
+        and(
+          eq(projectStatusMappings.projectId, projectId),
+          eq(projectStatusMappings.githubOptionId, optionId),
+        ),
+      );
+  }
+}
+
 // Linked Projects of non-archived Clients matching `condition`.
 async function listEligibleProjectIds(
   tx: Tx,
@@ -698,8 +818,14 @@ type Eligibility =
   | { error: null; nodeId: string }
   | { error: "not-found" | "unlinked" | "archived" };
 
-async function getEligibility(tx: Tx, projectId: string): Promise<Eligibility> {
-  const [row] = await tx
+// `shouldLockRow` holds the Project and Client rows until commit, so a
+// concurrent archive, freeze or unlink waits for the caller's write instead of racing it.
+async function getEligibility(
+  tx: Tx,
+  projectId: string,
+  shouldLockRow = false,
+): Promise<Eligibility> {
+  const query = tx
     .select({
       nodeId: projects.githubProjectNodeId,
       unlinkedAt: projects.unlinkedAt,
@@ -708,6 +834,9 @@ async function getEligibility(tx: Tx, projectId: string): Promise<Eligibility> {
     .from(projects)
     .innerJoin(clients, eq(clients.id, projects.clientId))
     .where(eq(projects.id, projectId));
+  const [row] = await (shouldLockRow
+    ? query.for("update", { of: [projects, clients] })
+    : query);
   let eligibility: Eligibility;
   if (row === undefined) {
     eligibility = { error: "not-found" };

@@ -57,18 +57,21 @@ describe("parseOptions", () => {
 });
 
 describe("parseMapping", () => {
-  it("maps each mapping field to its client status, anything else to Unmapped", () => {
+  it("maps each mapping field to its client status, or Unmapped for an empty one", () => {
     const form = new FormData();
     form.set("intent", "link");
     form.set("mapping.opt_1", "DONE");
     form.set("mapping.opt_2", "");
-    form.set("mapping.opt_3", "SHIPPED");
 
-    expect(parseMapping(form)).toEqual({
-      opt_1: "DONE",
-      opt_2: null,
-      opt_3: null,
-    });
+    expect(parseMapping(form)).toEqual({ opt_1: "DONE", opt_2: null });
     expect(parseMapping(null)).toEqual({});
+  });
+
+  it("is null when any field is not a client status or empty", () => {
+    const form = new FormData();
+    form.set("mapping.opt_1", "DONE");
+    form.set("mapping.opt_2", "SHIPPED");
+
+    expect(parseMapping(form)).toBeNull();
   });
 });

@@ -21,6 +21,7 @@ import {
   isLinkDrawerToggle,
   PROJECTS_ROUTE_PATTERN,
 } from "@/lib/link-board";
+import { isMapDrawerToggle } from "@/lib/projects";
 import { getNoStoreHeaders } from "@/lib/no-store-headers";
 import { requireAdmin } from "@/lib/auth/require-access.server";
 import { revalidateUnlessThemeFailed } from "@/lib/theme";
@@ -64,6 +65,7 @@ export function shouldRevalidate(args: ShouldRevalidateFunctionArgs): boolean {
     revalidateUnlessThemeFailed(args) &&
     !isNewClientDrawerToggle(args) &&
     !isLinkDrawerToggle(args) &&
+    !isMapDrawerToggle(args) &&
     !isInviteFlagRemoval(args)
   );
 }

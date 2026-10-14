@@ -1,4 +1,5 @@
 import { Columns3, ExternalLink } from "lucide-react";
+import MapColumnsButton from "@/components/admin/map-columns-button";
 import { CELL_CLASS, ROW_GRID_CLASS } from "@/components/admin/projects-grid";
 import SyncNowButton from "@/components/admin/sync-now-button";
 import DataTableCell from "@/components/ui/data-table-cell";
@@ -14,6 +15,9 @@ type ProjectRowProps = {
   project: Project;
   // Sync now: a linked or closed row of an active Client, GitHub connected.
   canSync: boolean;
+  // Map columns: a linked or closed row of an active Client. Nothing calls
+  // GitHub, so it needn't be connected.
+  canMap: boolean;
   // The Projects route the row's actions post to.
   action: string;
   isHighlighted: boolean;
@@ -24,6 +28,7 @@ type ProjectRowProps = {
 export default function ProjectRow({
   project,
   canSync,
+  canMap,
   action,
   isHighlighted,
   onSynced,
@@ -35,7 +40,8 @@ export default function ProjectRow({
     onSynced,
   });
   const isUnlinked = project.state === "unlinked";
-  const isActionable = canSync && !isUnlinked;
+  const canSyncRow = canSync && !isUnlinked;
+  const canMapRow = canMap && !isUnlinked;
   // A fresh failure replaces the recorded one, so it isn't shown twice.
   const recordedError = sync.error === null ? project.lastSyncError : null;
 
@@ -84,11 +90,25 @@ export default function ProjectRow({
       </DataTableCell>
       {/* Kept when empty, so the grid holds from lg. */}
       <DataTableCell
-        className={cn(CELL_CLASS.actions, !isActionable && "max-lg:sr-only")}
-      >
-        {isActionable && (
-          <SyncNowButton isSyncing={sync.isSyncing} onSync={sync.handleSync} />
+        className={cn(
+          CELL_CLASS.actions,
+          !canSyncRow && !canMapRow && "max-lg:sr-only",
         )}
+      >
+        <div className="flex flex-wrap gap-2">
+          {canMapRow && (
+            <MapColumnsButton
+              projectId={project.id}
+              projectName={project.name}
+            />
+          )}
+          {canSyncRow && (
+            <SyncNowButton
+              isSyncing={sync.isSyncing}
+              onSync={sync.handleSync}
+            />
+          )}
+        </div>
       </DataTableCell>
     </DataTableRow>
   );

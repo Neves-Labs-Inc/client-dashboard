@@ -12,6 +12,8 @@ export function createStubBoardSync(overrides: Partial<BoardSync>): BoardSync {
     getLinkDraft: notStubbed("getLinkDraft"),
     link: notStubbed("link"),
     listProjects: notStubbed("listProjects"),
+    getMapping: notStubbed("getMapping"),
+    saveMapping: notStubbed("saveMapping"),
     syncNow: notStubbed("syncNow"),
     refreshPool: notStubbed("refreshPool"),
     syncBoardByNodeId: notStubbed("syncBoardByNodeId"),

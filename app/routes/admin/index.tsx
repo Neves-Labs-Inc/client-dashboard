@@ -124,8 +124,9 @@ async function runLink(
   const boardNodeId = readField(form, BOARD_FIELD);
   const clientId = readField(form, CLIENT_FIELD);
   const options = parseOptions(form.get(OPTIONS_FIELD));
-  if (options === null) {
-    console.warn("admin: refused a link with malformed options", {
+  const mapping = parseMapping(form);
+  if (options === null || mapping === null) {
+    console.warn("admin: refused a link with a malformed options or mapping", {
       boardNodeId,
     });
     return data<HomeOutcome>(
@@ -139,7 +140,7 @@ async function runLink(
       boardNodeId,
       clientId,
       options,
-      mapping: parseMapping(form),
+      mapping,
     });
     const outcome: LinkOutcome =
       result.error === null
