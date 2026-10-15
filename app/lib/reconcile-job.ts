@@ -1,7 +1,7 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import type { BoardSync } from "@/lib/board-sync/board-sync";
 
-// GET /jobs/reconcile: Vercel Cron's 15-minute poll, so missed webhook
+// GET /jobs/reconcile: Vercel Cron's daily safety-net poll, so missed webhook
 // deliveries heal. Vercel Cron sends `Authorization: Bearer <CRON_SECRET>`.
 
 const UNAUTHORIZED = 401;
