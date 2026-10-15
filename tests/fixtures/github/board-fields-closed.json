@@ -1,0 +1,43 @@
+{
+  "data": {
+    "node": {
+      "__typename": "ProjectV2",
+      "id": "PVT_kwDOBoard0002",
+      "number": 3,
+      "title": "Old intranet",
+      "url": "https://github.com/orgs/Example-Org/projects/3",
+      "closed": true,
+      "updatedAt": "2025-06-15T08:00:00Z",
+      "fields": {
+        "nodes": [
+          {
+            "name": "Title",
+            "dataType": "TITLE"
+          },
+          {
+            "name": "Client visibility",
+            "dataType": "TEXT"
+          },
+          {
+            "name": "client note",
+            "dataType": "TEXT"
+          },
+          {
+            "name": "Target date",
+            "dataType": "DATE"
+          },
+          {
+            "name": "Priority",
+            "dataType": "SINGLE_SELECT",
+            "options": [
+              {
+                "id": "p1",
+                "name": "High"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  }
+}

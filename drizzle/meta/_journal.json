@@ -29,6 +29,13 @@
       "when": 1791916711469,
       "tag": "0003_widen_sign_in_method",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1791997265024,
+      "tag": "0004_board_sync",
+      "breakpoints": true
     }
   ]
 }

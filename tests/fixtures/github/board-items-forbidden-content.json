@@ -1,0 +1,40 @@
+{
+  "data": {
+    "node": {
+      "items": {
+        "pageInfo": {
+          "hasNextPage": false,
+          "endCursor": "Y3Vyc29yOnYyOpMD"
+        },
+        "nodes": [
+          {
+            "id": "PVTI_item0201",
+            "type": "ISSUE",
+            "content": null,
+            "fieldValues": { "nodes": [] }
+          },
+          {
+            "id": "PVTI_item0202",
+            "type": "ISSUE",
+            "content": {
+              "id": "I_kwDOIssue0202",
+              "title": "Readable sibling",
+              "closedAt": null,
+              "repository": { "id": "R_kgDORepo0001" },
+              "milestone": null
+            },
+            "fieldValues": { "nodes": [] }
+          }
+        ]
+      }
+    }
+  },
+  "errors": [
+    {
+      "type": "FORBIDDEN",
+      "path": ["node", "items", "nodes", 0, "content"],
+      "locations": [{ "line": 9, "column": 13 }],
+      "message": "Resource not accessible by integration"
+    }
+  ]
+}

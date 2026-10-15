@@ -19,7 +19,10 @@ export default function TeamSkeleton(): React.ReactNode {
           </div>
         </div>
         {/* Border outside the row's height, as on TabNav's nav. */}
-        <div className="border-b border-line">
+        <div className="flex border-b border-line">
+          <div className="flex h-11 items-center px-3 md:h-9 pointer-coarse:h-11">
+            <Skeleton className="h-3 w-24" />
+          </div>
           <div className="flex h-11 items-center px-3 md:h-9 pointer-coarse:h-11">
             <Skeleton className="h-3 w-10" />
           </div>

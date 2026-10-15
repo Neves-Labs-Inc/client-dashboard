@@ -15,6 +15,7 @@ const DEFAULT_DB_QUERY_TIMEOUT_MS = 10_000;
 const MAX_DB_QUERY_TIMEOUT_MS = 600_000;
 
 const MIN_AUTH_SECRET_LENGTH = 32;
+const MIN_CRON_SECRET_LENGTH = 32;
 const MAX_PORT = 65_535;
 // Implicit TLS. Credentials may only travel on it, never on a plain or
 // STARTTLS-upgraded connection a downgrade could strip.
@@ -23,6 +24,30 @@ const SMTPS_PORT = 465;
 // Plain http only for a local machine: anywhere else cookies would lose
 // Secure and the passkey origin would be http.
 const LOCAL_HOSTNAMES = new Set(["localhost", "127.0.0.1", "[::1]"]);
+
+// Some env UIs flatten a multiline PEM into one line of literal `\n`s.
+const PEM_PRIVATE_KEY =
+  /^-----BEGIN [A-Z ]*PRIVATE KEY-----\n[\s\S]+\n-----END [A-Z ]*PRIVATE KEY-----$/;
+const LITERAL_NEWLINE = /\\n/g;
+// A key saved on Windows has CRLF line endings.
+const CRLF = /\r\n/g;
+
+// The GitHub App, all or none. Unset, board sync is off (CI and tests).
+const GITHUB_VARS = [
+  "GITHUB_APP_ID",
+  "GITHUB_APP_PRIVATE_KEY",
+  "GITHUB_APP_INSTALLATION_ID",
+  "GITHUB_WEBHOOK_SECRET",
+  "GITHUB_ORG",
+] as const;
+
+// Optional vars where an empty value (`GITHUB_ORG=` in .env, a blank Vercel
+// field) means unset, so it turns its feature off instead of failing.
+const EMPTY_MEANS_UNSET: readonly string[] = [
+  ...GITHUB_VARS,
+  "CRON_SECRET",
+  "SMEE_URL",
+];
 
 const httpOrigin = z
   .string()
@@ -53,6 +78,23 @@ const appEnvSchema = z
     // Google sign-in, both or neither. Unset, Google is off (CI and tests).
     GOOGLE_CLIENT_ID: z.string().min(1).optional(),
     GOOGLE_CLIENT_SECRET: z.string().min(1).optional(),
+    GITHUB_APP_ID: z.string().min(1).optional(),
+    GITHUB_APP_PRIVATE_KEY: z
+      .string()
+      .transform((key) =>
+        key.replace(LITERAL_NEWLINE, "\n").replace(CRLF, "\n").trim(),
+      )
+      .refine((key) => PEM_PRIVATE_KEY.test(key), "must be a PEM private key")
+      .optional(),
+    GITHUB_APP_INSTALLATION_ID: z
+      .string()
+      .regex(/^[1-9][0-9]*$/, "must be a positive integer")
+      .transform(Number)
+      .optional(),
+    GITHUB_WEBHOOK_SECRET: z.string().min(1).optional(),
+    GITHUB_ORG: z.string().min(1).optional(),
+    // The bearer Vercel Cron sends to /jobs/reconcile. Unset, the job is off.
+    CRON_SECRET: z.string().min(MIN_CRON_SECRET_LENGTH).optional(),
     // Set to 1 by Vercel at build and run time. Vercel overwrites
     // x-forwarded-for with the client IP, so only then is it trusted.
     VERCEL: z
@@ -102,6 +144,21 @@ const appEnvSchema = z
         message: "must be set when GOOGLE_CLIENT_SECRET is",
       });
     }
+    const missingGithubVars = GITHUB_VARS.filter(
+      (name) => env[name] === undefined,
+    );
+    const isGithubPartial =
+      missingGithubVars.length > 0 &&
+      missingGithubVars.length < GITHUB_VARS.length;
+    if (isGithubPartial) {
+      for (const name of missingGithubVars) {
+        context.addIssue({
+          code: "custom",
+          path: [name],
+          message: "must be set when any other GITHUB_ var is",
+        });
+      }
+    }
   });
 
 const migrateEnvSchema = z.object({
@@ -110,12 +167,18 @@ const migrateEnvSchema = z.object({
   APP_SYSTEM_PASSWORD: z.string().min(1),
 });
 
+// `pnpm dev:webhooks` only: the dev App's smee channel. The app never reads it.
+const devWebhooksEnvSchema = z.object({
+  SMEE_URL: z.url({ protocol: /^https$/ }),
+});
+
 export type AppEnv = z.infer<typeof appEnvSchema>;
 export type MigrateEnv = z.infer<typeof migrateEnvSchema>;
+export type DevWebhooksEnv = z.infer<typeof devWebhooksEnvSchema>;
 
 // Names the bad vars and why, never their values (they hold credentials).
 function parseEnv<T>(schema: z.ZodType<T>): T {
-  const parsed = schema.safeParse(process.env);
+  const parsed = schema.safeParse(dropEmptyOptionals(process.env));
   if (!parsed.success) {
     const problems = parsed.error.issues.map(
       (issue) => `${issue.path.join(".")} (${issue.message})`,
@@ -131,6 +194,18 @@ export function getAppEnv(): AppEnv {
 
 export function getMigrateEnv(): MigrateEnv {
   return parseEnv(migrateEnvSchema);
+}
+
+export function getDevWebhooksEnv(): DevWebhooksEnv {
+  return parseEnv(devWebhooksEnvSchema);
+}
+
+function dropEmptyOptionals(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  return Object.fromEntries(
+    Object.entries(env).filter(
+      ([name, value]) => !(value === "" && EMPTY_MEANS_UNSET.includes(name)),
+    ),
+  );
 }
 
 // `new URL(...).origin` drops any trailing slash or path, so equality means

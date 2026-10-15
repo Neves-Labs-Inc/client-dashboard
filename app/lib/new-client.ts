@@ -76,7 +76,7 @@ export function isInviteFlagRemoval({
 }
 
 // The URL's search without `param`, in a stable order.
-function withoutParam(url: URL, param: string): string {
+export function withoutParam(url: URL, param: string): string {
   const params = new URLSearchParams(url.search);
   params.delete(param);
   params.sort();

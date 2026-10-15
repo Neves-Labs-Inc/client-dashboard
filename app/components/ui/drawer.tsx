@@ -160,12 +160,17 @@ export default function Drawer({
           onCloseAutoFocus={handleCloseAutoFocus}
           className="fixed inset-0 z-50 flex h-dvh flex-col rounded-none bg-surface data-[state=closed]:animate-out data-[state=closed]:duration-(--dur-drawer-out) data-[state=closed]:ease-in data-[state=closed]:slide-out-to-right data-[state=open]:animate-in data-[state=open]:duration-(--dur-drawer-in) data-[state=open]:ease-out data-[state=open]:slide-in-from-right motion-reduce:data-[state=closed]:duration-(--dur-instant) motion-reduce:data-[state=closed]:slide-out-to-right-0 motion-reduce:data-[state=open]:duration-(--dur-instant) motion-reduce:data-[state=open]:slide-in-from-right-0 md:inset-y-0 md:right-0 md:left-auto md:w-[420px] md:border-l md:border-line"
         >
-          <div className="flex min-h-14 items-center justify-between gap-2 border-b border-line pr-1.5 pl-4">
-            <Dialog.Title className="text-[13px]/[18px] font-semibold tracking-[0.06em] text-fg uppercase">
+          <div className="flex min-h-14 items-start justify-between gap-2 border-b border-line py-1.5 pr-1.5 pl-4">
+            <Dialog.Title className="min-w-0 py-[13px] text-[13px]/[18px] font-semibold tracking-[0.06em] break-words text-fg uppercase">
               {title}
             </Dialog.Title>
             <Dialog.Close asChild>
-              <IconButton size="touch" label="Close" icon={X} />
+              <IconButton
+                size="touch"
+                label="Close"
+                icon={X}
+                className="shrink-0"
+              />
             </Dialog.Close>
           </div>
           <div

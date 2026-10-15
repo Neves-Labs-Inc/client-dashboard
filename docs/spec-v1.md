@@ -172,6 +172,7 @@ Sources: [What is the v1 data model?][#16], amended by [What does the Admin area
 | `milestones` | `client_id`, `project_id`, title, due date; unique `(project_id, title)` | Yes |
 | `tasks` | `client_id`, `project_id`, optional milestone; keyed by the GitHub project-item node id; title, client note, target date, completed date, Status option; `hidden_at` | Yes |
 | `project_status_mappings` | `project_id`, `github_option_id`, `option_name`, `client_status` (unmapped options added by the sync as flagged rows, counted as In progress); carries `client_id` per the Client-owned rule | Yes |
+| `github_boards` | The org's board pool, a cache: `node_id` PK, number, title, URL, closed, GitHub's `updated_at`, `refreshed_at`. Refreshed from GitHub by the poll and every `projects_v2` webhook; Home's Unassigned panel lists the boards no linked Project uses. Not Client data (Franklin, Phase 4 planning (2026-10-14)) | None; Admin-only (`app_system`) |
 | `invoices` | `client_id`, optional `project_id`, number, issue date, due date, memo, status, `paid_at`, `status_changed_at` | Yes |
 | `line_items` | `client_id`, `invoice_id`, description, `amount_cents bigint`; at least one per Invoice | Yes |
 | `invoice_counters` | `year` PK, `last_seq`; global across Clients | None; Admin-only |
@@ -196,9 +197,10 @@ Sources: [Which PM tool should feed client-facing project status?][#2], [Lock th
 - **Source:** GitHub Projects v2 boards owned by the `Neves-Labs-Inc` org. One board = one dashboard Project.
 - **Access:** a GitHub App installed on the org, **read-only**: Organization Projects: read, Issues: read. It never writes to GitHub (Requests don't change this).
 - **Adapter:** the sync sits behind a `PmSource` adapter, so Linear (the runner-up) would be a second adapter.
-- **Pages never call GitHub.** The sync writes a copy into Postgres (as `app_system`); all pages read that copy.
+- **Pages never call GitHub.** The sync writes a copy into Postgres (as `app_system`); all pages read that copy. The one exception is the Admin's Link drawer: it reads the board's live `Status` options when it opens, so a new column can be mapped before the first sync (Franklin, Phase 4 planning (2026-10-14)).
 - **Triggers:**
   - a `projects_v2*` webhook (`projects_v2`, `projects_v2_item`, `projects_v2_status_update`; org-owned projects only, public preview), signature verified, triggers a refetch of that board over GraphQL, upserted into Postgres;
+  - the `issues` and `milestone` webhooks, for the issue changes the board's own events don't carry (an issue closed, a milestone's title or due date). An `issues` event refetches the linked boards that hold the issue, a `milestone` event those that hold an issue from its repository (Franklin, Phase 4 planning (2026-10-14));
   - a **reconcile poll** covers missed deliveries. It is an HTTP-triggered job called by **Vercel Cron** (on AWS later, a timer or EventBridge calls the same code), guarded by `pg_try_advisory_xact_lock` inside an interactive transaction. It runs **every 15 minutes**, which lets Neon scale to zero between runs and stay within the Free plan's compute ([Settle the ops and infra gaps][#22]);
   - the Admin's **"Sync now"** button on a board.
 - **Required board fields** (fixed names): `Client visibility` (single-select `Visible / Internal`), `Client note` (text), `Target date` (date). The sync flags a board missing any of them (`sync_warnings`).
@@ -210,7 +212,7 @@ Sources: [Which PM tool should feed client-facing project status?][#2], [Lock th
 | Status Update (health, dates, note) | `ProjectV2StatusUpdate`: status, start date, target date, Markdown body |
 | Task | A board item that is a real issue (never a draft) with `Client visibility = Visible`. Untagged or Internal items stay hidden |
 | Task title | Issue title |
-| Task client status | The item's `Status` option, mapped by the Admin to Up next / In progress / Done |
+| Task client status | The item's `Status` option, mapped by the Admin to Up next / In progress / Done. Derived from the mapping at read time (a Task stores its option id), so a mapping change applies at once, with no sync (Franklin, Phase 4 planning (2026-10-14)) |
 | Task client note | `Client note` field, never the issue body |
 | Task target date | `Target date` field |
 | Task completed date | The issue's closed date |
@@ -221,6 +223,9 @@ Sources: [Which PM tool should feed client-facing project status?][#2], [Lock th
 - **Closed board:** a board closed in GitHub but still linked makes its Project a Past Project; the sync keeps mirroring it, and reopening the board makes it active again ([#25][#25]).
 - **Linking:** the Admin links a board to a Client by hand, from the Unassigned GitHub boards panel on Admin Home. The Client is never inferred from GitHub data.
 - **Unlinking / board deleted:** the Project freezes at its last snapshot as a read-only Past Project. An unlinked board goes back to the unassigned pool; re-linking to the same Client revives the frozen Project; linking to another Client creates a new Project there, and the old Client keeps its frozen copy. The Admin can delete a Project explicitly.
+- **Unlink and delete** are the Admin's, from the Client's Projects & boards tab, each after a confirmation. Both are database-only and refused for an archived Client. They take the Project's sync lock, so they never interleave with a running sync, and a later sync skips the Project. A delete removes its Tasks, Milestones, Status Updates and mappings (Franklin, Phase 4 planning (2026-10-14)).
+- **Archived Clients:** their boards stop syncing (webhooks, the poll and Sync now skip them) until the Client is unarchived; the next poll then catches up (Franklin, Phase 4 planning (2026-10-14)).
+- **GitHub env:** the five `GITHUB_*` vars (App id, private key, installation id, webhook secret, org) are all or none. Unset, sync is off: Home says GitHub isn't connected, Link and Sync now are hidden, and the webhook and poll endpoints answer 503 (Franklin, Phase 4 planning (2026-10-14)).
 - **Freshness:** only the Admin sees last-sync time, sync errors and warnings. Client Users don't.
 - **Sync problem:** GitHub's failed deliveries are invisible to the receiver, so the signal is ours: a linked board is a sync problem when `last_sync_error` is set **or** `last_synced_at` is older than 1 hour (four missed polls). `sync_warnings` don't count. Frozen (unlinked) Projects are never sync problems ([#25][#25]).
 - **Setup step:** client boards on Franklin's personal account (e.g. Vertilux Shade Calculator) must move to `Neves-Labs-Inc`, because board webhooks fire only for org-owned projects.
@@ -328,7 +333,7 @@ Sources: [How do environments, CI and deploy work?][#17], `docs/adr/0004-vercel-
 | Deploy | Merge to `main` → CI → `drizzle-kit migrate` as `neondb_owner` against prod Neon (direct URL) → set `app_tenant`/`app_system` passwords from GitHub Actions secrets → `vercel deploy --prod`. A failed migration blocks the deploy. Vercel Git auto-deploy off |
 | Infra as code | None in v1. `docs/runbook.md` records the Vercel, Neon and GoDaddy settings. Terraform returns with the AWS move |
 | Domain + TLS | The portal is `portal.neveslabs.dev` (CNAME at GoDaddy). `www.neveslabs.dev` and the apex `neveslabs.dev` belong to the separate business website (repo `neveslabs-site`, its own Vercel project; out of scope for v1, a "Coming soon" placeholder for now). `www` is its primary domain; the apex 308-redirects to `www` (apex A record to Vercel, `www` CNAME). Vercel issues TLS |
-| Secrets | Vercel sensitive env vars: Gmail app password, GitHub App private key, webhook secret, App ID and installation ID, Better Auth secret, Google OAuth client (Microsoft Entra app when Microsoft returns), Cron auth secret, `DATABASE_URL`(s). GitHub Actions secrets: prod `neondb_owner` direct `DATABASE_URL`, `app_tenant` and `app_system` passwords, Vercel deploy token, org ID and project ID |
+| Secrets | Vercel sensitive env vars: Gmail app password, GitHub App private key, webhook secret, App ID and installation ID, org login (`GITHUB_ORG`), Better Auth secret, Google OAuth client (Microsoft Entra app when Microsoft returns), Cron auth secret, `DATABASE_URL`(s). GitHub Actions secrets: prod `neondb_owner` direct `DATABASE_URL`, `app_tenant` and `app_system` passwords, Vercel deploy token, org ID and project ID |
 | Observability | Vercel's built-in logs only, plus the Admin's sync-problem flag. No error tracker or alerting in v1; a failed email shows only in the logs ([#22][#22]) |
 | Coding style | Franklin's `coding-style` skill (TypeScript/React) |
 

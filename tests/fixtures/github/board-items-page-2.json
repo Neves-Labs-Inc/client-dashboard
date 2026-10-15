@@ -1,0 +1,81 @@
+{
+  "data": {
+    "node": {
+      "items": {
+        "pageInfo": {
+          "hasNextPage": false,
+          "endCursor": "Y3Vyc29yOnYyOpMB"
+        },
+        "nodes": [
+          {
+            "id": "PVTI_item0004",
+            "type": "ISSUE",
+            "content": {
+              "id": "I_kwDOIssue0002",
+              "title": "Set up analytics",
+              "closedAt": "2026-09-20T16:45:00Z",
+              "repository": {
+                "id": "R_kgDORepo0002"
+              },
+              "milestone": {
+                "title": "Analytics",
+                "dueOn": null
+              }
+            },
+            "fieldValues": {
+              "nodes": [
+                {
+                  "__typename": "ProjectV2ItemFieldTextValue",
+                  "text": "Set up analytics",
+                  "field": {
+                    "name": "Title"
+                  }
+                },
+                {
+                  "__typename": "ProjectV2ItemFieldSingleSelectValue",
+                  "optionId": "e5f6a7b8",
+                  "name": "Internal",
+                  "field": {
+                    "name": "Client visibility"
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "id": "PVTI_item0005",
+            "type": "ISSUE",
+            "content": {
+              "id": "I_kwDOIssue0003",
+              "title": "Write the privacy page",
+              "closedAt": null,
+              "repository": {
+                "id": "R_kgDORepo0001"
+              },
+              "milestone": null
+            },
+            "fieldValues": {
+              "nodes": [
+                {
+                  "__typename": "ProjectV2ItemFieldTextValue",
+                  "text": "Write the privacy page",
+                  "field": {
+                    "name": "Title"
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "id": "PVTI_item0006",
+            "type": "REDACTED",
+            "content": null,
+            "fieldValues": {
+              "nodes": []
+            }
+          }
+        ]
+      }
+    }
+  }
+}

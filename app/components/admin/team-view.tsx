@@ -1,16 +1,11 @@
 import { UserPlus } from "lucide-react";
 import { useEffect, useRef } from "react";
 import { useLocation } from "react-router";
-import ArchiveControl, {
-  ArchiveStatus,
-} from "@/components/admin/archive-control";
-import ArchivedBadge from "@/components/admin/archived-badge";
+import ClientWorkspaceHeader from "@/components/admin/client-workspace-header";
 import TeamMembersPanel from "@/components/team/team-members-panel";
 import InviteDrawer from "@/components/team/invite-drawer";
 import PendingInvitationsPanel from "@/components/team/pending-invitations-panel";
 import Button from "@/components/ui/button";
-import PageHeader from "@/components/ui/page-header";
-import TabNav from "@/components/ui/tab-nav";
 import { useArchiveClient } from "@/hooks/use-archive-client";
 import { useTeamInvitations } from "@/hooks/use-team-invitations";
 import type { Team } from "@/lib/auth/auth";
@@ -20,8 +15,6 @@ import {
   ADMIN_INVITATION_ROW_COPY,
   getInviteFeedback,
 } from "@/lib/team-invitations";
-
-export const CLIENTS_CRUMB = { label: "Clients", href: "/admin" };
 
 type TeamViewProps = {
   team: Team;
@@ -39,7 +32,6 @@ export default function TeamView({ team }: TeamViewProps): React.ReactNode {
     titleRef,
   });
   const isArchived = team.archivedAt !== null;
-  const archiveVariant = isArchived ? "archived" : "active";
 
   // Arriving from create, the drawer's trigger may be gone: focus the h1
   // (the invite drawer, when it opens, takes focus from there). The marker
@@ -53,39 +45,25 @@ export default function TeamView({ team }: TeamViewProps): React.ReactNode {
 
   return (
     <>
-      <PageHeader
-        breadcrumb={[CLIENTS_CRUMB, { label: team.name }]}
-        title={team.name}
-        titleRef={titleRef}
-        badge={
-          isArchived && <ArchivedBadge isAnimated={archive.isJustArchived} />
-        }
-        action={
-          <ArchiveControl variant={archiveVariant} archive={archive}>
-            {team.canInviteFirstOwner && (
-              <Button
-                ref={invitations.inviteButtonRef}
-                variant="primary"
-                icon={UserPlus}
-                className="whitespace-nowrap"
-                disabled={archive.isBusy}
-                onClick={() => invitations.handleInviteOpenChange(true)}
-              >
-                Invite first Owner
-              </Button>
-            )}
-          </ArchiveControl>
-        }
-      />
-      <ArchiveStatus
-        variant={archiveVariant}
-        clientName={team.name}
+      <ClientWorkspaceHeader
+        client={team}
+        tab="team"
         archive={archive}
-      />
-      <TabNav
-        label="Client sections"
-        items={[{ label: "Team", to: teamPath, current: true }]}
-      />
+        titleRef={titleRef}
+      >
+        {team.canInviteFirstOwner && (
+          <Button
+            ref={invitations.inviteButtonRef}
+            variant="primary"
+            icon={UserPlus}
+            className="whitespace-nowrap"
+            disabled={archive.isBusy}
+            onClick={() => invitations.handleInviteOpenChange(true)}
+          >
+            Invite first Owner
+          </Button>
+        )}
+      </ClientWorkspaceHeader>
       {/* The Admin has no own row: every row has actions. An archived
           Client's rows keep only "Remove". */}
       <TeamMembersPanel

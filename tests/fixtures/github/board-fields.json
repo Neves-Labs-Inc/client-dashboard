@@ -1,0 +1,73 @@
+{
+  "data": {
+    "node": {
+      "__typename": "ProjectV2",
+      "id": "PVT_kwDOBoard0001",
+      "number": 7,
+      "title": "Acme website",
+      "url": "https://github.com/orgs/Example-Org/projects/7",
+      "closed": false,
+      "updatedAt": "2026-10-01T12:30:00Z",
+      "fields": {
+        "nodes": [
+          {
+            "name": "Title",
+            "dataType": "TITLE"
+          },
+          {
+            "name": "Assignees",
+            "dataType": "ASSIGNEES"
+          },
+          {
+            "name": "Status",
+            "dataType": "SINGLE_SELECT",
+            "options": [
+              {
+                "id": "f75ad846",
+                "name": "Todo"
+              },
+              {
+                "id": "47fc9ee4",
+                "name": "In progress"
+              },
+              {
+                "id": "98236657",
+                "name": "Done"
+              }
+            ]
+          },
+          {
+            "name": "Client visibility",
+            "dataType": "SINGLE_SELECT",
+            "options": [
+              {
+                "id": "a1b2c3d4",
+                "name": "Visible"
+              },
+              {
+                "id": "e5f6a7b8",
+                "name": "Internal"
+              }
+            ]
+          },
+          {
+            "name": "Client note",
+            "dataType": "TEXT"
+          },
+          {
+            "name": "Target date",
+            "dataType": "DATE"
+          },
+          {
+            "name": "Repository",
+            "dataType": "REPOSITORY"
+          },
+          {
+            "name": "Milestone",
+            "dataType": "MILESTONE"
+          }
+        ]
+      }
+    }
+  }
+}

@@ -1,0 +1,30 @@
+{
+  "data": {
+    "organization": {
+      "projectsV2": {
+        "pageInfo": {
+          "hasNextPage": true,
+          "endCursor": "Y3Vyc29yOnYyOpHO"
+        },
+        "nodes": [
+          {
+            "id": "PVT_kwDOBoard0001",
+            "number": 7,
+            "title": "Acme website",
+            "url": "https://github.com/orgs/Example-Org/projects/7",
+            "closed": false,
+            "updatedAt": "2026-10-01T12:30:00Z"
+          },
+          {
+            "id": "PVT_kwDOBoard0002",
+            "number": 3,
+            "title": "Old intranet",
+            "url": "https://github.com/orgs/Example-Org/projects/3",
+            "closed": true,
+            "updatedAt": "2025-06-15T08:00:00Z"
+          }
+        ]
+      }
+    }
+  }
+}
