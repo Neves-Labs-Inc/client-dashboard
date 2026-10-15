@@ -1,15 +1,19 @@
 import type { ShouldRevalidateFunctionArgs } from "react-router";
 import type {
   MappingEdit,
+  RemoveError,
   SaveMappingError,
   SyncError,
 } from "@/lib/board-sync/board-sync";
 import { withoutParam } from "@/lib/new-client";
 
-// The Projects & boards tab's Sync now and Map columns, posted to its route.
+// The Projects & boards tab's Sync now, Map columns, Unlink and Delete,
+// posted to its route.
 
 export const SYNC_NOW_INTENT = "sync-now";
 export const SAVE_MAPPING_INTENT = "save-mapping";
+export const UNLINK_INTENT = "unlink";
+export const DELETE_INTENT = "delete";
 export const PROJECT_ID_FIELD = "projectId";
 // The Map columns drawer opens from `?map=<projectId>` on the tab.
 export const MAP_PARAM = "map";
@@ -25,6 +29,16 @@ export type SyncNowOutcome =
 export type SaveMappingOutcome =
   | { kind: "saved" }
   | { kind: "refused"; error: SaveMappingError }
+  // Server or network failure.
+  | { kind: "failed" };
+
+export type RemoveIntent = typeof UNLINK_INTENT | typeof DELETE_INTENT;
+
+export type RemoveOutcome =
+  | { kind: "unlinked" }
+  | { kind: "deleted" }
+  // An expected refusal, as the module's code.
+  | { kind: "refused"; error: RemoveError }
   // Server or network failure.
   | { kind: "failed" };
 

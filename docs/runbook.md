@@ -46,9 +46,39 @@ Then open `http://localhost:3000` and `http://localhost:3000/healthz`. `host.doc
 
 Off Vercel the app ignores `X-Forwarded-For` (anyone can set it), so the sign-in rate limits share one bucket per path for every client: 5 magic-link requests a minute in total. That is safe, only tighter. Before self-hosting for real, behind a proxy that overwrites the header, change `trustForwardedFor` in `app/lib/auth/auth.server.ts` through a ticket.
 
+### Local GitHub sync
+
+Board sync is off until the five `GITHUB_*` vars are set: Home says "GitHub isn't connected.", and Link and Sync now are hidden. Everything else works without it. To sync locally, use the **dev GitHub App**, never the prod one (its own private key and webhook secret).
+
+1. **The dev App** on `Neves-Labs-Inc` (org **Settings → Developer settings → GitHub Apps**), with the prod App's permissions and events (3.8 step 1): Organization permission **Projects: Read**, repository permission **Issues: Read**, nothing else; events **Projects v2**, **Projects v2 item**, **Projects v2 status update**, **Issues**, **Milestone**. Unlike prod, install it on **Only select repositories**: just the repos whose issues are on the test board. Its deliveries pass through smee (step 2), so it must never see real client repos.
+2. **The smee channel.** Open `https://smee.io/new` and keep the URL it gives you. It is the dev App's **Webhook URL**, and `SMEE_URL` in `.env`. **Keep `SMEE_URL` private, like a secret**: a smee channel has no auth, so anyone with the URL can watch every delivery (issue titles, bodies, assignees) and smee keeps recent ones. The webhook secret only proves deliveries are GitHub's; it hides nothing. Never paste the URL in chat or screenshots, and deactivate the dev App's webhook (**General → Webhook → Active**) when you aren't using it. Pick a webhook secret (`openssl rand -base64 32`) and set it both on the App and as `GITHUB_WEBHOOK_SECRET`.
+3. **`.env`**: the dev App's `GITHUB_APP_ID` (its **General** page), `GITHUB_APP_PRIVATE_KEY` (a key generated on that page: the PEM between double quotes, newlines and all, or on one line with `\n` escapes), `GITHUB_APP_INSTALLATION_ID` (the number at the end of the installation's URL, org **Settings → GitHub Apps → Configure**), `GITHUB_WEBHOOK_SECRET`, `GITHUB_ORG=Neves-Labs-Inc` and `SMEE_URL`. Set all five `GITHUB_*` vars or none: the app names the missing ones and refuses to start. `CRON_SECRET` is optional locally.
+4. Run both, in two terminals:
+
+   ```sh
+   pnpm dev            # the app, http://localhost:5173
+   pnpm dev:webhooks   # forwards the smee channel to http://localhost:5173/webhooks/github
+   ```
+
+   Without `pnpm dev:webhooks`, nothing arrives by webhook. Sync now and the poll still work. Locally nothing runs the poll on a schedule, so run it by hand: set `CRON_SECRET` (at least 32 characters) and send a **GET** (a POST answers 405):
+
+   ```sh
+   curl -H "Authorization: Bearer <CRON_SECRET>" http://localhost:5173/jobs/reconcile
+   ```
+
+   **Home's Unassigned GitHub boards panel starts empty.** It lists a cached pool of the org's boards that only the poll or a `projects_v2` webhook fills (any board edit with `pnpm dev:webhooks` running). On a fresh database, run the poll once as above, then reload Home.
+5. **The test board**: an org-owned Projects v2 board (boards on a personal account send no webhooks) with the three required fields, names exact:
+   - `Client visibility`, single select with the options `Visible` and `Internal`;
+   - `Client note`, text;
+   - `Target date`, date.
+
+   Only issues (not drafts or PRs) whose `Client visibility` is `Visible` become Tasks. A board missing a field still syncs. The sync records a warning on the Project (`sync_warnings`), but no screen shows it yet: the Phase 5 board detail page will. Until then, check the field names by hand.
+
+Deliveries the dev server missed (it was off, or `pnpm dev:webhooks` wasn't running) are lost; the next Sync now or poll catches up. The App's **Advanced** tab lists recent deliveries and can redeliver one.
+
 ## 2. Env vars and secrets
 
-Env is read and validated in one place, `app/lib/env.ts`. A missing or malformed var fails with its name, never its value.
+Env is read and validated in one place, `app/lib/env.ts`. A missing or malformed var fails with its name, never its value. For the five `GITHUB_*` vars, `CRON_SECRET` and `SMEE_URL`, an empty value (`GITHUB_ORG=`) counts as unset.
 
 | Var | What it is | Where it's set |
 |---|---|---|
@@ -207,6 +237,33 @@ Phase 3 adds Client User sign-in with Google. Without these two vars the portal 
 2. In Google Cloud Console (**APIs & Services → Credentials →** the OAuth client), confirm the two authorized redirect URIs are exactly `http://localhost:5173/api/auth/callback/google` and `https://portal.neveslabs.dev/api/auth/callback/google`.
 3. In **OAuth consent screen**, confirm the publishing status is **In production**. While it is **Testing**, only the listed test users can sign in, and anyone else gets Google's own error page.
 
+### 3.8 Phase 4 before prod deploy
+
+Phase 4 adds the GitHub board sync. Without these vars the portal still starts, but sync is off (the webhook and the cron job answer 503), so set them before the Phase 4 deploy. All six are required on prod.
+
+1. Create the **prod GitHub App** on `Neves-Labs-Inc` (org **Settings → Developer settings → GitHub Apps → New GitHub App**). It is separate from the dev App, with its own key and secret:
+   - **Permissions**: Organization **Projects: Read** and repository **Issues: Read**. Metadata: Read is added automatically. Nothing else, and no write permission.
+   - **Subscribe to events**: **Projects v2**, **Projects v2 item**, **Projects v2 status update**, **Issues**, **Milestone**.
+   - **Webhook**: active, URL `https://portal.neveslabs.dev/webhooks/github`, with a secret you generate (`openssl rand -base64 32`). Store it in your password manager.
+   - **Where can this GitHub App be installed?**: Only on this account.
+2. On the App's **General** page, note the **App ID** and **Generate a private key** (a `.pem` downloads). Keep the file in your password manager and delete the download.
+3. **Install App** on `Neves-Labs-Inc` with **All repositories**. The installation id is the number at the end of the installation's URL (org **Settings → GitHub Apps → Configure**).
+4. Generate the cron secret: `openssl rand -base64 32`.
+5. Vercel project **Settings → Environment Variables**, environment **Production**:
+
+   | Var | Value | Sensitive |
+   |---|---|---|
+   | `GITHUB_APP_ID` | the App ID (step 2) | no |
+   | `GITHUB_APP_PRIVATE_KEY` | the `.pem`'s contents, pasted as-is | yes |
+   | `GITHUB_APP_INSTALLATION_ID` | the installation id (step 3) | no |
+   | `GITHUB_WEBHOOK_SECRET` | the webhook secret (step 1) | yes |
+   | `GITHUB_ORG` | `Neves-Labs-Inc` | no |
+   | `CRON_SECRET` | the secret from step 4 | yes |
+
+   Set the five `GITHUB_*` vars together: the app refuses to start with only some of them. `CRON_SECRET` is separate: unset, the cron job answers 503.
+6. Nothing to set up for the cron itself: Vercel Cron reads `crons` from `vercel.json` on deploy (`/jobs/reconcile`, every 15 minutes) and sends `Authorization: Bearer <CRON_SECRET>`. After the deploy, **Settings → Cron Jobs** lists it.
+7. Move every client board still on a personal account (e.g. Vertilux Shade Calculator) to `Neves-Labs-Inc`: board webhooks fire only for org-owned boards.
+
 ## 4. How a deploy works
 
 Every push to `main` (a merged PR) runs `.github/workflows/ci.yml`:
@@ -276,6 +333,23 @@ For the Gmail app password (`SMTP_PASSWORD`):
 
 If the old app password may have leaked, revoke it first (mail stops until the redeploy), then do steps 1 to 3.
 
+For the GitHub App private key (`GITHUB_APP_PRIVATE_KEY`):
+
+1. On the App's **General** page, **Generate a private key**. An App can hold several keys, and the old one keeps working until you delete it.
+2. Update `GITHUB_APP_PRIVATE_KEY` in Vercel (Production) with the new `.pem`'s contents.
+3. Redeploy (re-run the latest run on `main`), then press **Sync now** on a linked board and check "Last synced" moves.
+4. Delete the old key on the App's **General** page.
+
+If the old key may have leaked, delete it first (sync fails until the redeploy; the next poll catches up), then do steps 1 to 3.
+
+For the webhook secret (`GITHUB_WEBHOOK_SECRET`):
+
+1. Generate a new secret (`openssl rand -base64 32`).
+2. Update `GITHUB_WEBHOOK_SECRET` in Vercel (Production), then set the same secret on the App (**General → Webhook secret**) and redeploy right away. GitHub signs with the new secret at once, so until the new deploy is live each delivery gets a 401 and is dropped.
+3. Change an item on a linked board and check "Last synced" moves within seconds. Anything missed in between is caught by the next poll (within 15 minutes), or redeliver it from the App's **Advanced** tab.
+
+For `CRON_SECRET`: generate a new one (`openssl rand -base64 32`), update it in Vercel (Production), then redeploy. Vercel Cron sends the deployment's current value, so nothing else changes. At the next :00/:15/:30/:45, the Vercel logs show `/jobs/reconcile` answering 200. A 401 there means the deployed value and the env var disagree: redeploy.
+
 ### Magic links stop arriving: the hourly cap
 
 Each address (`ADMIN_EMAIL` and every Client User or invitee) gets at most 10 magic links per hour, whatever IPs ask for them. Once the cap is spent, the sign-in screen still says "Check your email" but nothing is sent, and the Vercel function logs show `auth: magic-link email skipped (hourly cap reached)`. That line means someone (you, or anyone who knows the address) burned the 10/hour cap. If you didn't send the requests, someone is trying to mail-bomb the address.
@@ -337,6 +411,21 @@ After the Phase 3 deploy (§3.7 done first), on `https://portal.neveslabs.dev`. 
 
 If a magic link or invitation email doesn't arrive, see §5 ("Magic links stop arriving") and §7. If Google sign-in shows Google's own error page, the OAuth consent screen is still in Testing or the redirect URI is wrong (§3.7).
 
-## 9. Adding to this runbook
+## 9. Phase 4 prod walkthrough
+
+After the Phase 4 deploy (§3.8 done first), on `https://portal.neveslabs.dev` as the Admin. Use a test board on `Neves-Labs-Inc` with the three required fields (§1, "Local GitHub sync", step 5) and at least one issue on it, and a test Client, never a real client's.
+
+1. The test board shows in Home's **Unassigned GitHub boards** panel. Right after the first Phase 4 deploy the panel is empty: the pool fills on the first poll (Vercel Cron, at the next :00/:15/:30/:45) or the first `projects_v2` webhook (any edit to an org board). Wait for one, then reload Home. Then create a new board on GitHub: it shows there within seconds (reload Home).
+2. **Link** the test board to the test Client, mapping each of its columns. On the Client's **Projects & boards** tab it reads **Linked**, with a recent "Last synced".
+3. On GitHub, set an item's `Client visibility` to `Visible` and change its Status. Reload the tab: "Last synced" moves within seconds (the webhook).
+4. Close that item's issue. "Last synced" moves again (the `issues` event).
+5. **Sync now** updates the time. Then wait for the next :00/:15/:30/:45: the Vercel logs show `/jobs/reconcile` answering 200, and "Last synced" moves without any action.
+6. Add a Status column on GitHub, then **Sync now**: the row says "1 unmapped column". **Map columns**, map it and save: the line goes away.
+7. **Unlink** (then confirm): the toast says "Board unlinked", the row reads "Unlinked <date>", and the board is back on Home. Link it to the same Client again: the same row reads **Linked** again.
+8. **Delete** (then confirm): the toast says "Project deleted", the row is gone, and the board is back on Home.
+
+If "Last synced" doesn't move after a GitHub change, check the App's **Advanced** tab: a 401 means the webhook secret differs from `GITHUB_WEBHOOK_SECRET` (§5), a 503 that a `GITHUB_*` var is missing. The row's "Last sync failed: …" line carries the sync's own error. Delete the test board and the test Client's Project when you're done.
+
+## 10. Adding to this runbook
 
 Every Phase adds its settings here and to `.env.example` (roadmap gate 3): new env vars and secrets in section 2, new manual setup in section 3, new checks in a Phase walkthrough.

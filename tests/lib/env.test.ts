@@ -210,6 +210,39 @@ describe("getAppEnv", () => {
     expect(message).not.toContain(secret);
   });
 
+  it("leaves GitHub off when every GitHub var is empty", () => {
+    vi.stubEnv("GITHUB_APP_ID", "");
+    vi.stubEnv("GITHUB_APP_PRIVATE_KEY", "");
+    vi.stubEnv("GITHUB_APP_INSTALLATION_ID", "");
+    vi.stubEnv("GITHUB_WEBHOOK_SECRET", "");
+    vi.stubEnv("GITHUB_ORG", "");
+
+    const env = getAppEnv();
+
+    expect(env.GITHUB_APP_ID).toBeUndefined();
+    expect(env.GITHUB_APP_PRIVATE_KEY).toBeUndefined();
+    expect(env.GITHUB_APP_INSTALLATION_ID).toBeUndefined();
+    expect(env.GITHUB_WEBHOOK_SECRET).toBeUndefined();
+    expect(env.GITHUB_ORG).toBeUndefined();
+  });
+
+  it("counts an empty GitHub var as missing in a partial config", () => {
+    stubGithubEnv();
+    vi.stubEnv("GITHUB_ORG", "");
+
+    let message = "";
+    try {
+      getAppEnv();
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+    }
+
+    expect(message).toContain(
+      "GITHUB_ORG (must be set when any other GITHUB_ var is)",
+    );
+    expect(message).not.toContain("GITHUB_APP_ID");
+  });
+
   it("accepts all five GitHub vars", () => {
     stubGithubEnv();
 
@@ -263,6 +296,12 @@ describe("getAppEnv", () => {
     expect(getAppEnv().CRON_SECRET).toBeUndefined();
   });
 
+  it("leaves an empty CRON_SECRET unset", () => {
+    vi.stubEnv("CRON_SECRET", "");
+
+    expect(getAppEnv().CRON_SECRET).toBeUndefined();
+  });
+
   it("rejects a CRON_SECRET shorter than 32 chars without echoing it", () => {
     const shortSecret = "short-cron-secret-value";
     vi.stubEnv("CRON_SECRET", shortSecret);
@@ -291,5 +330,18 @@ describe("getDevWebhooksEnv", () => {
 
     vi.stubEnv("SMEE_URL", "http://smee.io/abc123");
     expect(() => getDevWebhooksEnv()).toThrow("SMEE_URL");
+  });
+
+  it("treats an empty SMEE_URL as missing", () => {
+    vi.stubEnv("SMEE_URL", undefined);
+    let missing = "";
+    try {
+      getDevWebhooksEnv();
+    } catch (error) {
+      missing = error instanceof Error ? error.message : String(error);
+    }
+    vi.stubEnv("SMEE_URL", "");
+
+    expect(() => getDevWebhooksEnv()).toThrow(missing);
   });
 });

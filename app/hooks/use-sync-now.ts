@@ -18,7 +18,7 @@ type SyncNowOptions = {
   onSynced: (projectId: string) => void;
 };
 
-type SyncNow = {
+export type SyncNow = {
   isSyncing: boolean;
   // The failed sync's alert line, until the next press.
   error: string | null;

@@ -92,6 +92,8 @@ export type MappingEdit = {
 
 export type SaveMappingError = "not-found" | "unlinked" | "archived";
 
+export type RemoveError = "not-found" | "archived";
+
 export type BoardSync = {
   // False when GitHub is off: no board can be linked or synced.
   isGithubConnected: boolean;
@@ -122,6 +124,12 @@ export type BoardSync = {
     projectId: string,
     mapping: Mapping,
   ): Promise<Result<null, SaveMappingError>>;
+  // Freezes the Project as it is (a Past Project, no longer synced) and
+  // returns its board to the pool. Already unlinked: success, no change.
+  unlink(projectId: string): Promise<Result<null, RemoveError>>;
+  // Deletes the Project, linked or not; the FK cascade deletes its rows, and
+  // a linked board returns to the pool.
+  deleteProject(projectId: string): Promise<Result<null, RemoveError>>;
   // The Admin's Sync now: syncProject.
   syncNow(projectId: string): Promise<Result<null, SyncError>>;
   // Refreshes the org board pool cache from GitHub.
@@ -550,6 +558,47 @@ export function createBoardSync(deps: BoardSyncDeps): BoardSync {
     return refusal === null ? OK_SAVED : failSave(refusal, projectId);
   }
 
+  // Unlink and delete: under the sync's lock, so they never interleave with
+  // a running sync (a later one skips the Project). Rows lock project, then
+  // client, the order every other path takes.
+  async function changeProject(
+    projectId: string,
+    operation: "unlink" | "delete",
+    write: (tx: Tx) => Promise<unknown>,
+  ): Promise<Result<null, RemoveError>> {
+    // Postgres would reject a malformed id (22P02); it can't name a Project.
+    if (!UUID_PATTERN.test(projectId)) {
+      return failRemove("not-found", operation, projectId);
+    }
+
+    const refusal = await db.withSystem(async (tx) => {
+      await lockProject(tx, projectId);
+      const lockRefusal = await lockProjectAndClient(tx, projectId);
+      if (lockRefusal !== null) return lockRefusal;
+
+      await write(tx);
+      return null;
+    });
+    return refusal === null
+      ? OK_REMOVED
+      : failRemove(refusal, operation, projectId);
+  }
+
+  const unlink = (projectId: string): Promise<Result<null, RemoveError>> =>
+    changeProject(projectId, "unlink", (tx) =>
+      tx
+        .update(projects)
+        .set({ unlinkedAt: now() })
+        .where(and(eq(projects.id, projectId), isNull(projects.unlinkedAt))),
+    );
+
+  const deleteProject = (
+    projectId: string,
+  ): Promise<Result<null, RemoveError>> =>
+    changeProject(projectId, "delete", (tx) =>
+      tx.delete(projects).where(eq(projects.id, projectId)),
+    );
+
   return {
     isGithubConnected: pmSource !== null,
     listUnassignedBoards,
@@ -558,6 +607,8 @@ export function createBoardSync(deps: BoardSyncDeps): BoardSync {
     listProjects,
     getMapping,
     saveMapping,
+    unlink,
+    deleteProject,
     syncNow: syncProject,
     refreshPool,
     syncBoardByNodeId,
@@ -588,6 +639,21 @@ function failSave(
   console.warn(
     `board-sync: refused to save mapping of ${projectId} (${error})`,
   );
+  return { value: null, error, status: STATUS_BY_ERROR[error] };
+}
+
+const OK_REMOVED: Result<null, RemoveError> = {
+  value: null,
+  error: null,
+  status: 200,
+};
+
+function failRemove(
+  error: RemoveError,
+  operation: "unlink" | "delete",
+  projectId: string,
+): Result<null, RemoveError> {
+  console.warn(`board-sync: refused to ${operation} ${projectId} (${error})`);
   return { value: null, error, status: STATUS_BY_ERROR[error] };
 }
 
@@ -812,6 +878,27 @@ async function lockProject(tx: Tx, projectId: string): Promise<void> {
   await tx.execute(
     sql`select pg_advisory_xact_lock(${PROJECT_LOCK_NAMESPACE}, hashtext(${projectId}))`,
   );
+}
+
+// Locks the Project's row, then its Client's (shared: an archive waits, other
+// Projects' changes don't). A refusal names why it can't change.
+async function lockProjectAndClient(
+  tx: Tx,
+  projectId: string,
+): Promise<RemoveError | null> {
+  const [project] = await tx
+    .select({ clientId: projects.clientId })
+    .from(projects)
+    .where(eq(projects.id, projectId))
+    .for("update");
+  if (project === undefined) return "not-found";
+
+  const [client] = await tx
+    .select({ archivedAt: clients.archivedAt })
+    .from(clients)
+    .where(eq(clients.id, project.clientId))
+    .for("share");
+  return client.archivedAt === null ? null : "archived";
 }
 
 type Eligibility =

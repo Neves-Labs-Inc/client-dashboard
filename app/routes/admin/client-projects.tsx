@@ -18,13 +18,17 @@ import { describeError } from "@/lib/describe-error";
 import { INTENT_FIELD, parseMapping } from "@/lib/link-board";
 import { getNoStoreHeaders } from "@/lib/no-store-headers";
 import {
+  DELETE_INTENT,
   isMapDrawerClose,
   MAP_PARAM,
   PROJECT_ID_FIELD,
   PROJECTS_COPY,
   SAVE_MAPPING_INTENT,
   SYNC_NOW_INTENT,
+  UNLINK_INTENT,
   type MapLoad,
+  type RemoveIntent,
+  type RemoveOutcome,
   type SaveMappingOutcome,
   type SyncNowOutcome,
 } from "@/lib/projects";
@@ -37,8 +41,21 @@ const UNPROCESSABLE = 422;
 const SERVER_ERROR = 500;
 const SERVICE_UNAVAILABLE = 503;
 
-// Sync now and Save mapping post here; both answer in the same shapes.
-type ProjectsOutcome = SyncNowOutcome | SaveMappingOutcome;
+// Sync now, Save mapping, Unlink and Delete post here; all answer in the
+// same shapes.
+type ProjectsOutcome = SyncNowOutcome | SaveMappingOutcome | RemoveOutcome;
+const PROJECTS_INTENTS = [
+  SYNC_NOW_INTENT,
+  SAVE_MAPPING_INTENT,
+  UNLINK_INTENT,
+  DELETE_INTENT,
+];
+const SUCCESS_KINDS: ProjectsOutcome["kind"][] = [
+  "synced",
+  "saved",
+  "unlinked",
+  "deleted",
+];
 type OutcomeResponse = ReturnType<typeof data<ProjectsOutcome>>;
 
 export function meta({ loaderData }: Route.MetaArgs): Route.MetaDescriptors {
@@ -74,7 +91,7 @@ export async function loader({ request, params }: Route.LoaderArgs) {
   );
 }
 
-// Sync now and Save mapping post here. The guard comes first, before the
+// Every row action posts here. The guard comes first, before the
 // body is read: it is the only CSRF protection.
 export async function action({
   request,
@@ -83,7 +100,7 @@ export async function action({
   const { headers } = await requireAdminMutation(request);
   const form = await request.formData().catch(() => null);
   const intent = readField(form, INTENT_FIELD);
-  if (intent !== SYNC_NOW_INTENT && intent !== SAVE_MAPPING_INTENT) {
+  if (!PROJECTS_INTENTS.includes(intent)) {
     console.warn("admin: refused an unknown Projects action");
     return data<ProjectsOutcome>(
       { kind: "failed" },
@@ -93,10 +110,7 @@ export async function action({
 
   const projectId = readField(form, PROJECT_ID_FIELD);
   try {
-    const answer =
-      intent === SYNC_NOW_INTENT
-        ? await syncClientProject(params.clientId, projectId)
-        : await saveClientMapping(params.clientId, projectId, form);
+    const answer = await runIntent(intent, params.clientId, projectId, form);
     return data(answer.outcome, { status: answer.status, headers });
   } catch (error) {
     // Name and code only: a driver error's message lists its parameters.
@@ -120,7 +134,7 @@ export async function clientAction({
 }: Route.ClientActionArgs): Promise<ProjectsOutcome | OutcomeResponse> {
   try {
     const outcome = await serverAction();
-    if (outcome.kind === "synced" || outcome.kind === "saved") return outcome;
+    if (SUCCESS_KINDS.includes(outcome.kind)) return outcome;
 
     const status = outcome.kind === "failed" ? SERVER_ERROR : UNPROCESSABLE;
     return data(outcome, { status });
@@ -149,6 +163,56 @@ function readField(form: FormData | null, name: string): string {
 
 type SyncAnswer = { outcome: SyncNowOutcome; status: number };
 type SaveAnswer = { outcome: SaveMappingOutcome; status: number };
+type RemoveAnswer = { outcome: RemoveOutcome; status: number };
+
+function runIntent(
+  intent: string,
+  clientId: string,
+  projectId: string,
+  form: FormData | null,
+): Promise<SyncAnswer | SaveAnswer | RemoveAnswer> {
+  if (intent === SYNC_NOW_INTENT) return syncClientProject(clientId, projectId);
+  if (intent === SAVE_MAPPING_INTENT) {
+    return saveClientMapping(clientId, projectId, form);
+  }
+
+  return removeClientProject(
+    intent === UNLINK_INTENT ? UNLINK_INTENT : DELETE_INTENT,
+    clientId,
+    projectId,
+  );
+}
+
+// Unlinks or deletes the Project only if it is this Client's (the URL's),
+// as Sync now does.
+async function removeClientProject(
+  intent: RemoveIntent,
+  clientId: string,
+  projectId: string,
+): Promise<RemoveAnswer> {
+  if (!(await hasProject(clientId, projectId))) {
+    console.warn(`admin: refused to ${intent} another Client's Project`, {
+      clientId,
+      projectId,
+    });
+    return {
+      outcome: { kind: "refused", error: "not-found" },
+      status: NOT_FOUND,
+    };
+  }
+
+  const result =
+    intent === UNLINK_INTENT
+      ? await boardSync.unlink(projectId)
+      : await boardSync.deleteProject(projectId);
+  let outcome: RemoveOutcome = {
+    kind: intent === UNLINK_INTENT ? "unlinked" : "deleted",
+  };
+  if (result.error !== null) {
+    outcome = { kind: "refused", error: result.error };
+  }
+  return { outcome, status: result.status };
+}
 
 // Saves the mapping only if the Project is this Client's (the URL's), as
 // Sync now does.

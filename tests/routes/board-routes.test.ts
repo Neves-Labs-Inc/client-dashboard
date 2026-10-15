@@ -17,6 +17,8 @@ const syncNow = vi.fn<BoardSync["syncNow"]>();
 const listProjects = vi.fn<BoardSync["listProjects"]>();
 const getMapping = vi.fn<BoardSync["getMapping"]>();
 const saveMapping = vi.fn<BoardSync["saveMapping"]>();
+const unlink = vi.fn<BoardSync["unlink"]>();
+const deleteProject = vi.fn<BoardSync["deleteProject"]>();
 
 vi.mock("@/lib/auth/auth.server", () => ({
   auth: {
@@ -36,6 +38,8 @@ vi.mock("@/lib/board-sync/board-sync.server", () => ({
     getMapping: (projectId: string) => getMapping(projectId),
     saveMapping: (...args: Parameters<BoardSync["saveMapping"]>) =>
       saveMapping(...args),
+    unlink: (projectId: string) => unlink(projectId),
+    deleteProject: (projectId: string) => deleteProject(projectId),
     listUnassignedBoards: async () => [],
   },
 }));
@@ -123,6 +127,15 @@ function saveMappingArgs<Args>(origin = ORIGIN): Args {
   );
 }
 
+function removeArgs<Args>(intent: "unlink" | "delete", origin = ORIGIN): Args {
+  return postArgs<Args>(
+    `/admin/clients/${CLIENT_ID}/projects`,
+    { intent, projectId: PROJECT_ID },
+    { clientId: CLIENT_ID },
+    origin,
+  );
+}
+
 function draftArgs<Args>(): Args {
   const request = new Request(`${ORIGIN}/admin/boards/${BOARD_ID}/link-draft`);
   return { request, params: { nodeId: BOARD_ID }, context: {} } as Args;
@@ -157,6 +170,10 @@ beforeEach(() => {
   getMapping.mockReset();
   saveMapping.mockReset();
   saveMapping.mockResolvedValue({ value: null, error: null, status: 200 });
+  unlink.mockReset();
+  unlink.mockResolvedValue({ value: null, error: null, status: 200 });
+  deleteProject.mockReset();
+  deleteProject.mockResolvedValue({ value: null, error: null, status: 200 });
 });
 
 const OWN_PROJECT = {
@@ -175,6 +192,8 @@ describe("the board routes' Admin guard", () => {
     "link action": () => homeAction(linkArgs()),
     "sync-now action": () => projectsAction(syncArgs()),
     "save-mapping action": () => projectsAction(saveMappingArgs()),
+    "unlink action": () => projectsAction(removeArgs("unlink")),
+    "delete action": () => projectsAction(removeArgs("delete")),
     "link-draft loader": () => linkDraftLoader(draftArgs()),
   };
 
@@ -197,6 +216,8 @@ describe("the board routes' Admin guard", () => {
     expect(link).not.toHaveBeenCalled();
     expect(syncNow).not.toHaveBeenCalled();
     expect(saveMapping).not.toHaveBeenCalled();
+    expect(unlink).not.toHaveBeenCalled();
+    expect(deleteProject).not.toHaveBeenCalled();
     expect(getLinkDraft).not.toHaveBeenCalled();
   });
 });
@@ -211,13 +232,30 @@ describe("a cross-origin board mutation", () => {
     const mappingPost =
       saveMappingArgs<Parameters<typeof projectsAction>[0]>(SIBLING_ORIGIN);
 
+    const unlinkPost = removeArgs<Parameters<typeof projectsAction>[0]>(
+      "unlink",
+      SIBLING_ORIGIN,
+    );
+    const deletePost = removeArgs<Parameters<typeof projectsAction>[0]>(
+      "delete",
+      SIBLING_ORIGIN,
+    );
+
     const linkThrown = await settle(() => homeAction(linkPost));
+    const unlinkThrown = await settle(() => projectsAction(unlinkPost));
+    const deleteThrown = await settle(() => projectsAction(deletePost));
     const syncThrown = await settle(() => projectsAction(syncPost));
     const mappingThrown = await settle(() => projectsAction(mappingPost));
 
     expect(linkThrown).toMatchObject({ init: { status: 403 } });
     expect(syncThrown).toMatchObject({ init: { status: 403 } });
     expect(mappingThrown).toMatchObject({ init: { status: 403 } });
+    expect(unlinkThrown).toMatchObject({ init: { status: 403 } });
+    expect(deleteThrown).toMatchObject({ init: { status: 403 } });
+    expect(unlinkPost.request.bodyUsed).toBe(false);
+    expect(deletePost.request.bodyUsed).toBe(false);
+    expect(unlink).not.toHaveBeenCalled();
+    expect(deleteProject).not.toHaveBeenCalled();
     expect(linkPost.request.bodyUsed).toBe(false);
     expect(syncPost.request.bodyUsed).toBe(false);
     expect(mappingPost.request.bodyUsed).toBe(false);
@@ -435,6 +473,68 @@ describe("the save-mapping action", () => {
     expect(outcome).toMatchObject({
       data: { kind: "failed" },
       init: { status: 500 },
+    });
+  });
+});
+
+describe("the unlink and delete actions", () => {
+  it("unlinks the Client's Project", async () => {
+    answerAs(ADMIN);
+    listProjects.mockResolvedValue([OWN_PROJECT]);
+
+    const outcome = await projectsAction(removeArgs("unlink"));
+
+    expect(unlink).toHaveBeenCalledWith(PROJECT_ID);
+    expect(outcome).toMatchObject({
+      data: { kind: "unlinked" },
+      init: { status: 200 },
+    });
+  });
+
+  it("deletes the Client's Project", async () => {
+    answerAs(ADMIN);
+    listProjects.mockResolvedValue([OWN_PROJECT]);
+
+    const outcome = await projectsAction(removeArgs("delete"));
+
+    expect(deleteProject).toHaveBeenCalledWith(PROJECT_ID);
+    expect(outcome).toMatchObject({
+      data: { kind: "deleted" },
+      init: { status: 200 },
+    });
+  });
+
+  it("refuses a Project of another Client with 404 and changes nothing", async () => {
+    answerAs(ADMIN);
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const unlinked = await projectsAction(removeArgs("unlink"));
+    const deleted = await projectsAction(removeArgs("delete"));
+
+    for (const outcome of [unlinked, deleted]) {
+      expect(outcome).toMatchObject({
+        data: { kind: "refused", error: "not-found" },
+        init: { status: 404 },
+      });
+    }
+    expect(unlink).not.toHaveBeenCalled();
+    expect(deleteProject).not.toHaveBeenCalled();
+  });
+
+  it("passes the module's refusal on with its status", async () => {
+    answerAs(ADMIN);
+    listProjects.mockResolvedValue([OWN_PROJECT]);
+    deleteProject.mockResolvedValue({
+      value: null,
+      error: "archived",
+      status: 409,
+    });
+
+    const outcome = await projectsAction(removeArgs("delete"));
+
+    expect(outcome).toMatchObject({
+      data: { kind: "refused", error: "archived" },
+      init: { status: 409 },
     });
   });
 });

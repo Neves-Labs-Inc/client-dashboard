@@ -41,6 +41,14 @@ const GITHUB_VARS = [
   "GITHUB_ORG",
 ] as const;
 
+// Optional vars where an empty value (`GITHUB_ORG=` in .env, a blank Vercel
+// field) means unset, so it turns its feature off instead of failing.
+const EMPTY_MEANS_UNSET: readonly string[] = [
+  ...GITHUB_VARS,
+  "CRON_SECRET",
+  "SMEE_URL",
+];
+
 const httpOrigin = z
   .string()
   .refine(
@@ -170,7 +178,7 @@ export type DevWebhooksEnv = z.infer<typeof devWebhooksEnvSchema>;
 
 // Names the bad vars and why, never their values (they hold credentials).
 function parseEnv<T>(schema: z.ZodType<T>): T {
-  const parsed = schema.safeParse(process.env);
+  const parsed = schema.safeParse(dropEmptyOptionals(process.env));
   if (!parsed.success) {
     const problems = parsed.error.issues.map(
       (issue) => `${issue.path.join(".")} (${issue.message})`,
@@ -190,6 +198,14 @@ export function getMigrateEnv(): MigrateEnv {
 
 export function getDevWebhooksEnv(): DevWebhooksEnv {
   return parseEnv(devWebhooksEnvSchema);
+}
+
+function dropEmptyOptionals(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  return Object.fromEntries(
+    Object.entries(env).filter(
+      ([name, value]) => !(value === "" && EMPTY_MEANS_UNSET.includes(name)),
+    ),
+  );
 }
 
 // `new URL(...).origin` drops any trailing slash or path, so equality means

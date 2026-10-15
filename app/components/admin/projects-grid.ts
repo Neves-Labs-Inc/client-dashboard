@@ -11,7 +11,8 @@ export const ACTIONS_HEADER_CLASS = "md:max-lg:absolute";
 
 // DOM order is Name, State, Last synced, Actions (the header's order).
 // Below md: name (with its lines) and state on row 1, "Synced …" on row 2,
-// Sync now on row 3.
+// the actions on row 3, an open Unlink or Delete confirm on row 4. From md
+// the confirm spans the row under the rest.
 export const CELL_CLASS = {
   name: "col-start-1 row-start-1 md:col-auto md:row-auto",
   state:
@@ -19,4 +20,5 @@ export const CELL_CLASS = {
   synced: "col-start-1 row-start-2 md:col-auto md:row-auto",
   actions:
     "col-span-full row-start-3 mt-1.5 md:col-span-full md:row-auto md:mt-0 md:flex md:justify-end lg:col-auto",
+  confirm: "col-span-full row-start-4 mt-1.5 md:row-auto md:mt-0",
 } as const;

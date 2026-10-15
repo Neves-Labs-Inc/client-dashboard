@@ -1,14 +1,22 @@
 import { Columns3, ExternalLink } from "lucide-react";
-import MapColumnsButton from "@/components/admin/map-columns-button";
+import ProjectRowActions from "@/components/admin/project-row-actions";
+import ProjectRowConfirm from "@/components/admin/project-row-confirm";
 import { CELL_CLASS, ROW_GRID_CLASS } from "@/components/admin/projects-grid";
-import SyncNowButton from "@/components/admin/sync-now-button";
 import DataTableCell from "@/components/ui/data-table-cell";
 import DataTableRow from "@/components/ui/data-table-row";
 import DateText from "@/components/ui/date-text";
 import StatusIcon from "@/components/ui/status-icon";
+import {
+  useProjectRowRemoval,
+  type RowRemoval,
+} from "@/hooks/use-project-row-removal";
 import { useSyncNow } from "@/hooks/use-sync-now";
 import type { ProjectRow as Project } from "@/lib/board-sync/board-sync";
-import { getUnmappedLine, PROJECTS_COPY } from "@/lib/projects";
+import {
+  getUnmappedLine,
+  PROJECTS_COPY,
+  type RemoveIntent,
+} from "@/lib/projects";
 import { cn } from "@/lib/utils";
 
 type ProjectRowProps = {
@@ -18,9 +26,20 @@ type ProjectRowProps = {
   // Map columns: a linked or closed row of an active Client. Nothing calls
   // GitHub, so it needn't be connected.
   canMap: boolean;
+  // Unlink and Delete: a row of an active Client. Both are database-only.
+  canRemove: boolean;
+  clientName: string;
   // The Projects route the row's actions post to.
   action: string;
   isHighlighted: boolean;
+  // This row's open Unlink or Delete confirm; one per panel.
+  confirming: RemoveIntent | null;
+  // Another row's removal is running: this row's Unlink and Delete wait.
+  isPanelBusy: boolean;
+  onBusyChange: (projectId: string, isBusy: boolean) => void;
+  onConfirmingChange: (intent: RemoveIntent | null) => void;
+  onNotice: (message: string | null) => void;
+  onRemoved: (projectId: string, removal: RowRemoval) => void;
   onSynced: (projectId: string) => void;
 };
 
@@ -29,8 +48,16 @@ export default function ProjectRow({
   project,
   canSync,
   canMap,
+  canRemove,
+  clientName,
   action,
   isHighlighted,
+  confirming,
+  isPanelBusy,
+  onBusyChange,
+  onConfirmingChange,
+  onNotice,
+  onRemoved,
   onSynced,
 }: ProjectRowProps): React.ReactNode {
   const sync = useSyncNow({
@@ -39,9 +66,22 @@ export default function ProjectRow({
     action,
     onSynced,
   });
+  const removal = useProjectRowRemoval({
+    projectId: project.id,
+    projectName: project.name,
+    action,
+    confirming,
+    isPanelBusy,
+    onBusyChange,
+    onConfirmingChange,
+    onNotice,
+    onRemoved,
+  });
   const isUnlinked = project.state === "unlinked";
   const canSyncRow = canSync && !isUnlinked;
   const canMapRow = canMap && !isUnlinked;
+  const canUnlinkRow = canRemove && !isUnlinked;
+  const hasActions = canSyncRow || canMapRow || canRemove;
   // A fresh failure replaces the recorded one, so it isn't shown twice.
   const recordedError = sync.error === null ? project.lastSyncError : null;
 
@@ -90,26 +130,39 @@ export default function ProjectRow({
       </DataTableCell>
       {/* Kept when empty, so the grid holds from lg. */}
       <DataTableCell
-        className={cn(
-          CELL_CLASS.actions,
-          !canSyncRow && !canMapRow && "max-lg:sr-only",
-        )}
+        className={cn(CELL_CLASS.actions, !hasActions && "max-lg:sr-only")}
       >
-        <div className="flex flex-wrap gap-2">
-          {canMapRow && (
-            <MapColumnsButton
-              projectId={project.id}
-              projectName={project.name}
-            />
-          )}
-          {canSyncRow && (
-            <SyncNowButton
-              isSyncing={sync.isSyncing}
-              onSync={sync.handleSync}
-            />
-          )}
-        </div>
+        <ProjectRowActions
+          projectId={project.id}
+          projectName={project.name}
+          canMap={canMapRow}
+          canSync={canSyncRow}
+          canUnlink={canUnlinkRow}
+          canDelete={canRemove}
+          confirming={confirming}
+          isPanelBusy={isPanelBusy}
+          sync={sync}
+          removal={removal}
+        />
       </DataTableCell>
+      {canRemove && confirming !== null && (
+        <DataTableCell className={CELL_CLASS.confirm}>
+          {/* Keyed, so swapping Unlink and Delete focuses the new Keep. */}
+          <ProjectRowConfirm
+            key={confirming}
+            id={removal.confirmId}
+            kind={confirming}
+            projectName={project.name}
+            isLinked={!isUnlinked}
+            clientName={clientName}
+            isPending={removal.isBusy}
+            error={removal.error}
+            onConfirm={removal.handleConfirm}
+            onKeep={removal.handleKeep}
+            onKeyDown={removal.handleConfirmKeyDown}
+          />
+        </DataTableCell>
+      )}
     </DataTableRow>
   );
 }

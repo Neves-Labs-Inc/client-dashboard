@@ -12,11 +12,13 @@ import ClientWorkspaceHeader, {
 import MapColumnsDrawer from "@/components/admin/map-columns-drawer";
 import ProjectRow from "@/components/admin/project-row";
 import ProjectsTable from "@/components/admin/projects-table";
+import PanelNotice from "@/components/team/panel-notice";
 import { buttonStyles } from "@/components/ui/button-styles";
 import EmptyState from "@/components/ui/empty-state";
 import Panel from "@/components/ui/panel";
 import PanelError from "@/components/ui/panel-error";
 import { useArchiveClient } from "@/hooks/use-archive-client";
+import { useRemovalConfirm } from "@/hooks/use-removal-confirm";
 import { useRowHighlight } from "@/hooks/use-row-highlight";
 import type {
   ProjectRow as Project,
@@ -62,6 +64,12 @@ export default function ProjectsView({
   const canSync = isGithubConnected && !isArchived;
   const projectsPath = getProjectsPath(client.clientId);
   const map = useMapDrawer(projects, mapLoad, isArchived, highlight);
+  const removal = useRemovalConfirm(
+    projects,
+    isArchived,
+    highlight,
+    panelTitleRef,
+  );
 
   // Arriving from a link, the drawer's trigger is gone: focus the h1 and
   // confirm. The marker leaves the history entry, so a reload doesn't
@@ -91,6 +99,7 @@ export default function ProjectsView({
         titleRef={panelTitleRef}
         meta={projects === null ? undefined : getMeta(projects)}
       >
+        {removal.notice && <PanelNotice>{removal.notice}</PanelNotice>}
         {projects === null && (
           <PanelError
             message={PROJECTS_COPY.loadFailed}
@@ -110,8 +119,18 @@ export default function ProjectsView({
                 project={project}
                 canSync={canSync}
                 canMap={!isArchived}
+                canRemove={!isArchived}
+                clientName={client.name}
                 action={projectsPath}
                 isHighlighted={project.id === highlightedId}
+                confirming={removal.getConfirming(project.id)}
+                isPanelBusy={removal.isBusyElsewhere(project.id)}
+                onBusyChange={removal.handleBusyChange}
+                onConfirmingChange={(intent) =>
+                  removal.setConfirming(project.id, intent)
+                }
+                onNotice={removal.setNotice}
+                onRemoved={removal.handleRemoved}
                 onSynced={highlight}
               />
             ))}
