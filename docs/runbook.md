@@ -60,7 +60,7 @@ Board sync is off until the five `GITHUB_*` vars are set: Home says "GitHub isn'
    pnpm dev:webhooks   # forwards the smee channel to http://localhost:5173/webhooks/github
    ```
 
-   Without `pnpm dev:webhooks`, nothing arrives by webhook. Sync now and the poll still work. Locally nothing runs the poll on a schedule, so run it by hand: set `CRON_SECRET` (at least 32 characters) and send a **GET** (a POST answers 405):
+   Without `pnpm dev:webhooks`, nothing arrives by webhook. Sync now and the poll still work. Locally nothing runs the poll on a schedule (prod runs it daily), so run it by hand: set `CRON_SECRET` (at least 32 characters) and send a **GET** (a POST answers 405):
 
    ```sh
    curl -H "Authorization: Bearer <CRON_SECRET>" http://localhost:5173/jobs/reconcile
@@ -99,7 +99,7 @@ Env is read and validated in one place, `app/lib/env.ts`. A missing or malformed
 | `GITHUB_APP_INSTALLATION_ID` | App runtime: the App's installation id on the org, a positive integer. **Required on prod.** | `.env` (optional), unset in `.env.test` and CI, Vercel env (prod, not sensitive) |
 | `GITHUB_WEBHOOK_SECRET` | App runtime: the secret GitHub signs the App's webhook deliveries with. **Required on prod.** | `.env` (optional), unset in `.env.test` and CI, Vercel env (prod, sensitive) |
 | `GITHUB_ORG` | App runtime: the org login whose Projects v2 boards are read, `Neves-Labs-Inc`. **Required on prod.** | `.env` (optional), unset in `.env.test` and CI, Vercel env (prod, not sensitive) |
-| `CRON_SECRET` | App runtime: the secret Vercel Cron sends as `Authorization: Bearer <CRON_SECRET>` to `/jobs/reconcile` (every 15 minutes, `vercel.json`). At least 32 characters; independent of the `GITHUB_*` group. Unset (or GitHub off), the job answers 503. **Required on prod.** | `.env` (optional), unset in `.env.test` and CI, Vercel env (prod: `openssl rand -base64 32`, sensitive) |
+| `CRON_SECRET` | App runtime: the secret Vercel Cron sends as `Authorization: Bearer <CRON_SECRET>` to `/jobs/reconcile` (once a day, `vercel.json`). At least 32 characters; independent of the `GITHUB_*` group. Unset (or GitHub off), the job answers 503. **Required on prod.** | `.env` (optional), unset in `.env.test` and CI, Vercel env (prod: `openssl rand -base64 32`, sensitive) |
 | `SMEE_URL` | Local only: the dev GitHub App's smee.io channel (its webhook URL). Read by `pnpm dev:webhooks`, which forwards deliveries to `http://localhost:5173/webhooks/github`; never read by the app. | `.env` (optional). Never on Vercel or CI. |
 | `MAIL_FROM` | App runtime: sender address. The display name is always "Neves Labs". | `.env` / `.env.test` (`portal@localhost.test`), CI inline (`test` job), Vercel env (prod: the dedicated Gmail address) |
 | `DATABASE_URL_OWNER` | Migrate command: runs migrations as `neondb_owner`. | `.env`, `.env.test`, CI inline (`test` job), GitHub `production` environment secret (prod: Neon **direct** URL) |
@@ -261,7 +261,7 @@ Phase 4 adds the GitHub board sync. Without these vars the portal still starts, 
    | `CRON_SECRET` | the secret from step 4 | yes |
 
    Set the five `GITHUB_*` vars together: the app refuses to start with only some of them. `CRON_SECRET` is separate: unset, the cron job answers 503.
-6. Nothing to set up for the cron itself: Vercel Cron reads `crons` from `vercel.json` on deploy (`/jobs/reconcile`, every 15 minutes) and sends `Authorization: Bearer <CRON_SECRET>`. After the deploy, **Settings → Cron Jobs** lists it.
+6. Nothing to set up for the cron itself: Vercel Cron reads `crons` from `vercel.json` on deploy (`/jobs/reconcile`, daily between 09:00 and 09:59 UTC on Hobby; webhooks are the primary sync path and this is the safety net, and Vercel Pro would allow `*/15`) and sends `Authorization: Bearer <CRON_SECRET>`. After the deploy, **Settings → Cron Jobs** lists it.
 7. Move every client board still on a personal account (e.g. Vertilux Shade Calculator) to `Neves-Labs-Inc`: board webhooks fire only for org-owned boards.
 
 ## 4. How a deploy works
@@ -346,9 +346,9 @@ For the webhook secret (`GITHUB_WEBHOOK_SECRET`):
 
 1. Generate a new secret (`openssl rand -base64 32`).
 2. Update `GITHUB_WEBHOOK_SECRET` in Vercel (Production), then set the same secret on the App (**General → Webhook secret**) and redeploy right away. GitHub signs with the new secret at once, so until the new deploy is live each delivery gets a 401 and is dropped.
-3. Change an item on a linked board and check "Last synced" moves within seconds. Anything missed in between is caught by the next poll (within 15 minutes), or redeliver it from the App's **Advanced** tab.
+3. Change an item on a linked board and check "Last synced" moves within seconds. Anything missed in between is caught by the next daily run (or Sync now), or redeliver it from the App's **Advanced** tab.
 
-For `CRON_SECRET`: generate a new one (`openssl rand -base64 32`), update it in Vercel (Production), then redeploy. Vercel Cron sends the deployment's current value, so nothing else changes. At the next :00/:15/:30/:45, the Vercel logs show `/jobs/reconcile` answering 200. A 401 there means the deployed value and the env var disagree: redeploy.
+For `CRON_SECRET`: generate a new one (`openssl rand -base64 32`), update it in Vercel (Production), then redeploy. Vercel Cron sends the deployment's current value, so nothing else changes. Check it in Vercel **Settings → Cron Jobs → Run** on `/jobs/reconcile`: the logs show it answering 200. A 401 there means the deployed value and the env var disagree: redeploy.
 
 ### Magic links stop arriving: the hourly cap
 
@@ -415,11 +415,11 @@ If a magic link or invitation email doesn't arrive, see §5 ("Magic links stop a
 
 After the Phase 4 deploy (§3.8 done first), on `https://portal.neveslabs.dev` as the Admin. Use a test board on `Neves-Labs-Inc` with the three required fields (§1, "Local GitHub sync", step 5) and at least one issue on it, and a test Client, never a real client's.
 
-1. The test board shows in Home's **Unassigned GitHub boards** panel. Right after the first Phase 4 deploy the panel is empty: the pool fills on the first poll (Vercel Cron, at the next :00/:15/:30/:45) or the first `projects_v2` webhook (any edit to an org board). Wait for one, then reload Home. Then create a new board on GitHub: it shows there within seconds (reload Home).
+1. The test board shows in Home's **Unassigned GitHub boards** panel. Right after the first Phase 4 deploy the panel is empty: the pool fills on the first daily run (Vercel Cron) or the first `projects_v2` webhook (any edit to an org board). Rather than wait, edit any org board (or press **Run** under Cron Jobs), then reload Home. Then create a new board on GitHub: it shows there within seconds (reload Home).
 2. **Link** the test board to the test Client, mapping each of its columns. On the Client's **Projects & boards** tab it reads **Linked**, with a recent "Last synced".
 3. On GitHub, set an item's `Client visibility` to `Visible` and change its Status. Reload the tab: "Last synced" moves within seconds (the webhook).
 4. Close that item's issue. "Last synced" moves again (the `issues` event).
-5. **Sync now** updates the time. Then wait for the next :00/:15/:30/:45: the Vercel logs show `/jobs/reconcile` answering 200, and "Last synced" moves without any action.
+5. **Sync now** updates the time. Then press **Run** under Cron Jobs: the logs show `/jobs/reconcile` answering 200, and "Last synced" moves.
 6. Add a Status column on GitHub, then **Sync now**: the row says "1 unmapped column". **Map columns**, map it and save: the line goes away.
 7. **Unlink** (then confirm): the toast says "Board unlinked", the row reads "Unlinked <date>", and the board is back on Home. Link it to the same Client again: the same row reads **Linked** again.
 8. **Delete** (then confirm): the toast says "Project deleted", the row is gone, and the board is back on Home.

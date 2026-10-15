@@ -201,7 +201,7 @@ Sources: [Which PM tool should feed client-facing project status?][#2], [Lock th
 - **Triggers:**
   - a `projects_v2*` webhook (`projects_v2`, `projects_v2_item`, `projects_v2_status_update`; org-owned projects only, public preview), signature verified, triggers a refetch of that board over GraphQL, upserted into Postgres;
   - the `issues` and `milestone` webhooks, for the issue changes the board's own events don't carry (an issue closed, a milestone's title or due date). An `issues` event refetches the linked boards that hold the issue, a `milestone` event those that hold an issue from its repository (Franklin, Phase 4 planning (2026-10-14));
-  - a **reconcile poll** covers missed deliveries. It is an HTTP-triggered job called by **Vercel Cron** (on AWS later, a timer or EventBridge calls the same code), guarded by `pg_try_advisory_xact_lock` inside an interactive transaction. It runs **every 15 minutes**, which lets Neon scale to zero between runs and stay within the Free plan's compute ([Settle the ops and infra gaps][#22]);
+  - a **reconcile poll** covers missed deliveries. It is an HTTP-triggered job called by **Vercel Cron** (on AWS later, a timer or EventBridge calls the same code), guarded by `pg_try_advisory_xact_lock` inside an interactive transaction. It runs **once a day** (09:00–09:59 UTC on Vercel Hobby): webhooks are the primary sync path, the daily run is the safety net for missed deliveries, and **Sync now** is the manual refresh. Vercel Pro would allow restoring `*/15`. Running rarely lets Neon scale to zero between runs and stay within the Free plan's compute ([Settle the ops and infra gaps][#22]);
   - the Admin's **"Sync now"** button on a board.
 - **Required board fields** (fixed names): `Client visibility` (single-select `Visible / Internal`), `Client note` (text), `Target date` (date). The sync flags a board missing any of them (`sync_warnings`).
 - **Mapping:**
@@ -326,7 +326,7 @@ Sources: [How do environments, CI and deploy work?][#17], `docs/adr/0004-vercel-
 | Hosting | Vercel Pro (Hobby can't be used commercially), functions in `iad1` |
 | Database | Neon Postgres (16+), `us-east-1`; Free while building, upgraded to paid before the first real Client's data lands |
 | File storage | None (v1 stores no files) |
-| Portability rules | No Vercel-only APIs; poll is HTTP-triggered (Vercel Cron, every 15 min); transaction-level advisory lock; roles and grants in migrations; Dockerfile built in CI on every PR |
+| Portability rules | No Vercel-only APIs; poll is HTTP-triggered (Vercel Cron, daily); transaction-level advisory lock; roles and grants in migrations; Dockerfile built in CI on every PR |
 | Environments | Local (Docker Postgres) + prod only. Vercel preview deploys disabled |
 | Local GitHub sync | A separate read-only **dev GitHub App** on `Neves-Labs-Inc` (own private key and webhook secret, never the prod App's) reads the real boards; its webhook URL is a smee.io channel forwarded to localhost ([#22][#22]) |
 | CI (GitHub Actions, every PR, required before merge) | Typecheck; tests including the cross-Client RLS integration tests against a Postgres service container (same major version as Neon); Docker build |
@@ -410,7 +410,7 @@ Slices 6 and 7 are independent once 2–5 land; 9 depends on 7 only for the Task
 
 All resolved; each names the ticket that settled it.
 
-1. ~~**Reconcile poll interval**~~ Resolved by [Settle the ops and infra gaps][#22]: every 15 minutes.
+1. ~~**Reconcile poll interval**~~ Resolved by [Settle the ops and infra gaps][#22]: every 15 minutes. (2026-10-14) changed to daily: Vercel Hobby allows only daily crons.
 2. ~~**Migrator role and role passwords**~~ Resolved by [#22][#22]: migrate as `neondb_owner`; a post-migrate step sets role passwords from secrets.
 3. ~~**Admin identity and bootstrap**~~ Resolved by [Settle the auth and access gaps][#23]: `ADMIN_EMAIL` env var; magic link grants passkey enrollment only.
 4. ~~**Last-Owner override**~~ Resolved by [Settle the auth and access gaps][#23]: no override; the rule binds the Admin too.

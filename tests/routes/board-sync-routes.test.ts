@@ -22,11 +22,10 @@ describe("board sync routes", () => {
     );
   });
 
-  it("schedules the reconcile job every 15 minutes on Vercel Cron", () => {
-    expect(vercelConfig.crons).toContainEqual({
-      path: "/jobs/reconcile",
-      schedule: "*/15 * * * *",
-    });
+  it("schedules the reconcile job once a day on Vercel Cron", () => {
+    expect(vercelConfig.crons).toEqual([
+      { path: "/jobs/reconcile", schedule: "0 9 * * *" },
+    ]);
   });
 
   it("answers a GET on the webhook with 405, allowing POST", () => {
