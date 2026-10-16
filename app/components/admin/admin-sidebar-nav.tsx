@@ -1,6 +1,7 @@
 import { House, Inbox, Plus } from "lucide-react";
 import { Link, useLocation } from "react-router";
 import ArchivedClientsDisclosure from "@/components/admin/archived-clients-disclosure";
+import type { NavAlert } from "@/components/ui/nav-alert-icons";
 import NavItem from "@/components/ui/nav-item";
 import { INBOX_PATH, REQUESTS_COPY } from "@/lib/admin-requests";
 import type { ArchivedClient, ClientSummary } from "@/lib/auth/auth";
@@ -24,6 +25,22 @@ type AdminSidebarNavProps = {
   // New Requests by active Client; empty when they failed to load.
   newRequestCounts: Record<string, number>;
 };
+
+function getClientAlerts(
+  clientId: string,
+  newRequestCounts: Record<string, number>,
+  syncProblemClientIds: string[],
+): NavAlert[] {
+  const alerts: NavAlert[] = [];
+  const newRequestCount = newRequestCounts[clientId] ?? 0;
+  if (newRequestCount > 0) {
+    alerts.push({ kind: "new-requests", count: newRequestCount });
+  }
+  if (syncProblemClientIds.includes(clientId)) {
+    alerts.push({ kind: "sync-problem" });
+  }
+  return alerts;
+}
 
 // The children of the Sidebar's <nav aria-label="Main">.
 export default function AdminSidebarNav({
@@ -76,11 +93,11 @@ export default function AdminSidebarNav({
               label={client.name}
               active={pathname.startsWith(`/admin/clients/${client.id}/`)}
               isHighlighted={client.id === createdClientId}
-              alerts={
-                syncProblemClientIds.includes(client.id)
-                  ? [{ kind: "sync-problem" }]
-                  : []
-              }
+              alerts={getClientAlerts(
+                client.id,
+                newRequestCounts,
+                syncProblemClientIds,
+              )}
             />
           </li>
         ))}

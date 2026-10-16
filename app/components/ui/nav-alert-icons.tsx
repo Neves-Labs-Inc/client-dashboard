@@ -1,18 +1,18 @@
-import { RefreshCwOff, type LucideIcon } from "lucide-react";
+import { Inbox, RefreshCwOff, type LucideIcon } from "lucide-react";
 
-// What a Client row can flag. Phase 6 adds { kind: "new-requests"; count }
-// and Phase 7 { kind: "overdue-invoice" }.
-export type NavAlert = { kind: "sync-problem" };
+// What a Client row can flag. Phase 7 adds { kind: "overdue-invoice" }.
+export type NavAlert =
+  { kind: "new-requests"; count: number } | { kind: "sync-problem" };
 
-const ALERT_DISPLAY: Record<
-  NavAlert["kind"],
-  { icon: LucideIcon; label: string }
-> = {
-  "sync-problem": { icon: RefreshCwOff, label: "Sync problem" },
+type AlertKind = NavAlert["kind"];
+
+const ALERT_ICONS: Record<AlertKind, LucideIcon> = {
+  "new-requests": Inbox,
+  "sync-problem": RefreshCwOff,
 };
 
 // DESIGN §6.3 order: inbox, sync, receipt.
-const ALERT_ORDER: NavAlert["kind"][] = ["sync-problem"];
+const ALERT_ORDER: AlertKind[] = ["new-requests", "sync-problem"];
 
 export function sortAlerts(alerts: NavAlert[]): NavAlert[] {
   return [...alerts].sort(
@@ -20,14 +20,27 @@ export function sortAlerts(alerts: NavAlert[]): NavAlert[] {
   );
 }
 
-export function getAlertLabels(alerts: NavAlert[]): string[] {
-  return sortAlerts(alerts).map((alert) => ALERT_DISPLAY[alert.kind].label);
+function getLabel(alert: NavAlert): string {
+  if (alert.kind === "sync-problem") return "Sync problem";
+
+  return alert.count === 1
+    ? `${alert.count} New Request`
+    : `${alert.count} New Requests`;
 }
 
-// ", sync problem, ..." for the link's accessible name.
+// "New Request" is a domain term, so only the sync problem is lowercased.
+function getSpokenLabel(alert: NavAlert): string {
+  return alert.kind === "sync-problem" ? "sync problem" : getLabel(alert);
+}
+
+export function getAlertLabels(alerts: NavAlert[]): string[] {
+  return sortAlerts(alerts).map(getLabel);
+}
+
+// ", 3 New Requests, sync problem" for the link's accessible name.
 export function getAlertsSpokenText(alerts: NavAlert[]): string {
-  return getAlertLabels(alerts)
-    .map((label) => `, ${label.toLowerCase()}`)
+  return sortAlerts(alerts)
+    .map((alert) => `, ${getSpokenLabel(alert)}`)
     .join("");
 }
 
@@ -37,16 +50,25 @@ export default function NavAlertIcons({
   alerts: NavAlert[];
 }): React.ReactNode {
   return (
-    <span className="ml-auto flex shrink-0 items-center gap-1.5">
+    <span className="ml-auto flex shrink-0 items-center gap-2">
       {sortAlerts(alerts).map((alert) => {
-        const { icon: Icon } = ALERT_DISPLAY[alert.kind];
+        const Icon = ALERT_ICONS[alert.kind];
+        const icon = (
+          <Icon size={16} aria-hidden="true" className="shrink-0 text-fg-2" />
+        );
+        if (alert.kind === "sync-problem") {
+          return <span key={alert.kind}>{icon}</span>;
+        }
         return (
-          <Icon
-            key={alert.kind}
-            size={16}
-            aria-hidden="true"
-            className="shrink-0 text-fg-2"
-          />
+          <span key={alert.kind} className="flex items-center gap-1">
+            {icon}
+            <span
+              aria-hidden="true"
+              className="font-mono text-xs/4 text-fg-2 tabular-nums"
+            >
+              {alert.count}
+            </span>
+          </span>
         );
       })}
     </span>

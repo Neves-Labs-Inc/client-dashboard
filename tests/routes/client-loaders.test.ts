@@ -76,10 +76,15 @@ vi.mock("@/lib/client-projects/client-projects.server", () => ({
 }));
 
 const countNewRequests = vi.fn<Requests["countNewRequests"]>();
+const listRequests = vi.fn<Requests["listRequests"]>();
+const listProjectOptions = vi.fn<Requests["listProjectOptions"]>();
 
 vi.mock("@/lib/requests/requests.server", () => ({
   requests: {
     countNewRequests: (clientId: string) => countNewRequests(clientId),
+    listRequests: (...args: Parameters<Requests["listRequests"]>) =>
+      listRequests(...args),
+    listProjectOptions: (clientId: string) => listProjectOptions(clientId),
   },
 }));
 
@@ -188,6 +193,10 @@ beforeEach(() => {
   countActiveProjects.mockResolvedValue(3);
   countNewRequests.mockReset();
   countNewRequests.mockResolvedValue(2);
+  listRequests.mockReset();
+  listRequests.mockResolvedValue([]);
+  listProjectOptions.mockReset();
+  listProjectOptions.mockResolvedValue([]);
   getAccess.mockReset();
   getTeam.mockReset();
   getTeam.mockResolvedValue(TEAM);
@@ -506,6 +515,57 @@ describe("the Overview loader", () => {
 
     const loaded = data as { projects: Promise<unknown> };
     await expect(loaded.projects).resolves.toBeNull();
+    expect(errorLog).toHaveBeenCalled();
+  });
+
+  it("lists one more than five of the signed-in Client's Requests, whatever the URL says", async () => {
+    answerAs(MEMBER);
+    const request = {
+      id: "r1",
+      kind: "BUG" as const,
+      title: "Receipt PDF is missing",
+      status: "NEW" as const,
+      submitterName: "Maya Chen",
+      createdAt: new Date("2026-10-07"),
+    };
+    listRequests.mockResolvedValue([request]);
+
+    const { data } = await settle(() =>
+      overviewLoader(argsFor(`/overview?clientId=${OTHER_CLIENT_ID}`)),
+    );
+
+    expect(listRequests).toHaveBeenCalledWith(CLIENT_ID, { limit: 6 });
+    const loaded = data as { requests: Promise<unknown> };
+    await expect(loaded.requests).resolves.toEqual([request]);
+  });
+
+  it("streams null for the Requests, leaving the Projects, when they can't load", async () => {
+    answerAs(OWNER);
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+    listRequests.mockRejectedValue(new Error("connection lost"));
+    listProjects.mockResolvedValue([PROJECT]);
+
+    const { data } = await settle(() => overviewLoader(argsFor("/overview")));
+
+    const loaded = data as {
+      requests: Promise<unknown>;
+      projects: Promise<unknown>;
+    };
+    await expect(loaded.requests).resolves.toBeNull();
+    await expect(loaded.projects).resolves.toEqual([PROJECT]);
+    expect(errorLog).toHaveBeenCalled();
+  });
+});
+
+describe("the Overview loader's drawer options", () => {
+  it("falls back to no options, keeping the page, when they can't load", async () => {
+    answerAs(OWNER);
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+    listProjectOptions.mockRejectedValue(new Error("connection lost"));
+
+    const { data } = await settle(() => overviewLoader(argsFor("/overview")));
+
+    expect((data as { projectOptions: unknown }).projectOptions).toEqual([]);
     expect(errorLog).toHaveBeenCalled();
   });
 });
