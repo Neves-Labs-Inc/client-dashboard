@@ -43,6 +43,13 @@
       "when": 1792099339388,
       "tag": "0005_tenant_read_hardening",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1792162149748,
+      "tag": "0006_requests",
+      "breakpoints": true
     }
   ]
 }

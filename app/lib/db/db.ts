@@ -19,8 +19,16 @@ const UUID_PATTERN =
 export type Database = NodePgDatabase<typeof schema>;
 export type Tx = Parameters<Parameters<Database["transaction"]>[0]>[0];
 
+// The signed-in Client User, for tables whose write policies check
+// app.user_id.
+export type TenantOptions = { userId: string };
+
 export type Db = {
-  withTenant<T>(clientId: string, work: (tx: Tx) => Promise<T>): Promise<T>;
+  withTenant<T>(
+    clientId: string,
+    work: (tx: Tx) => Promise<T>,
+    options?: TenantOptions,
+  ): Promise<T>;
   withSystem<T>(work: (tx: Tx) => Promise<T>): Promise<T>;
   // Better Auth only: its Drizzle adapter needs a database, not a
   // transaction. It is the same system pool as withSystem (app_system), with
@@ -59,15 +67,26 @@ export function createDbFromPools(pools: DbPools): Db {
   const statementTimeout = String(pools.queryTimeoutMs);
 
   return {
-    withTenant: async (clientId, work) => {
-      // A programmer error, so it throws rather than returning a Result.
+    withTenant: async (clientId, work, options) => {
+      // Programmer errors, so they throw rather than returning a Result.
       if (!UUID_PATTERN.test(clientId)) {
         throw new Error("withTenant: clientId must be a UUID");
       }
+      if (options !== undefined && !UUID_PATTERN.test(options.userId)) {
+        throw new Error("withTenant: userId must be a UUID");
+      }
 
+      // Without a userId, app.user_id stays unset and the write policies that
+      // check it refuse every write.
+      const userSetting: Record<string, string> =
+        options === undefined ? {} : { "app.user_id": options.userId };
       return runTransaction(
         pools.tenantPool,
-        { statement_timeout: statementTimeout, "app.client_id": clientId },
+        {
+          statement_timeout: statementTimeout,
+          "app.client_id": clientId,
+          ...userSetting,
+        },
         work,
       );
     },

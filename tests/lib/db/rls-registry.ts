@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { PgColumn, PgTable } from "drizzle-orm/pg-core";
 import type { Tx } from "@/lib/db/db";
 import {
@@ -5,6 +6,7 @@ import {
   milestones,
   projects,
   projectStatusMappings,
+  requests,
   statusUpdates,
   tasks,
 } from "@/lib/db/schema";
@@ -16,6 +18,7 @@ import {
   insertTask,
 } from "../../support/board";
 import { insertClients } from "../../support/clients";
+import { insertRequest } from "../../support/requests";
 
 export type RlsTableEntry = {
   table: PgTable;
@@ -27,7 +30,14 @@ export type RlsTableEntry = {
   // Inserts one row (plus any parents it needs) owned by clientId, inside
   // withSystem. It returns nothing: the harness finds the row by tenantColumn.
   seed: (tx: Tx, clientId: string) => Promise<void>;
+  // For a table whose write policies check app.user_id: the user the seeded
+  // rows belong to. The harness sets it for tenant writes, so only the
+  // app.client_id check can refuse them, and deletes its `user` row after.
+  tenantUserId?: string;
 };
+
+// Submits the seeded Requests of both Clients.
+const REQUEST_SUBMITTER_ID = randomUUID();
 
 // Every Client-owned table, parents before children: the harness checks each
 // one and cleans up in reverse order. A new table needs one entry here and
@@ -44,7 +54,7 @@ export type RlsTableEntry = {
 //   },
 //
 // Seeds may insert a Client's `organization` row (it has no RLS); the harness
-// deletes those after every registered table.
+// deletes those after every registered table, then the tenantUserId users.
 export const RLS_REGISTRY: RlsTableEntry[] = [
   {
     table: clients,
@@ -143,6 +153,37 @@ export const RLS_REGISTRY: RlsTableEntry[] = [
       await insertClients(tx, [clientId]);
       const projectId = await insertProject(tx, { clientId });
       await insertStatusMapping(tx, { clientId, projectId });
+    },
+  },
+  {
+    table: requests,
+    tenantColumn: requests.clientId,
+    tenantReadable: [
+      requests.id,
+      requests.clientId,
+      requests.projectId,
+      requests.submitterId,
+      requests.kind,
+      requests.title,
+      requests.description,
+      requests.status,
+      requests.responseNote,
+      requests.taskId,
+      requests.taskTitle,
+      requests.statusChangedAt,
+      requests.createdAt,
+    ],
+    tenantUserId: REQUEST_SUBMITTER_ID,
+    // With a Project, so the (project_id, client_id) FK is in play too. NEW,
+    // so the submitter's tenant write policies let the row be changed.
+    seed: async (tx, clientId) => {
+      await insertClients(tx, [clientId]);
+      const projectId = await insertProject(tx, { clientId });
+      await insertRequest(tx, {
+        clientId,
+        projectId,
+        submitterId: REQUEST_SUBMITTER_ID,
+      });
     },
   },
 ];
