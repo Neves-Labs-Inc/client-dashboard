@@ -21,6 +21,9 @@ export type RlsTableEntry = {
   table: PgTable;
   // The column the policy compares with app.client_id.
   tenantColumn: PgColumn;
+  // The columns app_tenant may SELECT. Every other column of the table must be
+  // refused to it, so a column added later stays hidden until listed here.
+  tenantReadable: PgColumn[];
   // Inserts one row (plus any parents it needs) owned by clientId, inside
   // withSystem. It returns nothing: the harness finds the row by tenantColumn.
   seed: (tx: Tx, clientId: string) => Promise<void>;
@@ -33,6 +36,7 @@ export type RlsTableEntry = {
 //   {
 //     table: invoices,
 //     tenantColumn: invoices.clientId,
+//     tenantReadable: [invoices.id, invoices.clientId, invoices.number],
 //     seed: async (tx, clientId) => {
 //       await insertClients(tx, [clientId]);
 //       await tx.insert(invoices).values({ clientId, number: "INV-1" });
@@ -45,6 +49,7 @@ export const RLS_REGISTRY: RlsTableEntry[] = [
   {
     table: clients,
     tenantColumn: clients.id,
+    tenantReadable: [clients.id, clients.archivedAt, clients.createdAt],
     // clients.id references organization.id, so the organization goes first.
     seed: async (tx, clientId) => {
       await insertClients(tx, [clientId]);
@@ -53,6 +58,14 @@ export const RLS_REGISTRY: RlsTableEntry[] = [
   {
     table: projects,
     tenantColumn: projects.clientId,
+    tenantReadable: [
+      projects.id,
+      projects.clientId,
+      projects.name,
+      projects.closedOnGithub,
+      projects.unlinkedAt,
+      projects.createdAt,
+    ],
     seed: async (tx, clientId) => {
       await insertClients(tx, [clientId]);
       await insertProject(tx, { clientId });
@@ -61,6 +74,16 @@ export const RLS_REGISTRY: RlsTableEntry[] = [
   {
     table: statusUpdates,
     tenantColumn: statusUpdates.clientId,
+    tenantReadable: [
+      statusUpdates.id,
+      statusUpdates.clientId,
+      statusUpdates.projectId,
+      statusUpdates.health,
+      statusUpdates.startDate,
+      statusUpdates.targetDate,
+      statusUpdates.body,
+      statusUpdates.githubCreatedAt,
+    ],
     seed: async (tx, clientId) => {
       await insertClients(tx, [clientId]);
       const projectId = await insertProject(tx, { clientId });
@@ -70,6 +93,13 @@ export const RLS_REGISTRY: RlsTableEntry[] = [
   {
     table: milestones,
     tenantColumn: milestones.clientId,
+    tenantReadable: [
+      milestones.id,
+      milestones.clientId,
+      milestones.projectId,
+      milestones.title,
+      milestones.dueDate,
+    ],
     seed: async (tx, clientId) => {
       await insertClients(tx, [clientId]);
       const projectId = await insertProject(tx, { clientId });
@@ -79,6 +109,18 @@ export const RLS_REGISTRY: RlsTableEntry[] = [
   {
     table: tasks,
     tenantColumn: tasks.clientId,
+    tenantReadable: [
+      tasks.id,
+      tasks.clientId,
+      tasks.projectId,
+      tasks.milestoneId,
+      tasks.title,
+      tasks.clientNote,
+      tasks.targetDate,
+      tasks.completedAt,
+      tasks.statusOptionId,
+      tasks.hiddenAt,
+    ],
     // With a milestone, so the (milestone_id, project_id, client_id) FK is in play too.
     seed: async (tx, clientId) => {
       await insertClients(tx, [clientId]);
@@ -90,6 +132,13 @@ export const RLS_REGISTRY: RlsTableEntry[] = [
   {
     table: projectStatusMappings,
     tenantColumn: projectStatusMappings.clientId,
+    tenantReadable: [
+      projectStatusMappings.id,
+      projectStatusMappings.clientId,
+      projectStatusMappings.projectId,
+      projectStatusMappings.githubOptionId,
+      projectStatusMappings.clientStatus,
+    ],
     seed: async (tx, clientId) => {
       await insertClients(tx, [clientId]);
       const projectId = await insertProject(tx, { clientId });

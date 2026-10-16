@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { formatDateTime } from "@/lib/format-date";
+import {
+  formatDate,
+  formatIsoDate,
+  formatDateTime,
+  parseDateOnly,
+} from "@/lib/format-date";
 
 // Intl may separate the time from AM/PM with a narrow no-break space.
 function normalizeSpaces(text: string): string {
@@ -24,5 +29,17 @@ describe("formatDateTime", () => {
   it("uses the business day, not UTC's, near midnight", () => {
     const date = new Date("2026-10-15T02:30:00Z");
     expect(normalizeSpaces(formatDateTime(date, now))).toBe("Oct 14, 10:30 PM");
+  });
+});
+
+describe("parseDateOnly", () => {
+  const now = new Date("2026-10-14T19:00:00Z");
+
+  it("keeps a date-only value on its own day in New York time", () => {
+    const date = parseDateOnly("2026-11-14");
+
+    expect(formatDate(date, now)).toBe("Nov 14");
+    expect(formatIsoDate(date)).toBe("2026-11-14");
+    expect(formatDate(parseDateOnly("2026-01-01"), now)).toBe("Jan 1");
   });
 });

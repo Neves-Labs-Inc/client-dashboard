@@ -1,0 +1,47 @@
+import { describe, expect, it } from "vitest";
+import { getWarningLine, isHttpsUrl } from "@/lib/board-detail";
+
+describe("getWarningLine", () => {
+  it("names a missing field", () => {
+    expect(
+      getWarningLine({ kind: "missing-field", field: "Client note" }),
+    ).toBe("Missing field: Client note");
+  });
+
+  it("lists a Milestone's due dates on their own days", () => {
+    expect(
+      getWarningLine({
+        kind: "milestone-date-mismatch",
+        title: "Beta launch",
+        dueDates: ["2026-11-14", "2026-11-21"],
+      }),
+    ).toBe(
+      "Milestone 'Beta launch' has different due dates across repos: Nov 14, Nov 21",
+    );
+  });
+
+  it("counts unreadable items, singular and plural", () => {
+    expect(getWarningLine({ kind: "unreadable-items", count: 1 })).toBe(
+      "1 item couldn't be read",
+    );
+    expect(getWarningLine({ kind: "unreadable-items", count: 3 })).toBe(
+      "3 items couldn't be read",
+    );
+  });
+});
+
+describe("isHttpsUrl", () => {
+  it("accepts an https URL", () => {
+    expect(isHttpsUrl("https://github.com/orgs/neves-labs/projects/7")).toBe(
+      true,
+    );
+  });
+
+  it("refuses other schemes and malformed URLs", () => {
+    expect(isHttpsUrl("javascript:alert(1)")).toBe(false);
+    expect(isHttpsUrl("http://github.com/orgs/neves-labs/projects/7")).toBe(
+      false,
+    );
+    expect(isHttpsUrl("not a url")).toBe(false);
+  });
+});

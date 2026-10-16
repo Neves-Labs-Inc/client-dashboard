@@ -144,17 +144,17 @@ beforeEach(() => {
 });
 
 describe("the / redirect for an invitee", () => {
-  it("joins the newest live Invitation and lands on /team with the welcome flag", async () => {
+  it("joins the newest live Invitation and lands on /overview with the welcome flag", async () => {
     answerAs(INVITEE);
 
     const { headers } = await settle(() => indexLoader(argsFor("/")));
 
     expect(joinInvitation).toHaveBeenCalledWith(expect.any(Request), null);
-    expect(headers.get("location")).toBe("/team?welcome");
+    expect(headers.get("location")).toBe("/overview?welcome");
     expect(headers.getSetCookie()).toEqual([RENEWED_COOKIE]);
   });
 
-  it("lands on /team without the flag when the join was already done", async () => {
+  it("lands on /overview without the flag when the join was already done", async () => {
     answerAs(INVITEE);
     joinInvitation.mockResolvedValue({
       value: JOINED,
@@ -164,7 +164,7 @@ describe("the / redirect for an invitee", () => {
 
     const { headers } = await settle(() => indexLoader(argsFor("/")));
 
-    expect(headers.get("location")).toBe("/team");
+    expect(headers.get("location")).toBe("/overview");
   });
 
   const refusals: [string, string][] = [
@@ -238,7 +238,7 @@ describe("the Invitation page", () => {
     expect(data).toEqual({ kind: "not-valid" });
   });
 
-  it("joins an invitee and sends them to /team with the welcome flag", async () => {
+  it("joins an invitee and sends them to /overview with the welcome flag", async () => {
     answerAs(INVITEE);
 
     const { headers } = await settle(() => invitationLoader(pageArgs()));
@@ -247,11 +247,11 @@ describe("the Invitation page", () => {
       expect.any(Request),
       INVITATION_ID,
     );
-    expect(headers.get("location")).toBe("/team?welcome");
+    expect(headers.get("location")).toBe("/overview?welcome");
     expect(headers.getSetCookie()).toEqual([RENEWED_COOKIE]);
   });
 
-  it("sends a member re-opening their accepted link to /team, no toast", async () => {
+  it("sends a member re-opening their accepted link to /overview, no toast", async () => {
     answerAs({ ...OTHER_CLIENT_USER, clientId: CLIENT_ID });
     joinInvitation.mockResolvedValue({
       value: JOINED,
@@ -261,7 +261,7 @@ describe("the Invitation page", () => {
 
     const { headers } = await settle(() => invitationLoader(pageArgs()));
 
-    expect(headers.get("location")).toBe("/team");
+    expect(headers.get("location")).toBe("/overview");
   });
 
   it("sends a join refused as archived to the No access page", async () => {

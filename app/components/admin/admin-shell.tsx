@@ -6,12 +6,14 @@ import MobileTopBar from "@/components/ui/mobile-top-bar";
 import NavItem from "@/components/ui/nav-item";
 import ShellBrand from "@/components/ui/shell-brand";
 import Sidebar from "@/components/ui/sidebar";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import type { ArchivedClient, ClientSummary } from "@/lib/auth/auth";
 
 type AdminShellProps = {
   email: string;
   clients: Pick<ClientSummary, "id" | "name">[] | null;
   archivedClients: Pick<ArchivedClient, "id" | "name">[] | null;
+  syncProblemClientIds: string[];
   children: React.ReactNode;
 };
 
@@ -19,36 +21,50 @@ export default function AdminShell({
   email,
   clients,
   archivedClients,
+  syncProblemClientIds,
   children,
 }: AdminShellProps): React.ReactNode {
   return (
-    <AppShell
-      sidebar={
-        <Sidebar
-          brand={
-            <ShellBrand title="Neves Labs" subtitle="Admin" layout="stacked" />
-          }
-          footer={<AdminUserMenu email={email} placement="sidebar" />}
-        >
-          <AdminSidebarNav
-            clients={clients}
-            archivedClients={archivedClients}
+    <TooltipProvider>
+      <AppShell
+        sidebar={
+          <Sidebar
+            brand={
+              <ShellBrand
+                title="Neves Labs"
+                subtitle="Admin"
+                layout="stacked"
+              />
+            }
+            footer={<AdminUserMenu email={email} placement="sidebar" />}
+          >
+            <AdminSidebarNav
+              clients={clients}
+              archivedClients={archivedClients}
+              syncProblemClientIds={syncProblemClientIds}
+            />
+          </Sidebar>
+        }
+        mobileTopBar={
+          <MobileTopBar
+            brand={
+              <ShellBrand title="Neves Labs" subtitle="Admin" layout="inline" />
+            }
+            action={<AdminUserMenu email={email} placement="mobile" />}
+            nav={
+              <NavItem
+                variant="tab"
+                to="/admin"
+                end
+                label="Home"
+                icon={House}
+              />
+            }
           />
-        </Sidebar>
-      }
-      mobileTopBar={
-        <MobileTopBar
-          brand={
-            <ShellBrand title="Neves Labs" subtitle="Admin" layout="inline" />
-          }
-          action={<AdminUserMenu email={email} placement="mobile" />}
-          nav={
-            <NavItem variant="tab" to="/admin" end label="Home" icon={House} />
-          }
-        />
-      }
-    >
-      {children}
-    </AppShell>
+        }
+      >
+        {children}
+      </AppShell>
+    </TooltipProvider>
   );
 }

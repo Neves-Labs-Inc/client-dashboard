@@ -70,6 +70,15 @@ vi.mock("@/lib/auth/auth.server", () => ({
   },
 }));
 
+const listSyncProblemClientIds = vi.fn<() => Promise<string[]>>();
+
+vi.mock("@/lib/board-sync/board-sync.server", () => ({
+  boardSync: {
+    listUnassignedBoards: async () => "github-off",
+    listSyncProblemClientIds: () => listSyncProblemClientIds(),
+  },
+}));
+
 const CLIENT_ID = "0199d0a4-5b6c-7d8e-9f01-23456789abcd";
 const TEAM: Team = {
   clientId: CLIENT_ID,
@@ -194,6 +203,8 @@ beforeEach(() => {
   unarchiveClient.mockResolvedValue({ value: null, error: null, status: 200 });
   listArchivedClients.mockReset();
   listArchivedClients.mockResolvedValue([]);
+  listSyncProblemClientIds.mockReset();
+  listSyncProblemClientIds.mockResolvedValue([]);
 });
 
 const MEMBER_USER_ID = "0199d0a4-5b6c-7d8e-9f01-23456789abcf";
@@ -338,6 +349,20 @@ describe("the Admin guard", () => {
   });
 });
 
+describe("the layout's sync-problem Clients", () => {
+  it("carries the ids the board sync names", async () => {
+    answerAs(ADMIN);
+    listClients.mockResolvedValue([]);
+    listSyncProblemClientIds.mockResolvedValue([CLIENT_ID]);
+
+    const result = (await adminLoader(argsFor("/admin"))) as unknown as {
+      data: { syncProblemClientIds: string[] };
+    };
+
+    expect(result.data.syncProblemClientIds).toEqual([CLIENT_ID]);
+  });
+});
+
 describe("when the roster can't load", () => {
   beforeEach(() => {
     answerAs(ADMIN);
@@ -354,6 +379,21 @@ describe("when the roster can't load", () => {
       email: "admin@test.local",
       clients: null,
       archivedClients: [],
+      syncProblemClientIds: [],
+    });
+  });
+
+  it("the layout still loads, with no sync-problem icons, when they can't", async () => {
+    listClients.mockResolvedValue([]);
+    listSyncProblemClientIds.mockRejectedValue(new Error("connection lost"));
+
+    const result = (await adminLoader(argsFor("/admin"))) as unknown as {
+      data: { clients: []; syncProblemClientIds: string[] };
+    };
+
+    expect(result.data).toMatchObject({
+      clients: [],
+      syncProblemClientIds: [],
     });
   });
 

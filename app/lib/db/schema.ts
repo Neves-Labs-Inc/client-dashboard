@@ -266,6 +266,14 @@ export const tasks = pgTable(
       table.githubRepositoryNodeId,
     ),
     buildTenantPolicy("tasks", table.clientId),
+    // Restrictive, so it narrows the tenant policy above: Client reads never
+    // see hidden Tasks. app_system bypasses RLS, so the sync and the Admin do.
+    pgPolicy("tasks_tenant_visible", {
+      as: "restrictive",
+      for: "select",
+      to: "app_tenant",
+      using: sql`${table.hiddenAt} IS NULL`,
+    }),
   ],
 );
 

@@ -24,6 +24,7 @@ import type {
   ProjectRow as Project,
   SaveMappingError,
 } from "@/lib/board-sync/board-sync";
+import { getFromProjectId } from "@/lib/board-detail";
 import { clearHistoryState } from "@/lib/history-state";
 import { getLinkedProject, getProjectsPath, LINK_COPY } from "@/lib/link-board";
 import { getTeamPath } from "@/lib/new-client";
@@ -38,6 +39,8 @@ type ProjectsViewProps = {
   // The loader's mapping for `?map=`; null without it.
   mapLoad: MapLoad | null;
   isGithubConnected: boolean;
+  // The loader's clock, for the sync-problem lines.
+  nowMs: number;
 };
 
 export default function ProjectsView({
@@ -45,11 +48,13 @@ export default function ProjectsView({
   projects,
   mapLoad,
   isGithubConnected,
+  nowMs,
 }: ProjectsViewProps): React.ReactNode {
   const { state } = useLocation();
   const titleRef = useRef<HTMLHeadingElement>(null);
   const panelTitleRef = useRef<HTMLHeadingElement>(null);
   const linked = getLinkedProject(state);
+  const fromProjectId = getFromProjectId(state);
   const { highlightedId, highlight } = useRowHighlight(
     linked?.linkedProjectId ?? null,
   );
@@ -86,6 +91,12 @@ export default function ProjectsView({
     );
   }, [linked]);
 
+  // Back from a board detail, its row's name link takes focus (the row does
+  // it); the marker leaves the history entry, so a reload doesn't replay it.
+  useEffect(() => {
+    if (fromProjectId !== null) clearHistoryState();
+  }, [fromProjectId]);
+
   return (
     <>
       <ClientWorkspaceHeader
@@ -120,7 +131,11 @@ export default function ProjectsView({
                 canSync={canSync}
                 canMap={!isArchived}
                 canRemove={!isArchived}
+                isClientArchived={isArchived}
+                nowMs={nowMs}
                 clientName={client.name}
+                clientId={client.clientId}
+                shouldFocusName={project.id === fromProjectId}
                 action={projectsPath}
                 isHighlighted={project.id === highlightedId}
                 confirming={removal.getConfirming(project.id)}

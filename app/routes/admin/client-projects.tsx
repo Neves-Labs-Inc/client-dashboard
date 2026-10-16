@@ -86,6 +86,8 @@ export async function loader({ request, params }: Route.LoaderArgs) {
       projects,
       mapping,
       isGithubConnected: boardSync.isGithubConnected,
+      // One clock for the server render and hydration (sync-problem lines).
+      nowMs: Date.now(),
     },
     { headers },
   );
@@ -347,7 +349,7 @@ async function loadProjects(clientId: string): Promise<ProjectRow[] | null> {
 export default function ClientProjects({
   loaderData,
 }: Route.ComponentProps): React.ReactNode {
-  const { client, projects, mapping, isGithubConnected } = loaderData;
+  const { client, projects, mapping, isGithubConnected, nowMs } = loaderData;
   if (client === null) return <ProjectsError />;
 
   // Keyed, so another Client's tab starts with fresh row state.
@@ -358,6 +360,7 @@ export default function ClientProjects({
       projects={projects}
       mapLoad={mapping}
       isGithubConnected={isGithubConnected}
+      nowMs={nowMs}
     />
   );
 }

@@ -1,6 +1,6 @@
 import { cn } from "@/lib/utils";
 
-type Status = "ok" | "risk" | "off" | "done" | "idle";
+export type Status = "ok" | "risk" | "off" | "done" | "idle";
 
 type StatusIconProps = {
   status: Status;

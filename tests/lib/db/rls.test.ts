@@ -1,12 +1,27 @@
 import { randomUUID } from "node:crypto";
-import { getTableName, inArray, sql, type SQL } from "drizzle-orm";
+import {
+  count,
+  eq,
+  getTableColumns,
+  getTableName,
+  inArray,
+  sql,
+  type SQL,
+} from "drizzle-orm";
 import { drizzle } from "drizzle-orm/node-postgres";
 import type { PgTable } from "drizzle-orm/pg-core";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import pg from "pg";
 import { createDb } from "@/lib/db/db";
-import { AUTH_TABLES, githubBoards, organization } from "@/lib/db/schema";
+import {
+  AUTH_TABLES,
+  githubBoards,
+  organization,
+  tasks,
+} from "@/lib/db/schema";
 import { getAppEnv, getMigrateEnv } from "@/lib/env";
+import { insertProject, insertTask } from "../../support/board";
+import { insertClients } from "../../support/clients";
 import { getPgError } from "../../support/pg-error";
 import { RLS_REGISTRY } from "./rls-registry";
 
@@ -20,6 +35,13 @@ const WITH_CHECK_VIOLATION = {
   kind: "refused",
   code: "42501",
   message: expect.stringMatching(/new row violates row-level security policy/),
+};
+
+// What reading a column app_tenant has no SELECT grant on raises.
+const PERMISSION_DENIED = {
+  kind: "refused",
+  code: "42501",
+  message: expect.stringMatching(/permission denied/),
 };
 
 const env = getAppEnv();
@@ -120,6 +142,80 @@ async function runTenantWrite(input: TenantWriteInput): Promise<TenantWrite> {
   }
 }
 
+type ReadOutcome =
+  | { kind: "read"; rows: Record<string, unknown>[] }
+  | { kind: "refused"; code: string; message: string };
+
+// Runs a read through withTenant and reports a refusal instead of throwing,
+// so a test can assert on the error code.
+async function readAsTenant(
+  clientId: string,
+  query: SQL,
+): Promise<ReadOutcome> {
+  try {
+    const result = await db.withTenant(clientId, (tx) =>
+      tx.execute<Record<string, unknown>>(query),
+    );
+    return { kind: "read", rows: result.rows };
+  } catch (error) {
+    const pgError = getPgError(error);
+    if (pgError === null) throw error;
+    return { kind: "refused", ...pgError };
+  }
+}
+
+// Every privilege a role can hold on a table, and the ones that can also be
+// granted per column.
+const TABLE_PRIVILEGES = [
+  "SELECT",
+  "INSERT",
+  "UPDATE",
+  "DELETE",
+  "TRUNCATE",
+  "REFERENCES",
+  "TRIGGER",
+];
+const COLUMN_PRIVILEGES = ["SELECT", "INSERT", "UPDATE", "REFERENCES"];
+
+// The privileges app_tenant holds on these tables, table-wide or on any
+// column (directly, via PUBLIC or via a role it belongs to). The has_*
+// functions see every role's grants; information_schema only shows the
+// caller's own, so it can't check app_tenant from app_system.
+async function getTenantPrivileges(
+  tableNames: string[],
+): Promise<{ table: string; privilege: string }[]> {
+  const inTables = sql.join(
+    tableNames.map((name) => sql`${name}`),
+    sql`, `,
+  );
+  const tablePrivileges = sql.join(
+    TABLE_PRIVILEGES.map((privilege) => sql`${privilege}`),
+    sql`, `,
+  );
+  const columnPrivileges = sql.join(
+    COLUMN_PRIVILEGES.map((privilege) => sql`${privilege}`),
+    sql`, `,
+  );
+  return db.withSystem(async (tx) => {
+    const result = await tx.execute<{ table: string; privilege: string }>(
+      sql`select relname as "table", privilege
+        from pg_class
+        cross join unnest(array[${tablePrivileges}]::text[]) as privilege
+        where relnamespace = 'public'::regnamespace
+          and relname in (${inTables})
+          and (
+            has_table_privilege('app_tenant', oid, privilege)
+            or (
+              privilege in (${columnPrivileges})
+              and has_any_column_privilege('app_tenant', oid, privilege)
+            )
+          )
+        order by relname, privilege`,
+    );
+    return result.rows;
+  });
+}
+
 const REGISTERED_TABLES = RLS_REGISTRY.map((entry) => ({
   ...entry,
   tableName: getTableName(entry.table),
@@ -127,10 +223,14 @@ const REGISTERED_TABLES = RLS_REGISTRY.map((entry) => ({
 
 describe.each(REGISTERED_TABLES)(
   "RLS on $tableName",
-  ({ table, tableName, tenantColumn, seed }) => {
+  ({ table, tableName, tenantColumn, tenantReadable, seed }) => {
     const clientA = randomUUID();
     const clientB = randomUUID();
     const column = sql.identifier(tenantColumn.name);
+    const allColumns = Object.values(getTableColumns(table));
+    const adminOnlyColumns = allColumns.filter(
+      (candidate) => !tenantReadable.includes(candidate),
+    );
 
     beforeAll(async () => {
       seededClientIds.push(clientA, clientB);
@@ -168,6 +268,71 @@ describe.each(REGISTERED_TABLES)(
 
       expect(ownerIds).toContain(clientA);
       expect(ownerIds.every((ownerId) => ownerId === clientA)).toBe(true);
+    });
+
+    it("refuses app_tenant every Admin-only column", async () => {
+      const outcomes: { column: string; outcome: ReadOutcome }[] = [];
+      for (const adminOnly of adminOnlyColumns) {
+        const outcome = await readAsTenant(
+          clientA,
+          sql`select ${sql.identifier(adminOnly.name)} from ${table}`,
+        );
+        outcomes.push({ column: adminOnly.name, outcome });
+      }
+
+      expect(outcomes).toEqual(
+        adminOnlyColumns.map((adminOnly) => ({
+          column: adminOnly.name,
+          outcome: PERMISSION_DENIED,
+        })),
+      );
+    });
+
+    it.runIf(adminOnlyColumns.length > 0)(
+      "refuses app_tenant select *",
+      async () => {
+        const outcome = await readAsTenant(
+          clientA,
+          sql`select * from ${table}`,
+        );
+
+        expect(outcome).toEqual(PERMISSION_DENIED);
+      },
+    );
+
+    it("shows Client A its own rows through every readable column", async () => {
+      const readable = sql.join(
+        tenantReadable.map((readableColumn) =>
+          sql.identifier(readableColumn.name),
+        ),
+        sql`, `,
+      );
+
+      const outcome = await readAsTenant(
+        clientA,
+        sql`select ${readable} from ${table}`,
+      );
+
+      expect(outcome.kind).toBe("read");
+      const rows = outcome.kind === "read" ? outcome.rows : [];
+      expect(rows).not.toHaveLength(0);
+      expect(rows.every((row) => row[tenantColumn.name] === clientA)).toBe(
+        true,
+      );
+    });
+
+    it("lets app_system read every column of Client A's rows", async () => {
+      const rows = await db.withSystem(async (tx) => {
+        const result = await tx.execute<Record<string, unknown>>(
+          sql`select * from ${table} where ${column} = ${clientA}`,
+        );
+        return result.rows;
+      });
+
+      expect(rows).not.toHaveLength(0);
+      expect(Object.keys(rows[0]).toSorted()).toEqual(
+        allColumns.map((each) => each.name).toSorted(),
+      );
     });
 
     const rowsOfB = sql`select * from ${table} where ${column} = ${clientB}`;
@@ -258,6 +423,90 @@ describe.each(REGISTERED_TABLES)(
   },
 );
 
+describe("Client-owned tables", () => {
+  const registeredTableNames = REGISTERED_TABLES.map(
+    (entry) => entry.tableName,
+  );
+
+  it("give app_tenant no table-wide SELECT, only column grants", async () => {
+    // A table-wide grant would cover any column added later; column grants
+    // don't. has_table_privilege ignores column grants, and unlike
+    // information_schema it sees grants to roles other than the caller's.
+    const tableWide = await db.withSystem(async (tx) => {
+      const result = await tx.execute<{ table: string }>(
+        sql`select relname as "table" from pg_class
+          where relnamespace = 'public'::regnamespace
+            and relname in (${sql.join(
+              registeredTableNames.map((name) => sql`${name}`),
+              sql`, `,
+            )})
+            and has_table_privilege('app_tenant', oid, 'SELECT')`,
+      );
+      return result.rows;
+    });
+
+    expect(tableWide).toEqual([]);
+  });
+});
+
+describe("hidden Tasks", () => {
+  const clientId = randomUUID();
+  let projectId = "";
+  let visibleTaskId = "";
+  let hiddenTaskId = "";
+
+  beforeAll(async () => {
+    seededClientIds.push(clientId);
+    await db.withSystem(async (tx) => {
+      await insertClients(tx, [clientId]);
+      projectId = await insertProject(tx, { clientId });
+      visibleTaskId = await insertTask(tx, { clientId, projectId });
+      hiddenTaskId = await insertTask(tx, {
+        clientId,
+        projectId,
+        hiddenAt: new Date(),
+      });
+    });
+  });
+
+  it("are not returned to app_tenant by id", async () => {
+    const rows = await db.withTenant(clientId, (tx) =>
+      tx.select({ id: tasks.id }).from(tasks).where(eq(tasks.id, hiddenTaskId)),
+    );
+
+    expect(rows).toEqual([]);
+  });
+
+  it("are left out of their Project's Tasks for app_tenant", async () => {
+    const rows = await db.withTenant(clientId, (tx) =>
+      tx
+        .select({ id: tasks.id })
+        .from(tasks)
+        .where(eq(tasks.projectId, projectId)),
+    );
+
+    expect(rows).toEqual([{ id: visibleTaskId }]);
+  });
+
+  it("are left out of app_tenant's count", async () => {
+    const [row] = await db.withTenant(clientId, (tx) =>
+      tx.select({ total: count() }).from(tasks),
+    );
+
+    expect(row.total).toBe(1);
+  });
+
+  it("stay readable to app_system", async () => {
+    const rows = await db.withSystem((tx) =>
+      tx.select().from(tasks).where(eq(tasks.projectId, projectId)),
+    );
+
+    expect(rows.map((row) => row.id).toSorted()).toEqual(
+      [visibleTaskId, hiddenTaskId].toSorted(),
+    );
+  });
+});
+
 describe("Better Auth tables", () => {
   const authTableNames = AUTH_TABLES.map((table) => getTableName(table));
   const inAuthTables = sql.join(
@@ -266,16 +515,7 @@ describe("Better Auth tables", () => {
   );
 
   it("give app_tenant no privileges at all", async () => {
-    const granted = await db.withSystem(async (tx) => {
-      const result = await tx.execute<{ table: string; privilege: string }>(
-        sql`select table_name as "table", privilege_type as privilege
-          from information_schema.role_table_grants
-          where grantee = 'app_tenant'
-            and table_schema = 'public'
-            and table_name in (${inAuthTables})`,
-      );
-      return result.rows;
-    });
+    const granted = await getTenantPrivileges(authTableNames);
 
     expect(granted).toEqual([]);
   });
@@ -344,16 +584,7 @@ describe("github_boards", () => {
   const tableName = getTableName(githubBoards);
 
   it("gives app_tenant no privileges", async () => {
-    const granted = await db.withSystem(async (tx) => {
-      const result = await tx.execute<{ privilege: string }>(
-        sql`select privilege_type as privilege
-          from information_schema.role_table_grants
-          where grantee = 'app_tenant'
-            and table_schema = 'public'
-            and table_name = ${tableName}`,
-      );
-      return result.rows;
-    });
+    const granted = await getTenantPrivileges([tableName]);
 
     expect(granted).toEqual([]);
   });
