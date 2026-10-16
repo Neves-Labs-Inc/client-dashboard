@@ -46,6 +46,10 @@ Then open `http://localhost:3000` and `http://localhost:3000/healthz`. `host.doc
 
 Off Vercel the app ignores `X-Forwarded-For` (anyone can set it), so the sign-in rate limits share one bucket per path for every client: 5 magic-link requests a minute in total. That is safe, only tighter. Before self-hosting for real, behind a proxy that overwrites the header, change `trustForwardedFor` in `app/lib/auth/auth.server.ts` through a ticket.
 
+### Local QA
+
+Use a normal Chrome user agent. Headless Chrome's default user agent is treated as a bot by the SSR entry, which disables streaming, so streamed loading states only show with a normal UA.
+
 ### Local GitHub sync
 
 Board sync is off until the five `GITHUB_*` vars are set: Home says "GitHub isn't connected.", and Link and Sync now are hidden. Everything else works without it. To sync locally, use the **dev GitHub App**, never the prod one (its own private key and webhook secret).
@@ -270,6 +274,16 @@ Phase 5 adds the Client User Overview, Projects list and Project view, the Admin
 
 The sync-problem flag assumes the daily cron: a linked board of an active Client is flagged when its last sync failed or it hasn't synced in over 26 hours. If Vercel Pro ever restores `*/15`, revisit that threshold (`SYNC_STALE_AFTER_MS` in `app/lib/board-sync/sync-problem.ts`).
 
+### 3.10 Phase 6 before prod deploy
+
+Phase 6 adds Requests: the Client User Requests pages and drawer, the Admin's inbox and triage, the Overview panel and the inbox alert icon. It adds **no env vars or secrets** (`.env.example` is unchanged) and nothing to set up by hand. Migration `0006_requests.sql` creates the `requests` table, its policies, grants and the `requests_status_changed_at` trigger; the usual migrate-gated deploy applies it (section 4).
+
+Known follow-ups, found in review and not fixed:
+
+- A live toast can cover the drawer footer when the drawer reopens right after a toast (the existing Toaster).
+- If a linked Task is deleted and the Admin then saves the Request, `task_title` is cleared, so the "(no longer tracked)" snapshot is lost.
+- The Overview and the Requests page duplicate the drawer, toast, highlight and focus logic.
+
 ## 4. How a deploy works
 
 Every push to `main` (a merged PR) runs `.github/workflows/ci.yml`:
@@ -447,6 +461,26 @@ After the Phase 5 deploy (§3.9), and locally with the qa-visual seed. Use a tes
 
    Reload as the Admin: the Client's sidebar row shows the sync-problem icon (hover or focus the row for its tooltip), the tab row and the board detail show "Sync problem: …", and Home's Clients table shows "Sync problem" under the Client's name. **Sync now** clears all three. On prod, check only that a healthy board shows no icon; the flag itself is covered locally.
 
-## 11. Adding to this runbook
+## 11. Phase 6 walkthrough
+
+After the Phase 6 deploy (§3.10), and locally with the qa-visual seed. Use a test Client with an Owner and a Member you can sign in as, at least one Project, and a few Tasks. Locally, simulate Task states in SQL only; never click "Sync now" (`.env` holds real GitHub credentials). On prod, change Task visibility on GitHub.
+
+1. **As a Member**, open **Requests** and submit a Bug with a Project. Check the toast, that it is the top row, and that the nav count is up by 1.
+2. Open it and edit the title. Then submit a second Request and withdraw it: it shows Withdrawn with no controls.
+3. **As an Owner** of the same Client: both Requests are visible, and the Owner has no edit or withdraw controls on the Member's.
+4. **As the Admin**: the sidebar **Requests** count and the Client's `inbox` icon plus count show. Open the inbox (New filter), then All.
+5. Triage the first Request to **Accepted**, link a Task and add a response note. As the Member: the status, the note, and the live Task with its status and Project link show. Edit and withdraw are gone.
+6. **Hide the linked Task.** Locally, set `hidden_at` in SQL:
+
+   ```sql
+   update tasks set hidden_at = now() where id = '<task id>';
+   ```
+
+   On prod, mark the issue `Internal` on GitHub. The Request shows "<title> (no longer tracked)". Make it visible again (`set hidden_at = null`, or back to `Visible` on GitHub), and the Task shows live again.
+7. **As the Admin**, move the Request to **Declined**. The link clears, and the Client sees Declined with no Task.
+8. The Withdrawn Request is read-only in the Admin. An archived Client's Requests tab is read-only, and its Requests are absent from the inbox.
+9. The **Overview** shows the Requests panel (5 newest, "View all" past 5), and "+ New" (aria-label "New request") works from there.
+
+## 12. Adding to this runbook
 
 Every Phase adds its settings here and to `.env.example` (roadmap gate 3): new env vars and secrets in section 2, new manual setup in section 3, new checks in a Phase walkthrough.
