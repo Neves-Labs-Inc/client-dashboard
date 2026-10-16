@@ -5,6 +5,7 @@ import ArchivedBadge from "@/components/admin/archived-badge";
 import PageHeader from "@/components/ui/page-header";
 import TabNav from "@/components/ui/tab-nav";
 import type { ArchiveClient } from "@/hooks/use-archive-client";
+import { getClientRequestsPath } from "@/lib/admin-requests";
 import { getProjectsPath } from "@/lib/link-board";
 import { getTeamPath } from "@/lib/new-client";
 
@@ -18,7 +19,7 @@ export type ClientWorkspace = {
 
 type ClientWorkspaceHeaderProps = {
   client: ClientWorkspace;
-  tab: "projects" | "team";
+  tab: "projects" | "team" | "requests";
   archive: ArchiveClient;
   titleRef: React.RefObject<HTMLHeadingElement | null>;
   // An active Client's primary action before "Archive client".
@@ -70,6 +71,11 @@ export default function ClientWorkspaceHeader({
             label: "Team",
             to: getTeamPath(client.clientId),
             current: tab === "team",
+          },
+          {
+            label: "Requests",
+            to: getClientRequestsPath(client.clientId),
+            current: tab === "requests",
           },
         ]}
       />

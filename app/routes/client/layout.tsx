@@ -11,12 +11,16 @@ import OverviewSkeleton from "@/components/client/overview-skeleton";
 import ClientTeamSkeleton from "@/components/client/client-team-skeleton";
 import ProfileSkeleton from "@/components/client/profile-skeleton";
 import ProjectsPageSkeleton from "@/components/projects/projects-page-skeleton";
+import RequestDetailSkeleton from "@/components/requests/request-detail-skeleton";
+import RequestsPageSkeleton from "@/components/requests/requests-page-skeleton";
 import { useWelcomeToast } from "@/hooks/use-welcome-toast";
 import { PROFILE_PATH } from "@/lib/profile";
 import { requireClientUser } from "@/lib/auth/require-access.server";
 import { clientProjects } from "@/lib/client-projects/client-projects.server";
 import { describeError } from "@/lib/describe-error";
 import { getNoStoreHeaders } from "@/lib/no-store-headers";
+import { isRequestDrawerToggle, REQUESTS_PATH } from "@/lib/request-drawer";
+import { requests } from "@/lib/requests/requests.server";
 import { revalidateUnlessThemeFailed } from "@/lib/theme";
 import type { Route } from "./+types/layout";
 
@@ -25,6 +29,7 @@ const TEAM_PATH = "/team";
 const PROJECTS_PATH = "/projects";
 // One Project's view: /projects/<id>, not /projects itself.
 const PROJECT_VIEW_PATH = /^\/projects\/[^/]+$/;
+const REQUEST_VIEW_PATH = /^\/requests\/[^/]+$/;
 
 // Guards every page of the client area. Child routes still call
 // requireClientUser in their own loaders and actions: this loader runs
@@ -32,34 +37,42 @@ const PROJECT_VIEW_PATH = /^\/projects\/[^/]+$/;
 export async function loader({ request }: Route.LoaderArgs) {
   const { access, headers } = await requireClientUser(request);
   const { clientId, clientName, name, email, role } = access;
-  const activeProjectCount = await loadActiveProjectCount(clientId);
+  const [activeProjectCount, newRequestCount] = await Promise.all([
+    loadNavCount("the active Projects", clientId, () =>
+      clientProjects.countActiveProjects(clientId),
+    ),
+    loadNavCount("the New Requests", clientId, () =>
+      requests.countNewRequests(clientId),
+    ),
+  ]);
   return data(
-    { clientName, name, email, role, activeProjectCount },
+    { clientName, name, email, role, activeProjectCount, newRequestCount },
     { headers },
   );
 }
 
-// The nav count is a nicety: when it fails the shell still renders, without
-// it. Only the error's name and code are logged.
-async function loadActiveProjectCount(
+// The nav counts are a nicety: when one fails the shell still renders,
+// without it. Only the error's name and code are logged.
+async function loadNavCount(
+  what: string,
   clientId: string,
+  count: () => Promise<number>,
 ): Promise<number | null> {
-  let count: number | null = null;
+  let total: number | null = null;
   try {
-    count = await clientProjects.countActiveProjects(clientId);
+    total = await count();
   } catch (error) {
-    console.error(
-      `client: couldn't count the active Projects (${describeError(error)})`,
-      { clientId },
-    );
+    console.error(`client: couldn't count ${what} (${describeError(error)})`, {
+      clientId,
+    });
   }
-  return count;
+  return total;
 }
 
 export const headers = getNoStoreHeaders;
 
 export function shouldRevalidate(args: ShouldRevalidateFunctionArgs): boolean {
-  return revalidateUnlessThemeFailed(args);
+  return revalidateUnlessThemeFailed(args) && !isRequestDrawerToggle(args);
 }
 
 export default function ClientLayout({
@@ -88,13 +101,18 @@ function getSkeleton(
     skeleton = <ProjectsPageSkeleton />;
   } else if (path === PROFILE_PATH) {
     skeleton = <ProfileSkeleton />;
+  } else if (path === REQUESTS_PATH) {
+    skeleton = <RequestsPageSkeleton />;
   } else if (path !== null && PROJECT_VIEW_PATH.test(path)) {
     skeleton = <ProjectViewSkeleton />;
+  } else if (path !== null && REQUEST_VIEW_PATH.test(path)) {
+    skeleton = <RequestDetailSkeleton />;
   }
   return skeleton;
 }
 
-// The Overview, Team, Profile, Projects and Project view loaders are awaited
+// The Overview, Team, Profile, Projects, Project view, Requests and Request
+// detail loaders are awaited
 // (Overview and Projects stream their list, but the page still loads first),
 // so a client-side navigation into any of them shows its skeleton meanwhile.
 // The path being loaded, or null when no other page is.

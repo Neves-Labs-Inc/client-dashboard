@@ -1,4 +1,4 @@
-import { FolderKanban, LayoutDashboard, Users } from "lucide-react";
+import { FolderKanban, Inbox, LayoutDashboard, Users } from "lucide-react";
 import ClientUserMenu from "@/components/client/client-user-menu";
 import AppShell from "@/components/ui/app-shell";
 import MobileTopBar from "@/components/ui/mobile-top-bar";
@@ -11,6 +11,7 @@ const BRAND_SUBTITLE = "Neves Labs · portal";
 const OVERVIEW_PATH = "/overview";
 const TEAM_PATH = "/team";
 const PROJECTS_PATH = "/projects";
+const REQUESTS_PATH = "/requests";
 
 type ClientShellProps = {
   clientName: string;
@@ -19,6 +20,8 @@ type ClientShellProps = {
   role: ClientAccess["role"];
   // Null when the count couldn't load: the sidebar shows none.
   activeProjectCount: number | null;
+  // Null when the count couldn't load: the sidebar shows none.
+  newRequestCount: number | null;
   children: React.ReactNode;
 };
 
@@ -28,6 +31,7 @@ export default function ClientShell({
   email,
   role,
   activeProjectCount,
+  newRequestCount,
   children,
 }: ClientShellProps): React.ReactNode {
   const brand = (
@@ -60,6 +64,15 @@ export default function ClientShell({
               />
             </li>
             <li>
+              <NavItem
+                to={REQUESTS_PATH}
+                label="Requests"
+                icon={Inbox}
+                count={newRequestCount ?? undefined}
+                countLabel="new"
+              />
+            </li>
+            <li>
               <NavItem to={TEAM_PATH} label="Team" icon={Users} />
             </li>
           </ul>
@@ -82,6 +95,12 @@ export default function ClientShell({
                 to={PROJECTS_PATH}
                 label="Projects"
                 icon={FolderKanban}
+              />
+              <NavItem
+                variant="tab"
+                to={REQUESTS_PATH}
+                label="Requests"
+                icon={Inbox}
               />
               <NavItem variant="tab" to={TEAM_PATH} label="Team" icon={Users} />
             </>

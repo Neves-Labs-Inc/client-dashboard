@@ -1,7 +1,8 @@
-import { House, Plus } from "lucide-react";
+import { House, Inbox, Plus } from "lucide-react";
 import { Link, useLocation } from "react-router";
 import ArchivedClientsDisclosure from "@/components/admin/archived-clients-disclosure";
 import NavItem from "@/components/ui/nav-item";
+import { INBOX_PATH, REQUESTS_COPY } from "@/lib/admin-requests";
 import type { ArchivedClient, ClientSummary } from "@/lib/auth/auth";
 import {
   getCreatedClientId,
@@ -20,6 +21,8 @@ type AdminSidebarNavProps = {
   archivedClients: Pick<ArchivedClient, "id" | "name">[] | null;
   // Active Clients with a sync-problem Project.
   syncProblemClientIds: string[];
+  // New Requests by active Client; empty when they failed to load.
+  newRequestCounts: Record<string, number>;
 };
 
 // The children of the Sidebar's <nav aria-label="Main">.
@@ -27,16 +30,31 @@ export default function AdminSidebarNav({
   clients,
   archivedClients,
   syncProblemClientIds,
+  newRequestCounts,
 }: AdminSidebarNavProps): React.ReactNode {
   const { pathname, state } = useLocation();
   // Arriving from a create: that Client's entry gets the highlight fade.
   const createdClientId = getCreatedClientId(state);
+  const newRequestTotal = Object.values(newRequestCounts).reduce(
+    (total, count) => total + count,
+    0,
+  );
 
   return (
     <>
       <ul className={LIST_CLASS}>
         <li>
           <NavItem to="/admin" end label="Home" icon={House} />
+        </li>
+        <li>
+          {/* Not `end`: it stays current on a Request's detail. */}
+          <NavItem
+            to={INBOX_PATH}
+            label={REQUESTS_COPY.requests}
+            icon={Inbox}
+            count={newRequestTotal}
+            countLabel="new"
+          />
         </li>
       </ul>
       <h2

@@ -3,6 +3,8 @@ import { cn } from "@/lib/utils";
 type ProfileReadOnlyRowProps = {
   label: string;
   isMono?: boolean;
+  // E.g. the highlight fade on a fact that just changed.
+  className?: string;
   children: React.ReactNode;
 };
 
@@ -11,10 +13,16 @@ type ProfileReadOnlyRowProps = {
 export default function ProfileReadOnlyRow({
   label,
   isMono = false,
+  className,
   children,
 }: ProfileReadOnlyRowProps): React.ReactNode {
   return (
-    <div className="grid grid-cols-1 gap-0.5 px-3 py-2 md:min-h-10 md:grid-cols-[160px_minmax(0,1fr)] md:items-baseline md:gap-3">
+    <div
+      className={cn(
+        "grid grid-cols-1 gap-0.5 px-3 py-2 md:min-h-10 md:grid-cols-[160px_minmax(0,1fr)] md:items-baseline md:gap-3",
+        className,
+      )}
+    >
       <dt className="text-[13px]/[18px] font-semibold text-fg">{label}</dt>
       <dd
         className={cn(

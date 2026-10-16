@@ -1,4 +1,5 @@
 import { Columns3 } from "lucide-react";
+import { FACT_ROW_CLASS } from "@/components/admin/admin-requests-grid";
 import SyncIssueLine from "@/components/admin/sync-issue-line";
 import SyncProblemLine from "@/components/admin/sync-problem-line";
 import SyncNowButton from "@/components/admin/sync-now-button";
@@ -20,9 +21,6 @@ type BoardSyncPanelProps = {
   nowMs: number;
   isSyncedHighlighted: boolean;
 };
-
-const FACT_ROW_CLASS =
-  "grid grid-cols-[7rem_minmax(0,1fr)] gap-x-3 border-t border-line px-3 py-2 text-[13px]/5 first:border-t-0";
 
 export default function BoardSyncPanel({
   detail,
