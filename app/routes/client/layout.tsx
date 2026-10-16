@@ -6,6 +6,7 @@ import {
   type ShouldRevalidateFunctionArgs,
 } from "react-router";
 import ClientShell from "@/components/client/client-shell";
+import ProjectViewSkeleton from "@/components/client/project-view-skeleton";
 import ClientTeamSkeleton from "@/components/client/client-team-skeleton";
 import ProfileSkeleton from "@/components/client/profile-skeleton";
 import ProjectsPageSkeleton from "@/components/projects/projects-page-skeleton";
@@ -20,6 +21,8 @@ import type { Route } from "./+types/layout";
 
 const TEAM_PATH = "/team";
 const PROJECTS_PATH = "/projects";
+// One Project's view: /projects/<id>, not /projects itself.
+const PROJECT_VIEW_PATH = /^\/projects\/[^/]+$/;
 
 // Guards every page of the client area. Child routes still call
 // requireClientUser in their own loaders and actions: this loader runs
@@ -81,14 +84,16 @@ function getSkeleton(
     skeleton = <ProjectsPageSkeleton />;
   } else if (path === PROFILE_PATH) {
     skeleton = <ProfileSkeleton />;
+  } else if (path !== null && PROJECT_VIEW_PATH.test(path)) {
+    skeleton = <ProjectViewSkeleton />;
   }
   return skeleton;
 }
 
-// The Team, Profile and Projects loaders are awaited (Projects streams its
-// list, but the page still loads first), so a client-side navigation into
-// any of them shows its skeleton meanwhile. The path being loaded, or null when
-// no other page is.
+// The Team, Profile, Projects and Project view loaders are awaited (Projects
+// streams its list, but the page still loads first), so a client-side
+// navigation into any of them shows its skeleton meanwhile. The path being
+// loaded, or null when no other page is.
 function useNavigatingToPath(): string | null {
   const navigation = useNavigation();
   const { pathname } = useLocation();

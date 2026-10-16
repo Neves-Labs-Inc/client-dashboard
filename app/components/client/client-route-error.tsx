@@ -1,12 +1,20 @@
-import { useRouteLoaderData } from "react-router";
+import {
+  isRouteErrorResponse,
+  useRouteError,
+  useRouteLoaderData,
+} from "react-router";
+import ClientRouteNotFound from "@/components/client/client-route-not-found";
 import PageHeader from "@/components/ui/page-header";
 import PanelError from "@/components/ui/panel-error";
 
 const LAYOUT_ROUTE_ID = "routes/client/layout";
+const NOT_FOUND = 404;
 
 type ClientRouteErrorProps = {
   // The page's own title, kept above the error.
   title: string;
+  // A page that 404s (an unknown id) shows this instead of the generic error.
+  notFound?: { title: string; backHref: string; backLabel: string };
 };
 
 // The client area's route ErrorBoundary: it renders inside the layout's
@@ -15,8 +23,21 @@ type ClientRouteErrorProps = {
 // revalidates the failed loader.
 export default function ClientRouteError({
   title,
+  notFound,
 }: ClientRouteErrorProps): React.ReactNode {
+  const error = useRouteError();
   const layout = useRouteLoaderData<{ clientName: string }>(LAYOUT_ROUTE_ID);
+  const isNotFound = isRouteErrorResponse(error) && error.status === NOT_FOUND;
+  if (notFound && isNotFound) {
+    return (
+      <ClientRouteNotFound
+        clientName={layout?.clientName ?? null}
+        sectionTitle={title}
+        {...notFound}
+      />
+    );
+  }
+
   const breadcrumb = layout
     ? [{ label: layout.clientName, isTruncated: true }, { label: title }]
     : [{ label: title }];

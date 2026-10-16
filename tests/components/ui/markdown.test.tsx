@@ -55,8 +55,8 @@ describe("Markdown", () => {
 
     expect(html).not.toMatch(/<img/i);
     expect(html).toContain(`href="https://example.com/a.png" ${NEW_TAB}`);
-    expect(html).toMatch(/<a [^>]*a\.png[^>]*>chart<\/a>/);
-    expect(html).toMatch(/<a [^>]*b\.png[^>]*>Image<\/a>/);
+    expect(html).toMatch(/<a [^>]*a\.png[^>]*>chart<span/);
+    expect(html).toMatch(/<a [^>]*b\.png[^>]*>Image<span/);
   });
 
   it("renders any other image as its alt text only", () => {
@@ -75,7 +75,9 @@ describe("Markdown", () => {
       "| Step | State |\n| --- | --- |\n| Build | ~~late~~ done |\n\n- [x] Ship\n- [ ] Review",
     );
 
-    expect(html).toMatch(/<div class="[^"]*overflow-x-auto[^"]*"><table/);
+    expect(html).toMatch(
+      /<div tabindex="0" role="region" aria-label="Table" class="[^"]*overflow-x-auto[^"]*"><table/,
+    );
     expect(html).toContain("<th");
     expect(html).toContain("<td");
     expect(html).toContain("<del");
@@ -85,7 +87,9 @@ describe("Markdown", () => {
   it("scrolls code blocks in their own box and leaks no node attribute", () => {
     const html = render("# Title\n\n```\nconst x = 1;\n```\n\n- `inline`");
 
-    expect(html).toMatch(/<pre class="[^"]*overflow-x-auto[^"]*"><code/);
+    expect(html).toMatch(
+      /<pre tabindex="0" role="region" aria-label="Code" class="[^"]*overflow-x-auto[^"]*"><code/,
+    );
     expect(html).toContain("const x = 1;");
     expect(html).not.toContain("node=");
     expect(html).not.toContain("[object Object]");
@@ -96,8 +100,16 @@ describe("Markdown", () => {
 
     expect(html.match(/<a /g)).toHaveLength(1);
     expect(html).toContain(`<a href="https://x.co/ci" ${NEW_TAB}`);
-    expect(html).toMatch(/>build<\/a>/);
+    expect(html).toMatch(/>build<span/);
     expect(html).not.toMatch(/<img/i);
+  });
+
+  it("tells screen readers that a link opens in a new tab", () => {
+    const html = render("[docs](https://example.com/docs)");
+
+    expect(html).toMatch(
+      /<a [^>]*>docs<span class="sr-only"> \(opens in a new tab\)<\/span><\/a>/,
+    );
   });
 
   it("keeps the footnotes heading screen-reader only and drops backrefs", () => {

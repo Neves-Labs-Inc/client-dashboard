@@ -21,9 +21,11 @@ const EXTERNAL_LINK = {
   rel: "noopener noreferrer nofollow",
 } as const;
 const IMAGE_FALLBACK_TEXT = "Image";
+// Said after every link's text, since each one leaves the page.
+const NEW_TAB_NOTE = <span className="sr-only"> (opens in a new tab)</span>;
 
 const LINK_CLASS =
-  "rounded-[2px] text-accent-fg underline underline-offset-2 wrap-anywhere hover:no-underline";
+  "rounded-[2px] text-accent-fg underline underline-offset-2 wrap-anywhere transition-colors duration-(--dur-instant) ease-(--ease-out) hover:no-underline";
 
 // An image inside a link becomes that link's text: a second link would nest
 // <a> in <a>, which the browser re-parses and hydration then mismatches.
@@ -47,6 +49,7 @@ function MarkdownLink({
   return (
     <a href={href} {...EXTERNAL_LINK} className={LINK_CLASS}>
       <InsideLink value={true}>{children}</InsideLink>
+      {NEW_TAB_NOTE}
     </a>
   );
 }
@@ -61,6 +64,7 @@ function MarkdownImage({ src, alt }: ComponentProps<"img">) {
   return (
     <a href={src} {...EXTERNAL_LINK} className={LINK_CLASS}>
       {alt || IMAGE_FALLBACK_TEXT}
+      {NEW_TAB_NOTE}
     </a>
   );
 }
@@ -110,13 +114,24 @@ const COMPONENTS: Components = {
     "code",
     "rounded-[3px] bg-surface-2 px-1 py-0.5 font-mono text-[13px]",
   ),
-  // Scrolls inside its own box so a long line never widens the page.
-  pre: styled(
-    "pre",
-    "overflow-x-auto rounded-[3px] border border-line bg-surface-2 p-3 font-mono text-[13px] leading-5 [&>code]:bg-transparent [&>code]:p-0",
+  // Scrolls inside its own box so a long line never widens the page; the box
+  // takes focus so the keyboard can scroll it too.
+  pre: (props: StyledProps) => (
+    <pre
+      {...withoutNode(props)}
+      tabIndex={0}
+      role="region"
+      aria-label="Code"
+      className="overflow-x-auto rounded-[3px] border border-line bg-surface-2 p-3 font-mono text-[13px] leading-5 [&>code]:bg-transparent [&>code]:p-0"
+    />
   ),
   table: (props: StyledProps) => (
-    <div className="overflow-x-auto rounded-[3px] border border-line">
+    <div
+      tabIndex={0}
+      role="region"
+      aria-label="Table"
+      className="overflow-x-auto rounded-[3px] border border-line"
+    >
       <table
         {...withoutNode(props)}
         className="w-full border-collapse text-left"

@@ -40,5 +40,6 @@ describe("parseDateOnly", () => {
 
     expect(formatDate(date, now)).toBe("Nov 14");
     expect(formatIsoDate(date)).toBe("2026-11-14");
+    expect(formatDate(parseDateOnly("2026-01-01"), now)).toBe("Jan 1");
   });
 });

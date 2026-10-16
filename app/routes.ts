@@ -20,6 +20,7 @@ export default [
   ]),
   layout("routes/client/layout.tsx", [
     route("projects", "routes/client/projects.tsx"),
+    route("projects/:projectId", "routes/client/project.tsx"),
     route("team", "routes/client/team.tsx"),
     route("profile", "routes/client/profile.tsx"),
   ]),
