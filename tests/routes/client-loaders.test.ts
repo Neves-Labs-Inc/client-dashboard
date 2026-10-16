@@ -5,6 +5,7 @@ import type {
   ProjectSummary,
 } from "@/lib/client-projects/client-projects";
 import { requireClientMutation } from "@/lib/auth/require-access.server";
+import type { Requests } from "@/lib/requests/requests";
 import { loader as adminLoader } from "@/routes/admin/layout";
 import {
   headers as clientLayoutHeaders,
@@ -71,6 +72,19 @@ vi.mock("@/lib/client-projects/client-projects.server", () => ({
   clientProjects: {
     listProjects: (clientId: string) => listProjects(clientId),
     countActiveProjects: (clientId: string) => countActiveProjects(clientId),
+  },
+}));
+
+const countNewRequests = vi.fn<Requests["countNewRequests"]>();
+const listRequests = vi.fn<Requests["listRequests"]>();
+const listProjectOptions = vi.fn<Requests["listProjectOptions"]>();
+
+vi.mock("@/lib/requests/requests.server", () => ({
+  requests: {
+    countNewRequests: (clientId: string) => countNewRequests(clientId),
+    listRequests: (...args: Parameters<Requests["listRequests"]>) =>
+      listRequests(...args),
+    listProjectOptions: (clientId: string) => listProjectOptions(clientId),
   },
 }));
 
@@ -177,6 +191,12 @@ beforeEach(() => {
   listProjects.mockResolvedValue([]);
   countActiveProjects.mockReset();
   countActiveProjects.mockResolvedValue(3);
+  countNewRequests.mockReset();
+  countNewRequests.mockResolvedValue(2);
+  listRequests.mockReset();
+  listRequests.mockResolvedValue([]);
+  listProjectOptions.mockReset();
+  listProjectOptions.mockResolvedValue([]);
   getAccess.mockReset();
   getTeam.mockReset();
   getTeam.mockResolvedValue(TEAM);
@@ -273,8 +293,10 @@ describe("the client guard", () => {
       email: "maya@acme.test",
       role: "owner",
       activeProjectCount: 3,
+      newRequestCount: 2,
     });
     expect(countActiveProjects).toHaveBeenCalledWith(CLIENT_ID);
+    expect(countNewRequests).toHaveBeenCalledWith(CLIENT_ID);
   });
 
   it("still renders the shell, without a count, when the count fails", async () => {
@@ -290,8 +312,51 @@ describe("the client guard", () => {
       email: "maya@acme.test",
       role: "owner",
       activeProjectCount: null,
+      newRequestCount: 2,
     });
     expect(errorLog).toHaveBeenCalled();
+  });
+
+  it("still renders the shell, without the New Request count, when it fails", async () => {
+    answerAs(OWNER);
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+    countNewRequests.mockRejectedValue(new Error("connection lost"));
+
+    const { data } = await settle(() => clientLayoutLoader(argsFor("/team")));
+
+    expect(data).toMatchObject({
+      activeProjectCount: 3,
+      newRequestCount: null,
+    });
+    expect(errorLog).toHaveBeenCalled();
+  });
+
+  it("doesn't reload the shell when a Request drawer only opens or closes", () => {
+    type RevalidateArgs = Parameters<typeof clientLayoutShouldRevalidate>[0];
+    const toggles = [
+      ["/requests", "/requests?new=request"],
+      ["/requests/abc?edit=1", "/requests/abc"],
+    ];
+
+    for (const [from, to] of toggles) {
+      const args = {
+        currentUrl: new URL(from, PORTAL_ORIGIN),
+        nextUrl: new URL(to, PORTAL_ORIGIN),
+        defaultShouldRevalidate: true,
+      } as RevalidateArgs;
+      expect(clientLayoutShouldRevalidate(args)).toBe(false);
+    }
+  });
+
+  it("reloads the shell on any other navigation", () => {
+    type RevalidateArgs = Parameters<typeof clientLayoutShouldRevalidate>[0];
+    const args = {
+      currentUrl: new URL("/requests", PORTAL_ORIGIN),
+      nextUrl: new URL("/team", PORTAL_ORIGIN),
+      defaultShouldRevalidate: true,
+    } as RevalidateArgs;
+
+    expect(clientLayoutShouldRevalidate(args)).toBe(true);
   });
 
   it("sends a Client User away from /admin to /overview", async () => {
@@ -450,6 +515,57 @@ describe("the Overview loader", () => {
 
     const loaded = data as { projects: Promise<unknown> };
     await expect(loaded.projects).resolves.toBeNull();
+    expect(errorLog).toHaveBeenCalled();
+  });
+
+  it("lists one more than five of the signed-in Client's Requests, whatever the URL says", async () => {
+    answerAs(MEMBER);
+    const request = {
+      id: "r1",
+      kind: "BUG" as const,
+      title: "Receipt PDF is missing",
+      status: "NEW" as const,
+      submitterName: "Maya Chen",
+      createdAt: new Date("2026-10-07"),
+    };
+    listRequests.mockResolvedValue([request]);
+
+    const { data } = await settle(() =>
+      overviewLoader(argsFor(`/overview?clientId=${OTHER_CLIENT_ID}`)),
+    );
+
+    expect(listRequests).toHaveBeenCalledWith(CLIENT_ID, { limit: 6 });
+    const loaded = data as { requests: Promise<unknown> };
+    await expect(loaded.requests).resolves.toEqual([request]);
+  });
+
+  it("streams null for the Requests, leaving the Projects, when they can't load", async () => {
+    answerAs(OWNER);
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+    listRequests.mockRejectedValue(new Error("connection lost"));
+    listProjects.mockResolvedValue([PROJECT]);
+
+    const { data } = await settle(() => overviewLoader(argsFor("/overview")));
+
+    const loaded = data as {
+      requests: Promise<unknown>;
+      projects: Promise<unknown>;
+    };
+    await expect(loaded.requests).resolves.toBeNull();
+    await expect(loaded.projects).resolves.toEqual([PROJECT]);
+    expect(errorLog).toHaveBeenCalled();
+  });
+});
+
+describe("the Overview loader's drawer options", () => {
+  it("falls back to no options, keeping the page, when they can't load", async () => {
+    answerAs(OWNER);
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+    listProjectOptions.mockRejectedValue(new Error("connection lost"));
+
+    const { data } = await settle(() => overviewLoader(argsFor("/overview")));
+
+    expect((data as { projectOptions: unknown }).projectOptions).toEqual([]);
     expect(errorLog).toHaveBeenCalled();
   });
 });

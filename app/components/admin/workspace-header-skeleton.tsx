@@ -20,6 +20,9 @@ export default function WorkspaceHeaderSkeleton(): React.ReactNode {
         <div className="flex h-11 items-center px-3 md:h-9 pointer-coarse:h-11">
           <Skeleton className="h-3 w-10" />
         </div>
+        <div className="flex h-11 items-center px-3 md:h-9 pointer-coarse:h-11">
+          <Skeleton className="h-3 w-16" />
+        </div>
       </div>
     </>
   );

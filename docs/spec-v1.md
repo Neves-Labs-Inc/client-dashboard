@@ -140,6 +140,7 @@ Sources: [App-level tenant scoping alone, or plus Postgres RLS?][#13], `docs/adr
   - **`app_tenant`** runs all Client User traffic, is subject to RLS, and is never a `neon_superuser` member. Each tenant request runs in one transaction that sets `app.client_id` locally (`SET LOCAL` / `set_config(..., true)`);
   - **`app_system`** has `BYPASSRLS` and runs the Admin's routes (always, including inside a single Client's pages), the GitHub sync and Better Auth.
   - Choosing a connection pool is choosing whether to bypass. There is no bypass flag.
+- **Requests writes:** `app_tenant` writes `requests` only through column-level INSERT and UPDATE grants (insert: `client_id`, `project_id`, `submitter_id`, `kind`, `title`, `description`; update: `project_id`, `kind`, `title`, `description`, `status`). It has no grant on `response_note`, `task_id`, `task_title` or `status_changed_at`, and no DELETE. Restrictive policies allow inserting only New Requests whose `submitter_id` is `app.user_id`, and updating only one's own New Requests, to New or Withdrawn. `app.user_id` is set transaction-locally alongside `app.client_id` (`set_config(..., true)`), and an unset value refuses every write (Franklin, Phase 6 planning (2026-10-16)).
 - **`client_id` on every Client-owned row**, Line Items and Tasks included, with a composite foreign key to the parent (`(parent_id, client_id)`) so it can't drift.
 - **Better Auth tables** have no RLS and are reached only through `app_system`.
 - **Neon constraints:**
@@ -177,7 +178,7 @@ Sources: [What is the v1 data model?][#16], amended by [What does the Admin area
 | `invoices` | `client_id`, optional `project_id`, number, issue date, due date, memo, status, `paid_at`, `status_changed_at` | Yes |
 | `line_items` | `client_id`, `invoice_id`, description, `amount_cents bigint`; at least one per Invoice | Yes |
 | `invoice_counters` | `year` PK, `last_seq`; global across Clients | None; Admin-only |
-| `requests` | `client_id`, optional `project_id`, submitter `user.id`, kind, title, description, status, one response note, optional `task_id` (`ON DELETE SET NULL`), `task_title` snapshot, `status_changed_at` | Yes |
+| `requests` | `client_id`, optional `project_id`, submitter `user.id`, kind, title, description, status, one response note, optional `task_id` (`ON DELETE SET NULL`), `task_title` snapshot, `status_changed_at`, `created_at` (added in Phase 6 (Franklin, Phase 6 planning (2026-10-16))) | Yes |
 
 **Invariants**
 
@@ -186,7 +187,8 @@ Sources: [What is the v1 data model?][#16], amended by [What does the Admin area
 - Unlinking sets `unlinked_at`; the sync skips frozen Projects.
 - Deleting a Project cascades to its Tasks, Milestones, Status Updates; Invoices and Requests detach via `ON DELETE SET NULL (project_id)` (PG15+ column-list form, so `client_id` stays).
 - A Task whose item goes Internal or leaves the board is soft-hidden (`hidden_at`), not deleted. Client queries filter hidden rows.
-- A Request's `task_id` is set only while it is Accepted or Done; any other status clears it (and its `task_title`).
+- A Request's `task_id` is set only while it is Accepted or Done; any other status clears it (and its `task_title`). Two CHECK constraints hold this: `requests_task_link_status` (a link or `task_title` needs Accepted or Done) and `requests_task_title_present` (a `task_id` needs a `task_title`) (Franklin, Phase 6 planning (2026-10-16)). `requests` also has CHECKs on lengths (see [Requests](#requests)).
+- A Request's `status_changed_at` is set by the `requests_status_changed_at` trigger on every status change, whoever writes it; the app never sets it and `app_tenant` has no grant on it.
 - Linking a Task stores its title in `task_title`. When the Task is deleted (Project delete cascade), `task_id` goes null and `task_title` stays; when it is soft-hidden, the link is kept. Either way the Request shows "<task_title> (no longer tracked)" with no live status; a hidden Task that turns Visible again shows live again ([Settle the GitHub sync and Project gaps][#25]).
 - An Invoice's or Request's `project_id` uses the composite `(project_id, client_id)` FK, which is why the `SET NULL` names only `project_id`.
 - **Invoice numbers:** `NL-<4-digit seq>-<year>` (e.g. `NL-0001-2026`). The year is the issue date's year; the sequence resets yearly. `invoice_counters` is bumped with `UPDATE ... RETURNING` in the same transaction as the Invoice insert. A number never changes; Void leaves a gap.
@@ -269,7 +271,7 @@ Sources: [What does the Admin area look like?][#19], `DESIGN.md` §6.3, prototyp
 - **Archive / unarchive** a Client. An archived Client's data is kept, read-only for the Admin ([#16][#16]).
 - **Projects & boards:** link and unlink boards, column → client-status mapping (saving with unmapped columns allowed; those Tasks count as In progress and the board is flagged). Board detail: required-field check, Milestone progress, Tasks with client status, sync state, "Sync now". Board detail also lists the client-visible Tasks (with their GitHub Status option name) and a count of hidden ones. Boards that are sync problems (error, or stale over 26 hours) are flagged on the row, on the board detail and by an alert icon on the Client's sidebar row (and on Home's Clients table). Delete Project.
 - **Invoices:** author (see [Invoices](#invoices)); mark Paid, revert Paid to Open, and Void, each with a confirmation.
-- **Requests:** triage from the global inbox or the Client's tab; the detail view sets the status and the one response note and links a Task (only while Accepted or Done). Withdrawn Requests are read-only.
+- **Requests:** triage from the global inbox or the Client's tab; the detail view sets the status and the one response note and links a Task (only while Accepted or Done). Withdrawn Requests are read-only. The global inbox lists the Requests of active Clients only, filtered New (default) or All; an archived Client's Requests are read-only on its own tab and absent from the inbox (Franklin, Phase 6 planning (2026-10-16)).
 - The Admin always runs as `app_system` (ADR 0003).
 
 ### Admin preview (view as Client)
@@ -303,10 +305,12 @@ Sources: [How do Client Users submit bugs and requests?][#12], [What does the Ad
 - A Request lives **only in the dashboard**; it never becomes GitHub work by itself. Copying work into GitHub stays manual. The GitHub App stays read-only.
 - **Submitted by** any Client User (Owner or Member). **Fields:** kind (Bug / Feature), title, description, optional Project from the Client's Projects. No attachments.
 - **Visibility:** every Client User of the Client sees all its Requests.
-- **Statuses:** New → Accepted / Declined → Done, set by the Admin. Withdrawn is set by the submitter; the Request is kept, not deleted.
-- **Editing:** the submitter can edit or withdraw while New; after that it is locked.
+- **Statuses:** New, Accepted, Declined and Done, set by the Admin, who may move between them in any direction. Moving back to New re-opens edit and withdraw for the submitter; leaving Accepted or Done clears the Task link. Withdrawn is set by the submitter; the Request is kept, not deleted (Franklin, Phase 6 planning (2026-10-16)).
+- **Editing:** the submitter can edit or withdraw while New; after that it is locked (until the Admin moves it back to New). Submit, edit and withdraw refuse an archived Client with `archived` (409); edit checks archived, then not-found, then not-New, before validating. An empty `projectId` or `taskId` means none.
+- **Text and limits:** the description and the response note are plain text (line breaks kept, no Markdown). Title 1–200 characters, description 1–5,000, response note up to 5,000 (Franklin, Phase 6 planning (2026-10-16)).
 - **Response note:** one note the Client sees, overwritable by the Admin. One-way, not a thread.
-- **Task link:** allowed only while Accepted or Done, to one Task from the Client's mirrored Projects; any other status clears it. If the Task is later hidden or removed, the Request shows its last `task_title` as "no longer tracked".
+- **Task link:** allowed only while Accepted or Done, to one Task from the Client's mirrored Projects; any other status clears it. The Task picker lists every Task of the Client, hidden ones and those of frozen Projects included; hidden Tasks are tagged "(hidden)" and frozen Projects "(unlinked)". `task_title` is copied when a Task is linked and on every Admin save while it stays linked (Franklin, Phase 6 planning (2026-10-16)). If the Task is later hidden or removed, the Request shows its last `task_title` as "no longer tracked".
+- **Client list limit:** the Client-side `listRequests` clamps its limit to 1–100.
 - **Admin awareness:** inbox with a New count. No email.
 
 ### Email

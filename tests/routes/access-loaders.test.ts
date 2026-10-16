@@ -79,6 +79,12 @@ vi.mock("@/lib/board-sync/board-sync.server", () => ({
   },
 }));
 
+const countNewByClient = vi.fn<() => Promise<Record<string, number>>>();
+
+vi.mock("@/lib/requests/requests.server", () => ({
+  requests: { countNewByClient: () => countNewByClient() },
+}));
+
 const CLIENT_ID = "0199d0a4-5b6c-7d8e-9f01-23456789abcd";
 const TEAM: Team = {
   clientId: CLIENT_ID,
@@ -169,6 +175,8 @@ async function getResponseHeaders(
 
 beforeEach(() => {
   getAccess.mockReset();
+  countNewByClient.mockReset();
+  countNewByClient.mockResolvedValue({});
   listClients.mockReset();
   listClients.mockResolvedValue([]);
   createClient.mockReset();
@@ -363,6 +371,33 @@ describe("the layout's sync-problem Clients", () => {
   });
 });
 
+describe("the layout's New Request counts", () => {
+  it("carries the counts by Client", async () => {
+    answerAs(ADMIN);
+    listClients.mockResolvedValue([]);
+    countNewByClient.mockResolvedValue({ [CLIENT_ID]: 3 });
+
+    const result = (await adminLoader(argsFor("/admin"))) as unknown as {
+      data: { newRequestCounts: Record<string, number> };
+    };
+
+    expect(result.data.newRequestCounts).toEqual({ [CLIENT_ID]: 3 });
+  });
+
+  it("still loads, with no counts, when they can't", async () => {
+    answerAs(ADMIN);
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    listClients.mockResolvedValue([]);
+    countNewByClient.mockRejectedValue(new Error("connection lost"));
+
+    const result = (await adminLoader(argsFor("/admin"))) as unknown as {
+      data: { clients: []; newRequestCounts: Record<string, number> };
+    };
+
+    expect(result.data).toMatchObject({ clients: [], newRequestCounts: {} });
+  });
+});
+
 describe("when the roster can't load", () => {
   beforeEach(() => {
     answerAs(ADMIN);
@@ -380,6 +415,7 @@ describe("when the roster can't load", () => {
       clients: null,
       archivedClients: [],
       syncProblemClientIds: [],
+      newRequestCounts: {},
     });
   });
 

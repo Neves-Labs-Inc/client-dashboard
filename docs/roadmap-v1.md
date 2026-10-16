@@ -150,6 +150,8 @@ Prerequisites come in two buckets per Phase: **before coding** (local dev and te
 
 **Prod walkthrough:** the Admin previews a Client's Overview and Projects and can't change anything.
 
+**Sequencing note:** Phase 6 shipped before Phase 5a. 5a's preview therefore also covers the Requests list and detail, with submit, edit and withdraw hidden. This is a sequencing note, not a behaviour change (Franklin, Phase 6 planning (2026-10-16)).
+
 ## Phase 6 · Requests
 
 **Scope (~5 tickets):** schema + RLS cross-Client suite, status and Task-link invariants (`task_title` snapshot, cleared on status change); Client submit/edit/withdraw drawer + server rules (submitter only, New only); Client list + detail (live Task or "(no longer tracked)"); Admin inbox + Client Requests tab + triage detail with Task picker; Overview Requests panel, Requests nav count, inbox alert icon.

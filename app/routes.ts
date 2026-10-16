@@ -22,14 +22,23 @@ export default [
     route("overview", "routes/client/overview.tsx"),
     route("projects", "routes/client/projects.tsx"),
     route("projects/:projectId", "routes/client/project.tsx"),
+    route("requests", "routes/client/requests.tsx"),
+    route("requests/:requestId", "routes/client/request.tsx"),
     route("team", "routes/client/team.tsx"),
     route("profile", "routes/client/profile.tsx"),
   ]),
   route("admin", "routes/admin/layout.tsx", [
     index("routes/admin/index.tsx"),
+    route("requests", "routes/admin/requests.tsx"),
+    route("requests/:requestId", "routes/admin/request.tsx"),
     route("clients/:clientId", "routes/admin/client.tsx"),
     route("clients/:clientId/team", "routes/admin/client-team.tsx"),
     route("clients/:clientId/projects", "routes/admin/client-projects.tsx"),
+    route("clients/:clientId/requests", "routes/admin/client-requests.tsx"),
+    route(
+      "clients/:clientId/requests/:requestId",
+      "routes/admin/client-request.tsx",
+    ),
     route(
       "clients/:clientId/projects/:projectId",
       "routes/admin/client-board.tsx",

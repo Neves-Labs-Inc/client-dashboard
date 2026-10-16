@@ -19,13 +19,16 @@ import {
   type PgColumn,
   type PgPolicy,
 } from "drizzle-orm/pg-core";
-import { organization } from "./auth-schema";
+import { organization, user } from "./auth-schema";
 
 export * from "./auth-schema";
 
 // Unset or empty app.client_id becomes NULL, so the check matches no row and
 // allows no write (ADR 0003).
 const CURRENT_CLIENT_ID = sql`NULLIF(current_setting('app.client_id', true), '')::uuid`;
+// The signed-in Client User (withTenant's userId). Unset matches no row, so a
+// tenant write that checks it is refused.
+const CURRENT_USER_ID = sql`NULLIF(current_setting('app.user_id', true), '')::uuid`;
 
 // A Client's name lives on Better Auth's `organization`, whose id this row
 // shares. FORCE RLS and the grants are in the migration's custom SQL: Drizzle
@@ -295,5 +298,111 @@ export const projectStatusMappings = pgTable(
       table.githubOptionId,
     ),
     buildTenantPolicy("project_status_mappings", table.clientId),
+  ],
+);
+
+// ---------------------------------------------------------------------------
+// Requests: Client Users submit them, the Admin triages them. The first table
+// app_tenant writes. Grants (column-level), FORCE RLS, the column lists on
+// the SET NULL FKs and the trigger that sets status_changed_at are in the
+// migration's custom SQL: Drizzle can't express them.
+
+const REQUEST_TITLE_MAX = 200;
+const REQUEST_TEXT_MAX = 5000;
+
+export const requestKind = pgEnum("request_kind", ["BUG", "FEATURE"]);
+
+export const requestStatus = pgEnum("request_status", [
+  "NEW",
+  "ACCEPTED",
+  "DECLINED",
+  "DONE",
+  "WITHDRAWN",
+]);
+
+export const requests = pgTable(
+  "requests",
+  {
+    id: id(),
+    // No cascade: Clients are archive-only.
+    clientId: uuid("client_id")
+      .notNull()
+      .references(() => clients.id),
+    projectId: uuid("project_id"),
+    // No cascade: users are never deleted.
+    submitterId: uuid("submitter_id")
+      .notNull()
+      .references(() => user.id),
+    kind: requestKind("kind").notNull(),
+    title: text("title").notNull(),
+    description: text("description").notNull(),
+    status: requestStatus("status").notNull().default("NEW"),
+    responseNote: text("response_note"),
+    taskId: uuid("task_id"),
+    // The linked Task's title, kept when the Task is deleted.
+    taskTitle: text("task_title"),
+    // Set by a trigger whenever status changes; app_tenant can't write it.
+    statusChangedAt: timestamptz("status_changed_at").notNull().defaultNow(),
+    createdAt: timestamptz("created_at").notNull().defaultNow(),
+  },
+  (table) => [
+    // Composite, so the Project is the Request's Client's. The migration
+    // narrows this SET NULL to project_id: as written here it would null
+    // client_id too, which is NOT NULL.
+    foreignKey({
+      name: "requests_project_fk",
+      columns: [table.projectId, table.clientId],
+      foreignColumns: [projects.id, projects.clientId],
+    }).onDelete("set null"),
+    // Same for the Task, narrowed to task_id: task_title stays.
+    foreignKey({
+      name: "requests_task_fk",
+      columns: [table.taskId, table.clientId],
+      foreignColumns: [tasks.id, tasks.clientId],
+    }).onDelete("set null"),
+    check(
+      "requests_title_length",
+      sql`char_length(${table.title}) BETWEEN 1 AND ${sql.raw(String(REQUEST_TITLE_MAX))}`,
+    ),
+    check(
+      "requests_description_length",
+      sql`char_length(${table.description}) BETWEEN 1 AND ${sql.raw(String(REQUEST_TEXT_MAX))}`,
+    ),
+    check(
+      "requests_response_note_length",
+      sql`${table.responseNote} IS NULL OR char_length(${table.responseNote}) BETWEEN 1 AND ${sql.raw(String(REQUEST_TEXT_MAX))}`,
+    ),
+    // Only an Accepted or Done Request links a Task.
+    check(
+      "requests_task_link_status",
+      sql`(${table.taskId} IS NULL AND ${table.taskTitle} IS NULL) OR ${table.status} IN ('ACCEPTED', 'DONE')`,
+    ),
+    // After the Task's deletion task_id goes null and task_title stays.
+    check(
+      "requests_task_title_present",
+      sql`${table.taskId} IS NULL OR ${table.taskTitle} IS NOT NULL`,
+    ),
+    index("requests_client_id_created_at_idx").on(
+      table.clientId,
+      table.createdAt.desc(),
+    ),
+    buildTenantPolicy("requests", table.clientId),
+    // Restrictive, so they narrow the tenant policy above: a Client User
+    // creates New Requests as themselves, and may only change their own New
+    // Request, to New or Withdrawn. app_system bypasses RLS, so the Admin
+    // triages any Request.
+    pgPolicy("requests_tenant_insert", {
+      as: "restrictive",
+      for: "insert",
+      to: "app_tenant",
+      withCheck: sql`${table.submitterId} = ${CURRENT_USER_ID} AND ${table.status} = 'NEW'`,
+    }),
+    pgPolicy("requests_tenant_update", {
+      as: "restrictive",
+      for: "update",
+      to: "app_tenant",
+      using: sql`${table.status} = 'NEW' AND ${table.submitterId} = ${CURRENT_USER_ID}`,
+      withCheck: sql`${table.status} IN ('NEW', 'WITHDRAWN') AND ${table.submitterId} = ${CURRENT_USER_ID}`,
+    }),
   ],
 );

@@ -92,6 +92,9 @@ async function deleteAuthRows(): Promise<void> {
   });
   await owner.connect();
   try {
+    // Requests reference their submitters with no cascade; a run that died
+    // before its cleanup would otherwise block this delete.
+    await owner.query("delete from requests");
     await owner.query('delete from "user"');
     await owner.query(
       "delete from verification where identifier like 'magic-link:%'",

@@ -1,8 +1,13 @@
 import { configDefaults, defineConfig } from "vitest/config";
 
 // Suites that read or write org-wide state (every github_boards row, every
-// linked Project) would race the other files, so they run alone, after them.
-const ORG_WIDE_TESTS = ["tests/lib/board-sync/board-sync-org-wide.test.ts"];
+// linked Project, every `user` row) would race the other files, so they run
+// alone, after them. The auth suite deletes every user, which other files'
+// Request submitters would block or vanish under.
+const ORG_WIDE_TESTS = [
+  "tests/lib/board-sync/board-sync-org-wide.test.ts",
+  "tests/lib/auth/auth.test.ts",
+];
 
 // Separate from vite.config.ts: the React Router plugin isn't meant to run
 // under Vitest.

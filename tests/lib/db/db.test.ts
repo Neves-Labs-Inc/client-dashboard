@@ -9,6 +9,7 @@ import { deleteClients, insertClients } from "../../support/clients";
 import { getPgError } from "../../support/pg-error";
 
 const CLIENT_A = "6f1c2a3e-8b4d-4c5e-9f70-1a2b3c4d5e6f";
+const USER_A = "0b8e7d6c-5a4f-4e3d-8c2b-1a0f9e8d7c6b";
 
 const env = getAppEnv();
 const db = createDb({
@@ -109,6 +110,74 @@ describe("withTenant", () => {
     const { db: singleDb, tenantPool } = createSingleConnectionDb();
     try {
       const run = singleDb.withTenant("client-a", async () => "ran");
+
+      await expect(run).rejects.toThrow(/uuid/i);
+      expect(tenantPool.totalCount).toBe(0);
+    } finally {
+      await singleDb.close();
+    }
+  });
+
+  it("sets app.user_id to the given userId", async () => {
+    const userId = await db.withTenant(
+      CLIENT_A,
+      async (tx) => {
+        const result = await tx.execute<{ userId: string }>(
+          sql`select current_setting('app.user_id', true) as "userId"`,
+        );
+        return result.rows[0].userId;
+      },
+      { userId: USER_A },
+    );
+
+    expect(userId).toBe(USER_A);
+  });
+
+  it("leaves app.user_id unset when no userId is given", async () => {
+    const { db: singleDb } = createSingleConnectionDb();
+    try {
+      const userId = await singleDb.withTenant(CLIENT_A, async (tx) => {
+        const result = await tx.execute<{ userId: string | null }>(
+          sql`select current_setting('app.user_id', true) as "userId"`,
+        );
+        return result.rows[0].userId;
+      });
+
+      expect(userId).toBeOneOf([null, ""]);
+    } finally {
+      await singleDb.close();
+    }
+  });
+
+  it("leaves no app.user_id for the next checkout of the connection", async () => {
+    const { db: singleDb, tenantPool } = createSingleConnectionDb();
+    try {
+      await singleDb.withTenant(CLIENT_A, async () => null, {
+        userId: USER_A,
+      });
+      const nextUserId = await singleDb.withTenant(CLIENT_A, async (tx) => {
+        const result = await tx.execute<{ userId: string | null }>(
+          sql`select current_setting('app.user_id', true) as "userId"`,
+        );
+        return result.rows[0].userId;
+      });
+
+      expect(nextUserId).toBeOneOf([null, ""]);
+      expect(await readSetting(tenantPool, "app.user_id")).toBeOneOf([
+        null,
+        "",
+      ]);
+    } finally {
+      await singleDb.close();
+    }
+  });
+
+  it("rejects a userId that isn't a UUID without opening a connection", async () => {
+    const { db: singleDb, tenantPool } = createSingleConnectionDb();
+    try {
+      const run = singleDb.withTenant(CLIENT_A, async () => "ran", {
+        userId: "user-a",
+      });
 
       await expect(run).rejects.toThrow(/uuid/i);
       expect(tenantPool.totalCount).toBe(0);

@@ -17,11 +17,14 @@ import {
   AUTH_TABLES,
   githubBoards,
   organization,
+  requests,
   tasks,
+  user,
 } from "@/lib/db/schema";
 import { getAppEnv, getMigrateEnv } from "@/lib/env";
 import { insertProject, insertTask } from "../../support/board";
 import { insertClients } from "../../support/clients";
+import { insertRequest, insertUser } from "../../support/requests";
 import { getPgError } from "../../support/pg-error";
 import { RLS_REGISTRY } from "./rls-registry";
 
@@ -52,6 +55,9 @@ const db = createDb({
 });
 const ownerUrl = getMigrateEnv().DATABASE_URL_OWNER;
 const seededClientIds: string[] = [];
+const seededUserIds = RLS_REGISTRY.flatMap((entry) =>
+  entry.tenantUserId === undefined ? [] : [entry.tenantUserId],
+);
 
 afterAll(async () => {
   // Cleanup runs as the owner (BYPASSRLS locally and in CI) on its own
@@ -71,6 +77,8 @@ afterAll(async () => {
     await ownerDb
       .delete(organization)
       .where(inArray(organization.id, seededClientIds));
+    // Submitters, once nothing references them.
+    await ownerDb.delete(user).where(inArray(user.id, seededUserIds));
   } finally {
     await owner.end();
     await db.close();
@@ -90,6 +98,8 @@ type TenantWrite = {
 type TenantWriteInput = {
   table: PgTable;
   clientId: string;
+  // app.user_id, for a table whose write policies check it.
+  userId?: string;
   statement: SQL;
   // Rows read (as the owner) just before and just after the write.
   watch: SQL;
@@ -117,7 +127,8 @@ async function runTenantWrite(input: TenantWriteInput): Promise<TenantWrite> {
 
     await ownerDb.execute(sql`set local role app_tenant`);
     await ownerDb.execute(
-      sql`select set_config('app.client_id', ${input.clientId}, true)`,
+      sql`select set_config('app.client_id', ${input.clientId}, true),
+        set_config('app.user_id', ${input.userId ?? ""}, true)`,
     );
     // A refused statement aborts the transaction; the savepoint keeps it
     // usable for the read-back.
@@ -157,6 +168,28 @@ async function readAsTenant(
       tx.execute<Record<string, unknown>>(query),
     );
     return { kind: "read", rows: result.rows };
+  } catch (error) {
+    const pgError = getPgError(error);
+    if (pgError === null) throw error;
+    return { kind: "refused", ...pgError };
+  }
+}
+
+// Runs a write through withTenant (the real grants) and reports a refusal
+// instead of throwing.
+async function writeAsTenant(
+  clientId: string,
+  statement: SQL,
+  userId?: string,
+): Promise<WriteOutcome> {
+  const options = userId === undefined ? undefined : { userId };
+  try {
+    const result = await db.withTenant(
+      clientId,
+      (tx) => tx.execute(statement),
+      options,
+    );
+    return { kind: "applied", rowCount: result.rowCount ?? 0 };
   } catch (error) {
     const pgError = getPgError(error);
     if (pgError === null) throw error;
@@ -223,7 +256,7 @@ const REGISTERED_TABLES = RLS_REGISTRY.map((entry) => ({
 
 describe.each(REGISTERED_TABLES)(
   "RLS on $tableName",
-  ({ table, tableName, tenantColumn, tenantReadable, seed }) => {
+  ({ table, tableName, tenantColumn, tenantReadable, seed, tenantUserId }) => {
     const clientA = randomUUID();
     const clientB = randomUUID();
     const column = sql.identifier(tenantColumn.name);
@@ -358,6 +391,7 @@ describe.each(REGISTERED_TABLES)(
       const write = await runTenantWrite({
         table,
         clientId: clientA,
+        userId: tenantUserId,
         statement: insert,
         watch: rowsOfB,
       });
@@ -370,6 +404,7 @@ describe.each(REGISTERED_TABLES)(
       const write = await runTenantWrite({
         table,
         clientId: clientA,
+        userId: tenantUserId,
         statement: sql`update ${table} set ${column} = ${clientB}
           where ${column} = ${clientA}`,
         watch: rowsOfB,
@@ -383,6 +418,7 @@ describe.each(REGISTERED_TABLES)(
       const write = await runTenantWrite({
         table,
         clientId: clientA,
+        userId: tenantUserId,
         statement: sql`update ${table} set ${column} = ${column}
           where ${column} = ${clientB}`,
         watch: rowsOfB,
@@ -396,6 +432,7 @@ describe.each(REGISTERED_TABLES)(
       const write = await runTenantWrite({
         table,
         clientId: clientA,
+        userId: tenantUserId,
         statement: sql`delete from ${table} where ${column} = ${clientB}`,
         watch: rowsOfB,
       });
@@ -446,6 +483,63 @@ describe("Client-owned tables", () => {
     });
 
     expect(tableWide).toEqual([]);
+  });
+
+  it("give app_tenant only SELECT, plus INSERT and UPDATE on requests", async () => {
+    const granted = await getTenantPrivileges(registeredTableNames);
+
+    const expected = registeredTableNames
+      .toSorted()
+      .flatMap((table) =>
+        (table === "requests"
+          ? ["INSERT", "SELECT", "UPDATE"]
+          : ["SELECT"]
+        ).map((privilege) => ({ table, privilege })),
+      );
+    expect(granted).toEqual(expected);
+  });
+
+  it("let app_tenant insert and update only the Client User's requests columns", async () => {
+    const columns = await db.withSystem(async (tx) => {
+      const result = await tx.execute<{
+        column: string;
+        isInsertable: boolean;
+        isUpdatable: boolean;
+      }>(
+        sql`select attname as "column",
+            has_column_privilege('app_tenant', attrelid, attnum, 'INSERT')
+              as "isInsertable",
+            has_column_privilege('app_tenant', attrelid, attnum, 'UPDATE')
+              as "isUpdatable"
+          from pg_attribute
+          where attrelid = 'requests'::regclass and attnum > 0
+            and not attisdropped
+          order by attname`,
+      );
+      return result.rows;
+    });
+
+    const insertable = columns
+      .filter((column) => column.isInsertable)
+      .map((column) => column.column);
+    const updatable = columns
+      .filter((column) => column.isUpdatable)
+      .map((column) => column.column);
+    expect(insertable).toEqual([
+      "client_id",
+      "description",
+      "kind",
+      "project_id",
+      "submitter_id",
+      "title",
+    ]);
+    expect(updatable).toEqual([
+      "description",
+      "kind",
+      "project_id",
+      "status",
+      "title",
+    ]);
   });
 });
 
@@ -504,6 +598,248 @@ describe("hidden Tasks", () => {
     expect(rows.map((row) => row.id).toSorted()).toEqual(
       [visibleTaskId, hiddenTaskId].toSorted(),
     );
+  });
+});
+
+// The tenant write backstop on requests: through withTenant with the real
+// grants, a Client User may only submit New Requests as themselves, and only
+// edit or withdraw their own New ones.
+describe("requests as app_tenant", () => {
+  const clientA = randomUUID();
+  const clientB = randomUUID();
+  const userA = randomUUID();
+  const userB = randomUUID();
+  // Seeded Requests' status time, far enough back that a change shows.
+  const SEEDED_STATUS_CHANGED_AT = new Date("2020-01-01T00:00:00Z");
+
+  beforeAll(async () => {
+    seededClientIds.push(clientA, clientB);
+    seededUserIds.push(userA, userB);
+    await db.withSystem(async (tx) => {
+      await insertClients(tx, [clientA, clientB]);
+      await insertUser(tx, userA);
+      await insertUser(tx, userB);
+    });
+  });
+
+  function seedRequest(
+    input: { submitterId?: string; status?: "NEW" | "ACCEPTED" } = {},
+  ): Promise<string> {
+    return db.withSystem(async (tx) => {
+      const request = await insertRequest(tx, {
+        clientId: clientA,
+        submitterId: input.submitterId ?? userA,
+        status: input.status ?? "NEW",
+        statusChangedAt: SEEDED_STATUS_CHANGED_AT,
+      });
+      return request.id;
+    });
+  }
+
+  async function readRequest(
+    requestId: string,
+  ): Promise<{ title: string; status: string }> {
+    const [row] = await db
+      .withSystem((tx) =>
+        tx.execute<{ title: string; status: string }>(
+          sql`select title, status from requests where id = ${requestId}`,
+        ),
+      )
+      .then((result) => result.rows);
+    return row;
+  }
+
+  async function readStatusChangedAt(requestId: string): Promise<Date> {
+    const [row] = await db.withSystem((tx) =>
+      tx
+        .select({ statusChangedAt: requests.statusChangedAt })
+        .from(requests)
+        .where(eq(requests.id, requestId)),
+    );
+    return row.statusChangedAt;
+  }
+
+  function buildInsert(input: { clientId: string; submitterId: string }): SQL {
+    return sql`insert into requests
+      (client_id, submitter_id, kind, title, description)
+      values (${input.clientId}, ${input.submitterId}, 'BUG', 'Login fails',
+        'Steps to reproduce.')`;
+  }
+
+  describe("inserting", () => {
+    it("lets a Client User submit a New Request as themselves", async () => {
+      const outcome = await writeAsTenant(
+        clientA,
+        buildInsert({ clientId: clientA, submitterId: userA }),
+        userA,
+      );
+
+      expect(outcome).toEqual({ kind: "applied", rowCount: 1 });
+    });
+
+    it("refuses a Request submitted as another user", async () => {
+      const outcome = await writeAsTenant(
+        clientA,
+        buildInsert({ clientId: clientA, submitterId: userB }),
+        userA,
+      );
+
+      expect(outcome).toEqual(WITH_CHECK_VIOLATION);
+    });
+
+    it("refuses setting the status: it isn't an insertable column", async () => {
+      const outcome = await writeAsTenant(
+        clientA,
+        sql`insert into requests
+          (client_id, submitter_id, kind, title, description, status)
+          values (${clientA}, ${userA}, 'BUG', 'Login fails',
+            'Steps to reproduce.', 'ACCEPTED')`,
+        userA,
+      );
+
+      expect(outcome).toEqual(PERMISSION_DENIED);
+    });
+
+    it("refuses a Request for another Client", async () => {
+      const outcome = await writeAsTenant(
+        clientA,
+        buildInsert({ clientId: clientB, submitterId: userA }),
+        userA,
+      );
+
+      expect(outcome).toEqual(WITH_CHECK_VIOLATION);
+    });
+
+    it("refuses every Request when no userId is set", async () => {
+      const outcome = await writeAsTenant(
+        clientA,
+        buildInsert({ clientId: clientA, submitterId: userA }),
+      );
+
+      expect(outcome).toEqual(WITH_CHECK_VIOLATION);
+    });
+  });
+
+  describe("updating", () => {
+    it("lets the submitter edit their New Request", async () => {
+      const requestId = await seedRequest();
+
+      const outcome = await writeAsTenant(
+        clientA,
+        sql`update requests set title = 'Login fails on Safari'
+          where id = ${requestId}`,
+        userA,
+      );
+
+      expect(outcome).toEqual({ kind: "applied", rowCount: 1 });
+      expect(await readRequest(requestId)).toEqual({
+        title: "Login fails on Safari",
+        status: "NEW",
+      });
+      expect(await readStatusChangedAt(requestId)).toEqual(
+        SEEDED_STATUS_CHANGED_AT,
+      );
+    });
+
+    it("lets the submitter withdraw their New Request", async () => {
+      const requestId = await seedRequest();
+
+      const outcome = await writeAsTenant(
+        clientA,
+        sql`update requests set status = 'WITHDRAWN' where id = ${requestId}`,
+        userA,
+      );
+
+      expect(outcome).toEqual({ kind: "applied", rowCount: 1 });
+      expect((await readRequest(requestId)).status).toBe("WITHDRAWN");
+      // Set by the trigger: the submitter can't write the column.
+      expect((await readStatusChangedAt(requestId)).getTime()).toBeGreaterThan(
+        SEEDED_STATUS_CHANGED_AT.getTime(),
+      );
+    });
+
+    it("refuses the submitter accepting their own Request", async () => {
+      const requestId = await seedRequest();
+
+      const outcome = await writeAsTenant(
+        clientA,
+        sql`update requests set status = 'ACCEPTED' where id = ${requestId}`,
+        userA,
+      );
+
+      expect(outcome).toEqual(WITH_CHECK_VIOLATION);
+      expect((await readRequest(requestId)).status).toBe("NEW");
+    });
+
+    it("changes no Request that is no longer New", async () => {
+      const requestId = await seedRequest({ status: "ACCEPTED" });
+
+      const outcome = await writeAsTenant(
+        clientA,
+        sql`update requests set title = 'Changed' where id = ${requestId}`,
+        userA,
+      );
+
+      expect(outcome).toEqual({ kind: "applied", rowCount: 0 });
+      expect(await readRequest(requestId)).toEqual({
+        title: "Test request",
+        status: "ACCEPTED",
+      });
+    });
+
+    it("changes no Request of another user", async () => {
+      const requestId = await seedRequest({ submitterId: userB });
+
+      const outcome = await writeAsTenant(
+        clientA,
+        sql`update requests set status = 'WITHDRAWN' where id = ${requestId}`,
+        userA,
+      );
+
+      expect(outcome).toEqual({ kind: "applied", rowCount: 0 });
+      expect((await readRequest(requestId)).status).toBe("NEW");
+    });
+
+    it("changes no Request when no userId is set", async () => {
+      const requestId = await seedRequest();
+
+      const outcome = await writeAsTenant(
+        clientA,
+        sql`update requests set title = 'Changed' where id = ${requestId}`,
+      );
+
+      expect(outcome).toEqual({ kind: "applied", rowCount: 0 });
+    });
+
+    it.each([
+      { column: "response_note", value: "Thanks" },
+      { column: "task_id", value: randomUUID() },
+      { column: "task_title", value: "Fix login" },
+      { column: "status_changed_at", value: "2019-01-01T00:00:00Z" },
+    ])("refuses the submitter setting $column", async ({ column, value }) => {
+      const requestId = await seedRequest();
+
+      const outcome = await writeAsTenant(
+        clientA,
+        sql`update requests set ${sql.identifier(column)} = ${value}
+          where id = ${requestId}`,
+        userA,
+      );
+
+      expect(outcome).toEqual(PERMISSION_DENIED);
+    });
+  });
+
+  it("refuses the submitter deleting their New Request", async () => {
+    const requestId = await seedRequest();
+
+    const outcome = await writeAsTenant(
+      clientA,
+      sql`delete from requests where id = ${requestId}`,
+      userA,
+    );
+
+    expect(outcome).toEqual(PERMISSION_DENIED);
   });
 });
 
