@@ -1,6 +1,7 @@
 import {
   and,
   asc,
+  desc,
   eq,
   isNotNull,
   isNull,
@@ -20,6 +21,13 @@ import {
   taskClientStatus,
   type SyncWarning,
 } from "@/lib/db/schema";
+import {
+  getProgress,
+  groupTasks,
+  sortMilestones,
+  type Health,
+  type Progress,
+} from "@/lib/client-projects/client-project-rules";
 import { describeError } from "@/lib/describe-error";
 import {
   PmSourceError,
@@ -92,6 +100,59 @@ export type MappingEdit = {
 
 export type SaveMappingError = "not-found" | "unlinked" | "archived";
 
+export type RequiredField = Extract<
+  SyncWarning,
+  { kind: "missing-field" }
+>["field"];
+
+// "not-checked": the Project has never synced, so nothing has looked yet.
+export type FieldCheck = "present" | "missing" | "not-checked";
+
+export type BoardMilestone = {
+  id: string;
+  title: string;
+  dueDate: string | null;
+  progress: Progress;
+};
+
+export type BoardTask = {
+  id: string;
+  title: string;
+  clientStatus: ClientStatus;
+  // The Status option's name; null when the Task has no option (or its
+  // option is no longer stored).
+  optionName: string | null;
+  // Null for Other work.
+  milestoneTitle: string | null;
+  targetDate: string | null;
+};
+
+// The Admin's board detail: what the Client sees of the Project, and
+// whether its data is flowing.
+export type BoardDetail = {
+  id: string;
+  name: string;
+  url: string;
+  state: ProjectState;
+  unlinkedAt: Date | null;
+  isClientArchived: boolean;
+  lastSyncedAt: Date | null;
+  lastSyncError: string | null;
+  syncWarnings: SyncWarning[];
+  unmappedCount: number;
+  // The latest Status Update's; null when there is none or it has none.
+  health: Health | null;
+  // One per required field, in REQUIRED_FIELDS order.
+  fieldChecks: { field: RequiredField; check: FieldCheck }[];
+  // As the Client sees them: Milestone order, only those with a visible
+  // Task.
+  milestones: BoardMilestone[];
+  // Client-visible only: by Milestone (Other work last), then the Client's
+  // Task order.
+  tasks: BoardTask[];
+  hiddenCount: number;
+};
+
 export type RemoveError = "not-found" | "archived";
 
 export type BoardSync = {
@@ -117,6 +178,12 @@ export type BoardSync = {
   // as the last sync saw them, by name. Null for an unknown Project. Never
   // calls GitHub.
   getMapping(projectId: string): Promise<MappingEdit | null>;
+  // The Admin's board detail. Null for another Client's Project, an unknown
+  // id or a malformed one. Never calls GitHub.
+  getBoardDetail(
+    clientId: string,
+    projectId: string,
+  ): Promise<BoardDetail | null>;
   // Sets client_status on the options the Project already has; ids it
   // doesn't know are ignored (the sync owns which options exist). Takes
   // effect at once, as a Task's client status is derived at read time.
@@ -188,7 +255,13 @@ const STATUS_BY_LINK_ERROR = {
 const CREATED = 201;
 
 type IssueItem = Extract<PmItem, { kind: "issue" }>;
-type MissingField = Extract<SyncWarning, { kind: "missing-field" }>["field"];
+type MissingField = RequiredField;
+
+export const REQUIRED_FIELDS: readonly RequiredField[] = [
+  "Client visibility",
+  "Client note",
+  "Target date",
+];
 
 // A Task's client status: no Status option is Up next; an option the Admin
 // hasn't mapped (or with no mapping row yet) is In progress.
@@ -542,6 +615,81 @@ export function createBoardSync(deps: BoardSyncDeps): BoardSync {
     };
   }
 
+  async function getBoardDetail(
+    clientId: string,
+    projectId: string,
+  ): Promise<BoardDetail | null> {
+    // Postgres would reject a malformed id (22P02); it can't name a Project.
+    if (!UUID_PATTERN.test(clientId) || !UUID_PATTERN.test(projectId)) {
+      return null;
+    }
+
+    return db.withSystem(async (tx) => {
+      const [project] = await tx
+        .select({
+          id: projects.id,
+          name: projects.name,
+          url: projects.url,
+          closedOnGithub: projects.closedOnGithub,
+          unlinkedAt: projects.unlinkedAt,
+          lastSyncedAt: projects.lastSyncedAt,
+          lastSyncError: projects.lastSyncError,
+          syncWarnings: projects.syncWarnings,
+          clientArchivedAt: clients.archivedAt,
+        })
+        .from(projects)
+        .innerJoin(clients, eq(clients.id, projects.clientId))
+        .where(
+          and(eq(projects.id, projectId), eq(projects.clientId, clientId)),
+        );
+      if (project === undefined) return null;
+
+      // Sequential: one transaction is one connection.
+      const [latest] = await tx
+        .select({ health: statusUpdates.health })
+        .from(statusUpdates)
+        .where(eq(statusUpdates.projectId, projectId))
+        .orderBy(desc(statusUpdates.githubCreatedAt), desc(statusUpdates.id))
+        .limit(1);
+      const options = await tx
+        .select({
+          id: projectStatusMappings.githubOptionId,
+          name: projectStatusMappings.optionName,
+          clientStatus: projectStatusMappings.clientStatus,
+        })
+        .from(projectStatusMappings)
+        .where(eq(projectStatusMappings.projectId, projectId));
+      const milestoneRows = await tx
+        .select({
+          id: milestones.id,
+          title: milestones.title,
+          dueDate: milestones.dueDate,
+        })
+        .from(milestones)
+        .where(eq(milestones.projectId, projectId));
+      const taskRows = await tx
+        .select({
+          id: tasks.id,
+          title: tasks.title,
+          milestoneId: tasks.milestoneId,
+          statusOptionId: tasks.statusOptionId,
+          targetDate: tasks.targetDate,
+          completedAt: tasks.completedAt,
+          hiddenAt: tasks.hiddenAt,
+        })
+        .from(tasks)
+        .where(eq(tasks.projectId, projectId));
+
+      return buildBoardDetail({
+        project,
+        health: latest?.health ?? null,
+        options,
+        milestoneRows,
+        taskRows,
+      });
+    });
+  }
+
   async function saveMapping(
     projectId: string,
     mapping: Mapping,
@@ -606,6 +754,7 @@ export function createBoardSync(deps: BoardSyncDeps): BoardSync {
     link,
     listProjects,
     getMapping,
+    getBoardDetail,
     saveMapping,
     unlink,
     deleteProject,
@@ -1224,4 +1373,127 @@ function buildWarnings(
       ? [{ kind: "unreadable-items", count: unreadableCount }]
       : [];
   return [...missingFields, ...dateMismatches, ...unreadable];
+}
+
+type DetailInput = {
+  project: {
+    id: string;
+    name: string;
+    url: string;
+    closedOnGithub: boolean;
+    unlinkedAt: Date | null;
+    lastSyncedAt: Date | null;
+    lastSyncError: string | null;
+    syncWarnings: SyncWarning[];
+    clientArchivedAt: Date | null;
+  };
+  health: Health | null;
+  options: { id: string; name: string; clientStatus: ClientStatus | null }[];
+  milestoneRows: { id: string; title: string; dueDate: string | null }[];
+  taskRows: {
+    id: string;
+    title: string;
+    milestoneId: string | null;
+    statusOptionId: string | null;
+    targetDate: string | null;
+    completedAt: Date | null;
+    hiddenAt: Date | null;
+  }[];
+};
+
+// The Client read model's rules, applied to the Admin's rows.
+function buildBoardDetail(input: DetailInput): BoardDetail {
+  const { project, options, milestoneRows, taskRows } = input;
+  const mapping = new Map(
+    options.map((option) => [option.id, option.clientStatus]),
+  );
+  const optionNames = new Map(
+    options.map((option) => [option.id, option.name]),
+  );
+  const visibleTasks = taskRows
+    .filter((task) => task.hiddenAt === null)
+    .map((task) => ({
+      ...task,
+      clientStatus: getClientStatus(task.statusOptionId, mapping),
+    }));
+  type VisibleTask = (typeof visibleTasks)[number];
+  const tasksIn = (milestoneId: string | null): VisibleTask[] =>
+    visibleTasks.filter((task) => task.milestoneId === milestoneId);
+  // A Milestone whose Tasks are all hidden isn't shown to the Client.
+  const shownMilestones = sortMilestones(milestoneRows)
+    .map((milestone) => ({ ...milestone, tasks: tasksIn(milestone.id) }))
+    .filter((milestone) => milestone.tasks.length > 0);
+  const toBoardTask =
+    (milestoneTitle: string | null) =>
+    (task: VisibleTask): BoardTask => ({
+      id: task.id,
+      title: task.title,
+      clientStatus: task.clientStatus,
+      optionName:
+        task.statusOptionId === null
+          ? null
+          : (optionNames.get(task.statusOptionId) ?? null),
+      milestoneTitle,
+      targetDate: task.targetDate,
+    });
+  const orderedTasks = [
+    ...shownMilestones.flatMap((milestone) =>
+      inClientOrder(milestone.tasks).map(toBoardTask(milestone.title)),
+    ),
+    ...inClientOrder(tasksIn(null)).map(toBoardTask(null)),
+  ];
+
+  return {
+    id: project.id,
+    name: project.name,
+    url: project.url,
+    state: getProjectState(project.unlinkedAt, project.closedOnGithub),
+    unlinkedAt: project.unlinkedAt,
+    isClientArchived: project.clientArchivedAt !== null,
+    lastSyncedAt: project.lastSyncedAt,
+    lastSyncError: project.lastSyncError,
+    syncWarnings: project.syncWarnings,
+    unmappedCount: options.filter((option) => option.clientStatus === null)
+      .length,
+    health: input.health,
+    fieldChecks: getFieldChecks(project.lastSyncedAt, project.syncWarnings),
+    milestones: shownMilestones.map((milestone) => ({
+      id: milestone.id,
+      title: milestone.title,
+      dueDate: milestone.dueDate,
+      progress: getProgress(milestone.tasks.map((task) => task.clientStatus)),
+    })),
+    tasks: orderedTasks,
+    hiddenCount: taskRows.length - visibleTasks.length,
+  };
+}
+
+// Up next, In progress, then Done, each in the Client's order.
+function inClientOrder<
+  T extends {
+    title: string;
+    clientStatus: ClientStatus;
+    targetDate: string | null;
+    completedAt: Date | null;
+  },
+>(group: T[]): T[] {
+  const groups = groupTasks(group);
+  return [...groups.UP_NEXT, ...groups.IN_PROGRESS, ...groups.DONE];
+}
+
+function getFieldChecks(
+  lastSyncedAt: Date | null,
+  warnings: SyncWarning[],
+): BoardDetail["fieldChecks"] {
+  const missing = new Set(
+    warnings.flatMap((warning) =>
+      warning.kind === "missing-field" ? [warning.field] : [],
+    ),
+  );
+  const checkOf = (field: RequiredField): FieldCheck => {
+    if (lastSyncedAt === null) return "not-checked";
+
+    return missing.has(field) ? "missing" : "present";
+  };
+  return REQUIRED_FIELDS.map((field) => ({ field, check: checkOf(field) }));
 }

@@ -7,6 +7,7 @@ import {
   type ShouldRevalidateFunctionArgs,
 } from "react-router";
 import AdminShell from "@/components/admin/admin-shell";
+import BoardDetailSkeleton from "@/components/admin/board-detail-skeleton";
 import ProjectsSkeleton from "@/components/admin/projects-skeleton";
 import TeamSkeleton from "@/components/admin/team-skeleton";
 import { auth } from "@/lib/auth/auth.server";
@@ -22,6 +23,7 @@ import {
   PROJECTS_ROUTE_PATTERN,
 } from "@/lib/link-board";
 import { isMapDrawerToggle } from "@/lib/projects";
+import { BOARD_ROUTE_PATTERN } from "@/lib/board-detail";
 import { getNoStoreHeaders } from "@/lib/no-store-headers";
 import { requireAdmin } from "@/lib/auth/require-access.server";
 import { revalidateUnlessThemeFailed } from "@/lib/theme";
@@ -80,6 +82,8 @@ export default function AdminLayout({
     content = <TeamSkeleton />;
   } else if (loadingTab === "projects") {
     content = <ProjectsSkeleton />;
+  } else if (loadingTab === "board") {
+    content = <BoardDetailSkeleton />;
   }
   return (
     <AdminShell
@@ -93,9 +97,9 @@ export default function AdminLayout({
 }
 
 // The workspace tabs' loaders are awaited, so a client-side navigation into
-// another Client's tab shows its skeleton meanwhile. Not after a create or a
+// another Client's tab (or a board detail) shows its skeleton meanwhile. Not after a create or a
 // link: the drawer's pending label covers that wait.
-function useLoadingWorkspaceTab(): "team" | "projects" | null {
+function useLoadingWorkspaceTab(): "team" | "projects" | "board" | null {
   const navigation = useNavigation();
   const { pathname } = useLocation();
   const target = navigation.location;
@@ -109,9 +113,11 @@ function useLoadingWorkspaceTab(): "team" | "projects" | null {
   if (getCreatedClientId(target.state) !== null) return null;
   if (getLinkedProject(target.state) !== null) return null;
 
-  let tab: "team" | "projects" | null = null;
+  let tab: "team" | "projects" | "board" | null = null;
   if (matchPath(TEAM_ROUTE_PATTERN, target.pathname) !== null) {
     tab = "team";
+  } else if (matchPath(BOARD_ROUTE_PATTERN, target.pathname) !== null) {
+    tab = "board";
   } else if (matchPath(PROJECTS_ROUTE_PATTERN, target.pathname) !== null) {
     tab = "projects";
   }

@@ -1,16 +1,19 @@
-import { Columns3, ExternalLink } from "lucide-react";
+import { Columns3 } from "lucide-react";
+import { useEffect, useRef } from "react";
+import { Link } from "react-router";
 import ProjectRowActions from "@/components/admin/project-row-actions";
 import ProjectRowConfirm from "@/components/admin/project-row-confirm";
 import { CELL_CLASS, ROW_GRID_CLASS } from "@/components/admin/projects-grid";
+import SyncIssueLine from "@/components/admin/sync-issue-line";
 import DataTableCell from "@/components/ui/data-table-cell";
 import DataTableRow from "@/components/ui/data-table-row";
 import DateText from "@/components/ui/date-text";
-import StatusIcon from "@/components/ui/status-icon";
 import {
   useProjectRowRemoval,
   type RowRemoval,
 } from "@/hooks/use-project-row-removal";
 import { useSyncNow } from "@/hooks/use-sync-now";
+import { getBoardPath } from "@/lib/board-detail";
 import type { ProjectRow as Project } from "@/lib/board-sync/board-sync";
 import {
   getUnmappedLine,
@@ -29,6 +32,9 @@ type ProjectRowProps = {
   // Unlink and Delete: a row of an active Client. Both are database-only.
   canRemove: boolean;
   clientName: string;
+  clientId: string;
+  // Back from this row's board detail: its name link takes focus once.
+  shouldFocusName: boolean;
   // The Projects route the row's actions post to.
   action: string;
   isHighlighted: boolean;
@@ -43,13 +49,16 @@ type ProjectRowProps = {
   onSynced: (projectId: string) => void;
 };
 
-// Not a linking row: only the name (to GitHub) and the actions act.
+// Not a linking row: only the name (to the board detail) and the actions
+// act.
 export default function ProjectRow({
   project,
   canSync,
   canMap,
   canRemove,
   clientName,
+  clientId,
+  shouldFocusName,
   action,
   isHighlighted,
   confirming,
@@ -77,6 +86,7 @@ export default function ProjectRow({
     onNotice,
     onRemoved,
   });
+  const nameRef = useRef<HTMLAnchorElement>(null);
   const isUnlinked = project.state === "unlinked";
   const canSyncRow = canSync && !isUnlinked;
   const canMapRow = canMap && !isUnlinked;
@@ -85,13 +95,16 @@ export default function ProjectRow({
   // A fresh failure replaces the recorded one, so it isn't shown twice.
   const recordedError = sync.error === null ? project.lastSyncError : null;
 
+  useEffect(() => {
+    if (shouldFocusName) nameRef.current?.focus();
+  }, [shouldFocusName]);
+
   return (
     <DataTableRow gridClassName={ROW_GRID_CLASS} isHighlighted={isHighlighted}>
       <DataTableCell className={CELL_CLASS.name}>
-        <a
-          href={project.url}
-          target="_blank"
-          rel="noreferrer"
+        <Link
+          ref={nameRef}
+          to={getBoardPath(clientId, project.id)}
           className={cn(
             // Not transition-colors: it would fade the focus ring in from fg.
             // On touch a pseudo-element grows the hit area past 44px; it is
@@ -102,16 +115,16 @@ export default function ProjectRow({
           )}
         >
           {project.name}
-          <span className="sr-only">, opens on GitHub</span>
-          <ExternalLink
-            size={12}
-            aria-hidden="true"
-            className="ml-1 inline align-baseline text-fg-2"
-          />
-        </a>
-        {sync.error !== null && <ErrorLine isAlert>{sync.error}</ErrorLine>}
+        </Link>
+        {sync.error !== null && (
+          <SyncIssueLine status="off" isAlert className="mt-0.5">
+            {sync.error}
+          </SyncIssueLine>
+        )}
         {recordedError !== null && (
-          <ErrorLine>Last sync failed: {recordedError}</ErrorLine>
+          <SyncIssueLine status="off" className="mt-0.5">
+            Last sync failed: {recordedError}
+          </SyncIssueLine>
         )}
         {project.unmappedCount > 0 && (
           <p className="mt-0.5 flex items-center gap-1.5 font-mono text-xs/4 text-fg-2">
@@ -164,24 +177,6 @@ export default function ProjectRow({
         </DataTableCell>
       )}
     </DataTableRow>
-  );
-}
-
-function ErrorLine({
-  isAlert = false,
-  children,
-}: {
-  isAlert?: boolean;
-  children: React.ReactNode;
-}): React.ReactNode {
-  return (
-    <p
-      role={isAlert ? "alert" : undefined}
-      className="mt-0.5 flex items-start gap-1.5 text-[13px]/5 wrap-anywhere text-fg"
-    >
-      <StatusIcon status="off" size={12} className="mt-1" />
-      <span className="min-w-0">{children}</span>
-    </p>
   );
 }
 
