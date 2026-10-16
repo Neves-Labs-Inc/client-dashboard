@@ -72,7 +72,7 @@ Board sync is off until the five `GITHUB_*` vars are set: Home says "GitHub isn'
    - `Client note`, text;
    - `Target date`, date.
 
-   Only issues (not drafts or PRs) whose `Client visibility` is `Visible` become Tasks. A board missing a field still syncs. The sync records a warning on the Project (`sync_warnings`), but no screen shows it yet: the Phase 5 board detail page will. Until then, check the field names by hand.
+   Only issues (not drafts or PRs) whose `Client visibility` is `Visible` become Tasks. A board missing a field still syncs. The sync records a warning on the Project (`sync_warnings`), and the board detail page shows it (Phase 5).
 
 Deliveries the dev server missed (it was off, or `pnpm dev:webhooks` wasn't running) are lost; the next Sync now or poll catches up. The App's **Advanced** tab lists recent deliveries and can redeliver one.
 
@@ -264,6 +264,12 @@ Phase 4 adds the GitHub board sync. Without these vars the portal still starts, 
 6. Nothing to set up for the cron itself: Vercel Cron reads `crons` from `vercel.json` on deploy (`/jobs/reconcile`, daily between 09:00 and 09:59 UTC on Hobby; webhooks are the primary sync path and this is the safety net, and Vercel Pro would allow `*/15`) and sends `Authorization: Bearer <CRON_SECRET>`. After the deploy, **Settings → Cron Jobs** lists it.
 7. Move every client board still on a personal account (e.g. Vertilux Shade Calculator) to `Neves-Labs-Inc`: board webhooks fire only for org-owned boards.
 
+### 3.9 Phase 5 before prod deploy
+
+Phase 5 adds the Client User Overview, Projects list and Project view, the Admin's board detail and the sync-problem flag. It adds **no env vars or secrets** (`.env.example` is unchanged) and nothing to set up by hand. Its migration narrows `app_tenant` to column-level `SELECT` on the board tables and adds a restrictive policy that hides soft-hidden Tasks; CI applies it on deploy like any other (section 4).
+
+The sync-problem flag assumes the daily cron: a linked board of an active Client is flagged when its last sync failed or it hasn't synced in over 26 hours. If Vercel Pro ever restores `*/15`, revisit that threshold (`SYNC_STALE_AFTER_MS` in `app/lib/board-sync/sync-problem.ts`).
+
 ## 4. How a deploy works
 
 Every push to `main` (a merged PR) runs `.github/workflows/ci.yml`:
@@ -426,6 +432,21 @@ After the Phase 4 deploy (§3.8 done first), on `https://portal.neveslabs.dev` a
 
 If "Last synced" doesn't move after a GitHub change, check the App's **Advanced** tab: a 401 means the webhook secret differs from `GITHUB_WEBHOOK_SECRET` (§5), a 503 that a `GITHUB_*` var is missing. The row's "Last sync failed: …" line carries the sync's own error. Delete the test board and the test Client's Project when you're done.
 
-## 10. Adding to this runbook
+## 10. Phase 5 walkthrough
+
+After the Phase 5 deploy (§3.9), and locally with the qa-visual seed. Use a test Client with an Owner you can sign in as, and a linked test board (§9) with at least one Milestone, a few Tasks across statuses (one with no Milestone, one marked `Internal`) and a Status Update whose note has Markdown (a list, a link, an image).
+
+1. **As a Client User** (the Owner): you land on **Overview**. The KPIs (Active projects, On track) match the Projects list. Open **Projects**: one row per Project. Open a **Project view**: the latest update's Markdown renders (the link opens in a new tab, the image shows as a link), the earlier updates form a timeline, and Tasks group by Milestone and status, with "Other work" last. The `Internal` Task is not there.
+2. **On GitHub**, change an item's Status, and mark one visible item `Internal`. After the webhook (seconds), reload the Project view: the Status change shows, and the Internal Task is gone.
+3. **As the Admin**: on the Client's **Projects & boards** tab, open the board's name. Check the Required fields, the Milestones, the Tasks (with the "<n> hidden" count matching the Internal ones) and **Sync now**.
+4. **Sync problem**, locally: set `last_sync_error` on the Project (or age `last_synced_at` by 27 hours) in SQL:
+
+   ```sql
+   update projects set last_synced_at = now() - interval '27 hours' where id = '<project id>';
+   ```
+
+   Reload as the Admin: the Client's sidebar row shows the sync-problem icon (hover or focus the row for its tooltip), the tab row and the board detail show "Sync problem: …", and Home's Clients table shows "Sync problem" under the Client's name. **Sync now** clears all three. On prod, check only that a healthy board shows no icon; the flag itself is covered locally.
+
+## 11. Adding to this runbook
 
 Every Phase adds its settings here and to `.env.example` (roadmap gate 3): new env vars and secrets in section 2, new manual setup in section 3, new checks in a Phase walkthrough.

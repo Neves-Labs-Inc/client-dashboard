@@ -5,6 +5,10 @@ import type {
   SaveMappingError,
   SyncError,
 } from "@/lib/board-sync/board-sync";
+import {
+  isSyncProblem,
+  type SyncProblemInput,
+} from "@/lib/board-sync/sync-problem";
 import { withoutParam } from "@/lib/new-client";
 
 // The Projects & boards tab's Sync now, Map columns, Unlink and Delete,
@@ -74,6 +78,24 @@ export const PROJECTS_COPY = {
   linkFromHome: "Link one from Home",
   loadFailed: "Couldn't load Projects.",
 } as const;
+
+export type SyncProblemReason = "error" | "stale";
+
+export const SYNC_PROBLEM_COPY: Record<SyncProblemReason, string> = {
+  error: "Sync problem: last sync failed",
+  stale: "Sync problem: not synced in over 26 hours",
+};
+
+// Null when the board isn't a sync problem. A recorded error wins over
+// staleness.
+export function getSyncProblemReason(
+  project: SyncProblemInput,
+  now: Date,
+): SyncProblemReason | null {
+  if (!isSyncProblem(project, now)) return null;
+
+  return project.lastSyncError === null ? "stale" : "error";
+}
 
 export function getSyncFailure(
   projectName: string,

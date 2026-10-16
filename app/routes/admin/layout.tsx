@@ -11,6 +11,7 @@ import BoardDetailSkeleton from "@/components/admin/board-detail-skeleton";
 import ProjectsSkeleton from "@/components/admin/projects-skeleton";
 import TeamSkeleton from "@/components/admin/team-skeleton";
 import { auth } from "@/lib/auth/auth.server";
+import { boardSync } from "@/lib/board-sync/board-sync.server";
 import {
   getCreatedClientId,
   isInviteFlagRemoval,
@@ -40,7 +41,8 @@ export async function loader({ request }: Route.LoaderArgs) {
   // sidebar says so (Home's panel offers the retry).
   // Archived Clients feed the sidebar's Archived group and Home's panel,
   // which reads them from here (one query); null when they can't load.
-  const [clients, archivedClients] = await Promise.all([
+  // The sidebar's sync-problem icons: none if they can't load.
+  const [clients, archivedClients, syncProblemClientIds] = await Promise.all([
     auth.listClients().catch((error: unknown) => {
       console.error("admin: couldn't load the sidebar's Clients", error);
       return null;
@@ -49,8 +51,15 @@ export async function loader({ request }: Route.LoaderArgs) {
       console.error("admin: couldn't load the archived Clients", error);
       return null;
     }),
+    boardSync.listSyncProblemClientIds().catch((error: unknown) => {
+      console.error("admin: couldn't load the sync-problem Clients", error);
+      return [];
+    }),
   ]);
-  return data({ email, clients, archivedClients }, { headers });
+  return data(
+    { email, clients, archivedClients, syncProblemClientIds },
+    { headers },
+  );
 }
 
 // A POST to /admin itself lands here. The guard answers first, then the
@@ -90,6 +99,7 @@ export default function AdminLayout({
       email={loaderData.email}
       clients={loaderData.clients}
       archivedClients={loaderData.archivedClients}
+      syncProblemClientIds={loaderData.syncProblemClientIds}
     >
       {content}
     </AdminShell>

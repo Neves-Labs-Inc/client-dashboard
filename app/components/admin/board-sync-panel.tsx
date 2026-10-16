@@ -1,12 +1,13 @@
 import { Columns3 } from "lucide-react";
 import SyncIssueLine from "@/components/admin/sync-issue-line";
+import SyncProblemLine from "@/components/admin/sync-problem-line";
 import SyncNowButton from "@/components/admin/sync-now-button";
 import DateText from "@/components/ui/date-text";
 import Panel from "@/components/ui/panel";
 import type { SyncNow } from "@/hooks/use-sync-now";
 import { BOARD_DETAIL_COPY, getWarningLine } from "@/lib/board-detail";
 import type { BoardDetail } from "@/lib/board-sync/board-sync";
-import { getUnmappedLine } from "@/lib/projects";
+import { getSyncProblemReason, getUnmappedLine } from "@/lib/projects";
 import { cn } from "@/lib/utils";
 
 type BoardSyncPanelProps = {
@@ -15,6 +16,8 @@ type BoardSyncPanelProps = {
   // Sync now: a linked or closed board of an active Client, GitHub
   // connected.
   canSync: boolean;
+  // The loader's clock, so server and client agree at the 26h edge.
+  nowMs: number;
   isSyncedHighlighted: boolean;
 };
 
@@ -25,11 +28,17 @@ export default function BoardSyncPanel({
   detail,
   sync,
   canSync,
+  nowMs,
   isSyncedHighlighted,
 }: BoardSyncPanelProps): React.ReactNode {
   // A fresh failure replaces the recorded one, so it isn't shown twice.
   const recordedError = sync.error === null ? detail.lastSyncError : null;
+  const syncProblem = getSyncProblemReason(
+    { ...detail, clientArchived: detail.isClientArchived },
+    new Date(nowMs),
+  );
   const hasIssues =
+    syncProblem !== null ||
     sync.error !== null ||
     recordedError !== null ||
     detail.syncWarnings.length > 0;
@@ -43,9 +52,9 @@ export default function BoardSyncPanel({
         )
       }
     >
-      {/* Ticket 07's sync-problem line goes first in this block. */}
       {hasIssues && (
         <div className="flex flex-col gap-1 border-b border-line px-3 py-2">
+          {syncProblem !== null && <SyncProblemLine reason={syncProblem} />}
           {sync.error !== null && (
             <SyncIssueLine status="off" isAlert>
               {sync.error}

@@ -38,7 +38,13 @@ export async function loader({ request, params }: Route.LoaderArgs) {
   }
 
   return data(
-    { client, detail, isGithubConnected: boardSync.isGithubConnected },
+    {
+      client,
+      detail,
+      isGithubConnected: boardSync.isGithubConnected,
+      // One clock for the server render and hydration (sync-problem line).
+      nowMs: Date.now(),
+    },
     { headers },
   );
 }
@@ -87,7 +93,7 @@ export default function ClientBoard({
   loaderData,
   params,
 }: Route.ComponentProps): React.ReactNode {
-  const { client, detail, isGithubConnected } = loaderData;
+  const { client, detail, isGithubConnected, nowMs } = loaderData;
 
   // Keyed, so another board starts with fresh sync and focus state.
   return (
@@ -97,6 +103,7 @@ export default function ClientBoard({
       client={client}
       detail={detail}
       isGithubConnected={isGithubConnected}
+      nowMs={nowMs}
     />
   );
 }

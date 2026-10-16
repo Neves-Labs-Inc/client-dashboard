@@ -5,6 +5,7 @@ import ProjectRowActions from "@/components/admin/project-row-actions";
 import ProjectRowConfirm from "@/components/admin/project-row-confirm";
 import { CELL_CLASS, ROW_GRID_CLASS } from "@/components/admin/projects-grid";
 import SyncIssueLine from "@/components/admin/sync-issue-line";
+import SyncProblemLine from "@/components/admin/sync-problem-line";
 import DataTableCell from "@/components/ui/data-table-cell";
 import DataTableRow from "@/components/ui/data-table-row";
 import DateText from "@/components/ui/date-text";
@@ -16,6 +17,7 @@ import { useSyncNow } from "@/hooks/use-sync-now";
 import { getBoardPath } from "@/lib/board-detail";
 import type { ProjectRow as Project } from "@/lib/board-sync/board-sync";
 import {
+  getSyncProblemReason,
   getUnmappedLine,
   PROJECTS_COPY,
   type RemoveIntent,
@@ -31,6 +33,9 @@ type ProjectRowProps = {
   canMap: boolean;
   // Unlink and Delete: a row of an active Client. Both are database-only.
   canRemove: boolean;
+  isClientArchived: boolean;
+  // The loader's clock, so server and client agree at the 26h edge.
+  nowMs: number;
   clientName: string;
   clientId: string;
   // Back from this row's board detail: its name link takes focus once.
@@ -56,6 +61,8 @@ export default function ProjectRow({
   canSync,
   canMap,
   canRemove,
+  isClientArchived,
+  nowMs,
   clientName,
   clientId,
   shouldFocusName,
@@ -94,6 +101,10 @@ export default function ProjectRow({
   const hasActions = canSyncRow || canMapRow || canRemove;
   // A fresh failure replaces the recorded one, so it isn't shown twice.
   const recordedError = sync.error === null ? project.lastSyncError : null;
+  const syncProblem = getSyncProblemReason(
+    { ...project, clientArchived: isClientArchived },
+    new Date(nowMs),
+  );
 
   useEffect(() => {
     if (shouldFocusName) nameRef.current?.focus();
@@ -116,6 +127,9 @@ export default function ProjectRow({
         >
           {project.name}
         </Link>
+        {syncProblem !== null && (
+          <SyncProblemLine reason={syncProblem} className="mt-0.5" />
+        )}
         {sync.error !== null && (
           <SyncIssueLine status="off" isAlert className="mt-0.5">
             {sync.error}

@@ -132,6 +132,7 @@ Sources: [Auth.js or Better Auth?][#11], `docs/adr/0001-better-auth-over-authjs.
 
 Sources: [App-level tenant scoping alone, or plus Postgres RLS?][#13], `docs/adr/0003-app-scoping-plus-rls-backstop.md`, [Does the RLS role design work on Neon?][#21], `docs/adr/0004-vercel-neon-for-v1.md`, [Settle the ops and infra gaps][#22].
 
+- **Client User read surface:** `app_tenant` has column-level `SELECT` on the board tables, so it can't read sync diagnostics (`last_sync_error`, `sync_warnings`, `last_synced_at`), GitHub ids and urls, or a Status option's `option_name`; and a restrictive policy on `tasks` hides soft-hidden Tasks from it. `app_system` (the sync and the Admin) still sees all of it.
 - **App scoping:** every query on Client-owned data goes through one tenant-aware data module that takes `clientId` explicitly. Admin routes also go through it, with an explicit `clientId`.
 - **RLS backstop:** every Client-owned table has `ENABLE` + `FORCE ROW LEVEL SECURITY`. Policies are a plain equality check written as `client_id = NULLIF(current_setting('app.client_id', true), '')::uuid`, so an unset or empty setting returns no rows and allows no writes.
 - **Roles:**
@@ -227,7 +228,7 @@ Sources: [Which PM tool should feed client-facing project status?][#2], [Lock th
 - **Archived Clients:** their boards stop syncing (webhooks, the poll and Sync now skip them) until the Client is unarchived; the next poll then catches up (Franklin, Phase 4 planning (2026-10-14)).
 - **GitHub env:** the five `GITHUB_*` vars (App id, private key, installation id, webhook secret, org) are all or none. Unset, sync is off: Home says GitHub isn't connected, Link and Sync now are hidden, and the webhook and poll endpoints answer 503 (Franklin, Phase 4 planning (2026-10-14)).
 - **Freshness:** only the Admin sees last-sync time, sync errors and warnings. Client Users don't.
-- **Sync problem:** GitHub's failed deliveries are invisible to the receiver, so the signal is ours: a linked board is a sync problem when `last_sync_error` is set **or** `last_synced_at` is older than 1 hour (four missed polls). `sync_warnings` don't count. Frozen (unlinked) Projects are never sync problems ([#25][#25]).
+- **Sync problem:** GitHub's failed deliveries are invisible to the receiver, so the signal is ours: a linked board is a sync problem when `last_sync_error` is set **or** `last_synced_at` is older than 26 hours (a missed daily run), or has never synced. `sync_warnings` don't count. Frozen (unlinked) Projects and archived Clients' boards are never sync problems ([#25][#25]; Franklin, Phase 5 planning (2026-10-15)).
 - **Setup step:** client boards on Franklin's personal account (e.g. Vertilux Shade Calculator) must move to `Neves-Labs-Inc`, because board webhooks fire only for org-owned projects.
 
 ### Client User screens
@@ -237,6 +238,11 @@ Sources: [What does a Client User see for a Project?][#4], [What is the visual d
 Navigation (sidebar on desktop, top bar + tab row on mobile): **Overview, Projects, Invoices, Requests, Team**, with counts (active Projects, Open incl. Overdue Invoices, New Requests; hidden when 0) and a user menu (name, role, Client, Profile, theme toggle, Sign out).
 
 - **Overview (home):** KPI row (Active projects, On track `n/m`, Open balance = sum of Open + Overdue, Overdue count), Projects panel, then Invoices and Requests panels (at most 5 each, "View all").
+- **Current Milestone:** among the Project's Milestones with at least one Task not Done, the one with the earliest due date; undated Milestones come after dated ones, ties by title A-Z. None: "No current Milestone".
+- **Milestones with no client-visible Tasks** (all hidden, or none at all) are left out of the Client's Project view, and out of the Admin board detail to match (Franklin, Phase 5 planning (2026-10-15)).
+- **Order:** Milestones by due date ascending (undated last), then title A-Z. Tasks: Up next and In progress by target date ascending (undated last), then title A-Z; Done by completion date, newest first (not completed last), then title.
+- **Markdown policy** (Status Update notes): GitHub-flavoured Markdown, no raw HTML, only `http`, `https` and `mailto` links, which open in a new tab; images are shown as links and never loaded. List rows show the note as plain text.
+- **Projects panel meta:** "<n> active · <m> past"; with no Projects at all it reads "0 active" on both Overview and Projects.
 - **Projects list:** one row per Project: health badge, name, latest Status Update note, current Milestone with progress bar, Task counts (Up next / In progress / Done). Past Projects sort below active ones.
 - **Project view:**
   - top: latest Status Update (health, dates, Markdown note); earlier Status Updates as a timeline below. No separate activity feed;
@@ -261,7 +267,7 @@ Sources: [What does the Admin area look like?][#19], `DESIGN.md` §6.3, prototyp
 - **Create Client:** drawer asks for a name; then the Team tab opens with "Invite first Owner".
 - **Team:** first-Owner Invitation; promote, demote, remove users; pending Invitations (revoke/resend). Expired Invitations drop off.
 - **Archive / unarchive** a Client. An archived Client's data is kept, read-only for the Admin ([#16][#16]).
-- **Projects & boards:** link and unlink boards, column → client-status mapping (saving with unmapped columns allowed; those Tasks count as In progress and the board is flagged). Board detail: required-field check, Milestone progress, Tasks with client status, sync state, "Sync now". Boards that are sync problems (error, or stale over 1 hour) are flagged. Delete Project.
+- **Projects & boards:** link and unlink boards, column → client-status mapping (saving with unmapped columns allowed; those Tasks count as In progress and the board is flagged). Board detail: required-field check, Milestone progress, Tasks with client status, sync state, "Sync now". Board detail also lists the client-visible Tasks (with their GitHub Status option name) and a count of hidden ones. Boards that are sync problems (error, or stale over 26 hours) are flagged on the row, on the board detail and by an alert icon on the Client's sidebar row (and on Home's Clients table). Delete Project.
 - **Invoices:** author (see [Invoices](#invoices)); mark Paid, revert Paid to Open, and Void, each with a confirmation.
 - **Requests:** triage from the global inbox or the Client's tab; the detail view sets the status and the one response note and links a Task (only while Accepted or Done). Withdrawn Requests are read-only.
 - The Admin always runs as `app_system` (ADR 0003).
@@ -418,7 +424,7 @@ All resolved; each names the ticket that settled it.
 6. ~~**Overdue and date timezone**~~ Resolved by [#24][#24]: one business timezone, `America/New_York`; Overdue from the day after the due date.
 7. ~~**Line Item amounts**~~ Resolved by [#24][#24]: non-zero, negatives allowed for discounts; total must be > 0.
 8. ~~**Task link after Project delete**~~ Resolved by [Settle the GitHub sync and Project gaps][#25]: `task_id` set null, `task_title` snapshot kept; shows "(no longer tracked)", same as a hidden Task.
-9. ~~**Sync failure detection**~~ Resolved by [#25][#25]: `last_sync_error` set, or `last_synced_at` older than 1 hour; warnings don't count.
+9. ~~**Sync failure detection**~~ Resolved by [#25][#25]: `last_sync_error` set, or `last_synced_at` null or older than 26 hours (a missed daily run; Franklin, Phase 5 planning (2026-10-15)); warnings don't count, and archived Clients' boards are excluded.
 10. ~~**"Needs attention" dot**~~ Resolved by [#25][#25]: replaced by per-reason alert icons: New Requests (with count), sync problem, Overdue Invoice.
 11. ~~**Closed GitHub boards**~~ Resolved by [#25][#25]: a closed linked board is a Past Project; it keeps syncing and reopening revives it.
 12. ~~**Items with no Status value**~~ Resolved by [#25][#25]: Up next, no flag.

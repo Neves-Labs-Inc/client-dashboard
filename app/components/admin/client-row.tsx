@@ -1,4 +1,4 @@
-import { Clock } from "lucide-react";
+import { Clock, RefreshCwOff } from "lucide-react";
 import { Link } from "react-router";
 import { CELL_CLASS, ROW_GRID_CLASS } from "@/components/admin/clients-grid";
 import DataTableCell from "@/components/ui/data-table-cell";
@@ -22,9 +22,13 @@ function OwnerText({ owner }: Pick<ClientSummary, "owner">): React.ReactNode {
 
 type ClientRowProps = {
   client: ClientSummary;
+  hasSyncProblem: boolean;
 };
 
-export default function ClientRow({ client }: ClientRowProps): React.ReactNode {
+export default function ClientRow({
+  client,
+  hasSyncProblem,
+}: ClientRowProps): React.ReactNode {
   const usersWord = client.userCount === 1 ? "user" : "users";
 
   return (
@@ -36,6 +40,18 @@ export default function ClientRow({ client }: ClientRowProps): React.ReactNode {
         >
           {client.name}
         </Link>
+        {/* Also the only place the flag shows at 375px: the mobile top bar has
+            no Client list. */}
+        {hasSyncProblem && (
+          <p className="mt-0.5 flex items-center gap-1.5 text-[13px]/5 text-fg-2">
+            <RefreshCwOff
+              size={16}
+              aria-hidden="true"
+              className="shrink-0 text-fg-2"
+            />
+            Sync problem
+          </p>
+        )}
       </DataTableCell>
       <DataTableCell
         className={`${CELL_CLASS.owner} text-[13px]/5 wrap-anywhere`}

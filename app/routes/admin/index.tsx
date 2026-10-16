@@ -255,7 +255,10 @@ export default function AdminHome({
         titleRef={titleRef}
         action={<NewClientLink />}
       />
-      <ClientsPanel clients={loaderData.clients} />
+      <ClientsPanel
+        clients={loaderData.clients}
+        syncProblemClientIds={layoutData?.syncProblemClientIds ?? []}
+      />
       <UnassignedBoardsPanel boards={loaderData.boards} />
       {layoutData && (
         <ArchivedClientsPanel

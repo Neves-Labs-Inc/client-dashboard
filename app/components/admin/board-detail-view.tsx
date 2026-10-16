@@ -27,6 +27,7 @@ type BoardDetailViewProps = {
   client: ClientWorkspace | null;
   detail: BoardDetail | null;
   isGithubConnected: boolean;
+  nowMs: number;
 };
 
 // The board detail in place of the Projects & boards tab: the workspace
@@ -36,6 +37,7 @@ export default function BoardDetailView({
   client,
   detail,
   isGithubConnected,
+  nowMs,
 }: BoardDetailViewProps): React.ReactNode {
   if (client === null) {
     return (
@@ -51,6 +53,7 @@ export default function BoardDetailView({
       client={client}
       detail={detail}
       isGithubConnected={isGithubConnected}
+      nowMs={nowMs}
     />
   );
 }
@@ -59,10 +62,12 @@ function WorkspaceBoard({
   client,
   detail,
   isGithubConnected,
+  nowMs,
 }: {
   client: ClientWorkspace;
   detail: BoardDetail | null;
   isGithubConnected: boolean;
+  nowMs: number;
 }): React.ReactNode {
   const titleRef = useRef<HTMLHeadingElement>(null);
   // Archive and unarchive post to the Team route, which owns them.
@@ -87,6 +92,7 @@ function WorkspaceBoard({
           clientId={client.clientId}
           detail={detail}
           isGithubConnected={isGithubConnected}
+          nowMs={nowMs}
         />
       )}
     </>
@@ -97,10 +103,12 @@ function BoardBody({
   clientId,
   detail,
   isGithubConnected,
+  nowMs,
 }: {
   clientId: string;
   detail: BoardDetail;
   isGithubConnected: boolean;
+  nowMs: number;
 }): React.ReactNode {
   const location = useLocation();
   const nameRef = useRef<HTMLHeadingElement>(null);
@@ -150,6 +158,7 @@ function BoardBody({
           detail={detail}
           sync={sync}
           canSync={canSync}
+          nowMs={nowMs}
           isSyncedHighlighted={highlightedId === detail.id}
         />
         <BoardRequiredFieldsPanel fieldChecks={detail.fieldChecks} />

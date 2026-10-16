@@ -1,5 +1,11 @@
 import type { LucideIcon } from "lucide-react";
 import { Link, NavLink } from "react-router";
+import NavAlertIcons, {
+  getAlertLabels,
+  getAlertsSpokenText,
+  type NavAlert,
+} from "@/components/ui/nav-alert-icons";
+import Tooltip from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 
 type NavItemProps = {
@@ -10,6 +16,8 @@ type NavItemProps = {
   count?: number;
   // Spoken after the count ("3 active"); the count itself shows as a number.
   countLabel?: string;
+  // Sidebar only: icons at the row's right edge, with a tooltip.
+  alerts?: NavAlert[];
   variant?: "sidebar" | "tab";
   // Overrides NavLink's route matching (the gallery's hash links).
   active?: boolean;
@@ -36,6 +44,7 @@ export default function NavItem({
   icon: Icon,
   count,
   countLabel,
+  alerts = [],
   variant = "sidebar",
   active,
   isHighlighted = false,
@@ -47,39 +56,70 @@ export default function NavItem({
       isHighlighted && "animate-nav-highlight motion-reduce:animate-none",
     );
 
+  const hasAlerts = variant === "sidebar" && alerts.length > 0;
+  const hasCount = variant === "sidebar" && Boolean(count);
+  const hasSpokenCount = hasCount && Boolean(countLabel);
+  // Spelled out, not sr-only spans: Chrome pads absolutely positioned spans
+  // with a space ("Acme Corp , sync problem").
+  const ariaLabel =
+    hasAlerts || hasSpokenCount
+      ? [
+          label,
+          hasAlerts && getAlertsSpokenText(alerts),
+          hasCount && (countLabel ? `, ${count} ${countLabel}` : ` ${count}`),
+        ]
+          .filter(Boolean)
+          .join("")
+      : undefined;
   const content = (
     <>
       {Icon && <Icon size={14} aria-hidden="true" className="shrink-0" />}
       <span className="min-w-0 truncate">{label}</span>
-      {variant === "sidebar" && Boolean(count) && (
+      {hasCount && (
         <span className="ml-auto font-mono text-xs/4 text-fg-2 tabular-nums">
-          {countLabel && <span className="sr-only">, </span>}
           {count}
-          {countLabel && <span className="sr-only"> {countLabel}</span>}
         </span>
       )}
+      {hasAlerts && <NavAlertIcons alerts={alerts} />}
     </>
   );
 
-  if (active !== undefined) {
-    return (
+  const link =
+    active !== undefined ? (
       <Link
         to={to}
         aria-current={active ? "page" : undefined}
+        aria-label={ariaLabel}
         className={getClassName(active)}
       >
         {content}
       </Link>
+    ) : (
+      <NavLink
+        to={to}
+        end={end}
+        aria-label={ariaLabel}
+        className={({ isActive }) => getClassName(isActive)}
+      >
+        {content}
+      </NavLink>
     );
-  }
 
+  if (!hasAlerts) return link;
+
+  // While open, Radix points the link's aria-describedby at the tooltip, so a
+  // screen reader hears the alert twice. Accepted: Slot merges the attribute,
+  // so the link can't opt out without a wrapper.
   return (
-    <NavLink
-      to={to}
-      end={end}
-      className={({ isActive }) => getClassName(isActive)}
+    <Tooltip
+      side="right"
+      content={getAlertLabels(alerts).map((label) => (
+        <span key={label} className="block">
+          {label}
+        </span>
+      ))}
     >
-      {content}
-    </NavLink>
+      {link}
+    </Tooltip>
   );
 }

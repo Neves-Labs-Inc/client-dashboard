@@ -18,12 +18,15 @@ type AdminSidebarNavProps = {
   // Null when they failed to load: the group is hidden (Home's panel
   // carries the error).
   archivedClients: Pick<ArchivedClient, "id" | "name">[] | null;
+  // Active Clients with a sync-problem Project.
+  syncProblemClientIds: string[];
 };
 
 // The children of the Sidebar's <nav aria-label="Main">.
 export default function AdminSidebarNav({
   clients,
   archivedClients,
+  syncProblemClientIds,
 }: AdminSidebarNavProps): React.ReactNode {
   const { pathname, state } = useLocation();
   // Arriving from a create: that Client's entry gets the highlight fade.
@@ -55,6 +58,11 @@ export default function AdminSidebarNav({
               label={client.name}
               active={pathname.startsWith(`/admin/clients/${client.id}/`)}
               isHighlighted={client.id === createdClientId}
+              alerts={
+                syncProblemClientIds.includes(client.id)
+                  ? [{ kind: "sync-problem" }]
+                  : []
+              }
             />
           </li>
         ))}

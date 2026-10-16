@@ -39,6 +39,8 @@ type ProjectsViewProps = {
   // The loader's mapping for `?map=`; null without it.
   mapLoad: MapLoad | null;
   isGithubConnected: boolean;
+  // The loader's clock, for the sync-problem lines.
+  nowMs: number;
 };
 
 export default function ProjectsView({
@@ -46,6 +48,7 @@ export default function ProjectsView({
   projects,
   mapLoad,
   isGithubConnected,
+  nowMs,
 }: ProjectsViewProps): React.ReactNode {
   const { state } = useLocation();
   const titleRef = useRef<HTMLHeadingElement>(null);
@@ -128,6 +131,8 @@ export default function ProjectsView({
                 canSync={canSync}
                 canMap={!isArchived}
                 canRemove={!isArchived}
+                isClientArchived={isArchived}
+                nowMs={nowMs}
                 clientName={client.name}
                 clientId={client.clientId}
                 shouldFocusName={project.id === fromProjectId}

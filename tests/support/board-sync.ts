@@ -12,6 +12,7 @@ export function createStubBoardSync(overrides: Partial<BoardSync>): BoardSync {
     getLinkDraft: notStubbed("getLinkDraft"),
     link: notStubbed("link"),
     listProjects: notStubbed("listProjects"),
+    listSyncProblemClientIds: notStubbed("listSyncProblemClientIds"),
     getMapping: notStubbed("getMapping"),
     getBoardDetail: notStubbed("getBoardDetail"),
     saveMapping: notStubbed("saveMapping"),

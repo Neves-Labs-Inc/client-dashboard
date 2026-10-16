@@ -414,10 +414,10 @@ User menu (and any future dropdown): `bg-surface border border-line-strong round
 | Data | `ProgressBar`, `SummaryRow` + `SummaryTile`, `Money`, `DateText` (mono, `en-US`, "Oct 7" / "Jun 28, 2026" for other years) |
 | Actions | `Button`, `IconButton` |
 | Forms | `Field`, `Input`, `Textarea`, `Select`, `RadioCardGroup`, `FormError` |
-| Overlays | `Drawer`, `Menu`, `Toast` / `Toaster`, `ThemeToggle` |
+| Overlays | `Drawer`, `Menu`, `Tooltip`, `Toast` / `Toaster`, `ThemeToggle` |
 | States | `Skeleton` (+ `SkeletonRow` per table), `EmptyState`, `PanelError` |
 
-Primitive library (decided): **shadcn/ui** on **Radix UI primitives** (Dialog for Drawer, DropdownMenu, Toast, RadioGroup), always re-skinned to this file (3px radius, Plex, these tokens); never ship shadcn defaults. Icons: **lucide-react** for generic UI icons (close, chevron, plus, menu, sun/moon/monitor); health/invoice icons are the custom `StatusIcon` shapes.
+Primitive library (decided): **shadcn/ui** on **Radix UI primitives** (Dialog for Drawer, DropdownMenu, Tooltip, Toast, RadioGroup), always re-skinned to this file (3px radius, Plex, these tokens); never ship shadcn defaults. Icons: **lucide-react** for generic UI icons (close, chevron, plus, menu, sun/moon/monitor); health/invoice icons are the custom `StatusIcon` shapes.
 
 ---
 

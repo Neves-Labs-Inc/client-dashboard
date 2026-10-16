@@ -5,7 +5,9 @@ import {
   eq,
   isNotNull,
   isNull,
+  lt,
   notInArray,
+  or,
   sql,
   type SQL,
 } from "drizzle-orm";
@@ -37,6 +39,7 @@ import {
   type PmSource,
   type PmStatusOption,
 } from "@/lib/pm-source/pm-source";
+import { SYNC_STALE_AFTER_MS } from "@/lib/board-sync/sync-problem";
 import type { Result } from "@/lib/result";
 
 // The board-sync module: the only caller of PmSource and the only writer of
@@ -174,6 +177,9 @@ export type BoardSync = {
   // The Client's Projects: linked and closed ones by name, then unlinked
   // ones by name (case-insensitive).
   listProjects(clientId: string): Promise<ProjectRow[]>;
+  // Ids of the active Clients with a linked Project in sync trouble
+  // (isSyncProblem), for the sidebar's alert icons.
+  listSyncProblemClientIds(): Promise<string[]>;
   // The Map columns drawer's data: the Project's stored Status options,
   // as the last sync saw them, by name. Null for an unknown Project. Never
   // calls GitHub.
@@ -574,6 +580,29 @@ export function createBoardSync(deps: BoardSyncDeps): BoardSync {
     }));
   }
 
+  async function listSyncProblemClientIds(): Promise<string[]> {
+    // The SQL twin of isSyncProblem: both read SYNC_STALE_AFTER_MS.
+    const staleBefore = new Date(now().getTime() - SYNC_STALE_AFTER_MS);
+    const rows = await db.withSystem((tx) =>
+      tx
+        .selectDistinct({ clientId: projects.clientId })
+        .from(projects)
+        .innerJoin(clients, eq(clients.id, projects.clientId))
+        .where(
+          and(
+            isNull(projects.unlinkedAt),
+            isNull(clients.archivedAt),
+            or(
+              isNotNull(projects.lastSyncError),
+              isNull(projects.lastSyncedAt),
+              lt(projects.lastSyncedAt, staleBefore),
+            ),
+          ),
+        ),
+    );
+    return rows.map((row) => row.clientId);
+  }
+
   async function getMapping(projectId: string): Promise<MappingEdit | null> {
     if (!UUID_PATTERN.test(projectId)) return null;
 
@@ -753,6 +782,7 @@ export function createBoardSync(deps: BoardSyncDeps): BoardSync {
     getLinkDraft,
     link,
     listProjects,
+    listSyncProblemClientIds,
     getMapping,
     getBoardDetail,
     saveMapping,

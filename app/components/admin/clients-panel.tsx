@@ -22,10 +22,13 @@ const COLUMNS = [
 type ClientsPanelProps = {
   // Null when the roster couldn't load.
   clients: Promise<ClientSummary[] | null>;
+  // Active Clients with a sync-problem Project.
+  syncProblemClientIds: string[];
 };
 
 export default function ClientsPanel({
   clients,
+  syncProblemClientIds,
 }: ClientsPanelProps): React.ReactNode {
   // Focused after a successful retry: the error's "Try again" goes away.
   const titleRef = useRef<HTMLHeadingElement>(null);
@@ -60,7 +63,11 @@ export default function ClientsPanel({
                   gridClassName={TABLE_GRID_CLASS}
                 >
                   {resolved.map((client) => (
-                    <ClientRow key={client.id} client={client} />
+                    <ClientRow
+                      key={client.id}
+                      client={client}
+                      hasSyncProblem={syncProblemClientIds.includes(client.id)}
+                    />
                   ))}
                 </DataTable>
               )}
