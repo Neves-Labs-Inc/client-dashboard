@@ -19,6 +19,7 @@ export default [
     route("invitations/:invitationId", "routes/auth/invitation.tsx"),
   ]),
   layout("routes/client/layout.tsx", [
+    route("overview", "routes/client/overview.tsx"),
     route("projects", "routes/client/projects.tsx"),
     route("projects/:projectId", "routes/client/project.tsx"),
     route("team", "routes/client/team.tsx"),

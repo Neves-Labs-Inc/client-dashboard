@@ -1,4 +1,4 @@
-import { FolderKanban, Users } from "lucide-react";
+import { FolderKanban, LayoutDashboard, Users } from "lucide-react";
 import ClientUserMenu from "@/components/client/client-user-menu";
 import AppShell from "@/components/ui/app-shell";
 import MobileTopBar from "@/components/ui/mobile-top-bar";
@@ -8,6 +8,7 @@ import Sidebar from "@/components/ui/sidebar";
 import type { ClientAccess } from "@/lib/auth/auth";
 
 const BRAND_SUBTITLE = "Neves Labs · portal";
+const OVERVIEW_PATH = "/overview";
 const TEAM_PATH = "/team";
 const PROJECTS_PATH = "/projects";
 
@@ -44,6 +45,13 @@ export default function ClientShell({
           <ul className="flex flex-col gap-px">
             <li>
               <NavItem
+                to={OVERVIEW_PATH}
+                label="Overview"
+                icon={LayoutDashboard}
+              />
+            </li>
+            <li>
+              <NavItem
                 to={PROJECTS_PATH}
                 label="Projects"
                 icon={FolderKanban}
@@ -63,6 +71,12 @@ export default function ClientShell({
           action={<ClientUserMenu {...user} placement="mobile" />}
           nav={
             <>
+              <NavItem
+                variant="tab"
+                to={OVERVIEW_PATH}
+                label="Overview"
+                icon={LayoutDashboard}
+              />
               <NavItem
                 variant="tab"
                 to={PROJECTS_PATH}

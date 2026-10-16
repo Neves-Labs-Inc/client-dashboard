@@ -11,6 +11,7 @@ import {
   loader as clientLayoutLoader,
   shouldRevalidate as clientLayoutShouldRevalidate,
 } from "@/routes/client/layout";
+import { loader as overviewLoader } from "@/routes/client/overview";
 import {
   headers as projectsHeaders,
   loader as projectsLoader,
@@ -207,7 +208,7 @@ beforeEach(() => {
 
 describe("the / redirect", () => {
   const homes: [string, Access, string][] = [
-    ["a Client User", OWNER, "/team"],
+    ["a Client User", OWNER, "/overview"],
     ["a no-access session", ARCHIVED, "/no-access"],
     ["a visitor", ANONYMOUS, "/sign-in"],
   ];
@@ -229,6 +230,7 @@ describe("the client guard", () => {
     "client layout": () => clientLayoutLoader(argsFor("/team")),
     "Team loader": () => teamLoader(argsFor("/team")),
     "Projects loader": () => projectsLoader(argsFor("/projects")),
+    "Overview loader": () => overviewLoader(argsFor("/overview")),
   };
   const turnedAway: [string, Access, string][] = [
     ["the Admin", ADMIN, "/admin"],
@@ -292,12 +294,12 @@ describe("the client guard", () => {
     expect(errorLog).toHaveBeenCalled();
   });
 
-  it("sends a Client User away from /admin to /team", async () => {
+  it("sends a Client User away from /admin to /overview", async () => {
     answerAs(OWNER);
 
     const { headers } = await settle(() => adminLoader(argsFor("/admin")));
 
-    expect(headers.get("location")).toBe("/team");
+    expect(headers.get("location")).toBe("/overview");
     expect(listClients).not.toHaveBeenCalled();
   });
 });
@@ -413,6 +415,45 @@ describe("the Projects loader", () => {
   });
 });
 
+describe("the Overview loader", () => {
+  const PROJECT: ProjectSummary = {
+    id: "p1",
+    name: "Website redesign",
+    isPast: false,
+    health: "ON_TRACK",
+    latestUpdateAt: new Date("2026-10-07"),
+    latestNote: null,
+    currentMilestone: null,
+    taskCounts: { UP_NEXT: 5, IN_PROGRESS: 3, DONE: 17 },
+  };
+
+  it("lists only the signed-in Client's Projects, whatever the URL says", async () => {
+    answerAs(MEMBER);
+    listProjects.mockResolvedValue([PROJECT]);
+
+    const { data } = await settle(() =>
+      overviewLoader(argsFor(`/overview?clientId=${OTHER_CLIENT_ID}`)),
+    );
+
+    expect(listProjects).toHaveBeenCalledWith(CLIENT_ID);
+    const loaded = data as { clientName: string; projects: Promise<unknown> };
+    expect(loaded.clientName).toBe("Acme");
+    await expect(loaded.projects).resolves.toEqual([PROJECT]);
+  });
+
+  it("streams null, not the error, when the Projects can't load", async () => {
+    answerAs(OWNER);
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+    listProjects.mockRejectedValue(new Error("connection lost"));
+
+    const { data } = await settle(() => overviewLoader(argsFor("/overview")));
+
+    const loaded = data as { projects: Promise<unknown> };
+    await expect(loaded.projects).resolves.toBeNull();
+    expect(errorLog).toHaveBeenCalled();
+  });
+});
+
 describe("the No access loader", () => {
   async function loadNoAccess(path: string) {
     return settle(() => noAccessLoader(argsFor(path)));
@@ -464,7 +505,7 @@ describe("the No access loader", () => {
   });
 
   const sentHome: [string, Access, string][] = [
-    ["a Client User", OWNER, "/team"],
+    ["a Client User", OWNER, "/overview"],
     ["the Admin", ADMIN, "/admin"],
     ["a magic-link Admin", ADMIN_NEEDS_PASSKEY, "/passkey"],
   ];

@@ -16,8 +16,6 @@ type ProjectsPanelProps = {
 };
 
 function getMeta(projects: ProjectSummary[]): string | undefined {
-  if (projects.length === 0) return undefined;
-
   const pastCount = projects.filter((project) => project.isPast).length;
   const activeCount = projects.length - pastCount;
   return pastCount === 0

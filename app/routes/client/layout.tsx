@@ -7,6 +7,7 @@ import {
 } from "react-router";
 import ClientShell from "@/components/client/client-shell";
 import ProjectViewSkeleton from "@/components/client/project-view-skeleton";
+import OverviewSkeleton from "@/components/client/overview-skeleton";
 import ClientTeamSkeleton from "@/components/client/client-team-skeleton";
 import ProfileSkeleton from "@/components/client/profile-skeleton";
 import ProjectsPageSkeleton from "@/components/projects/projects-page-skeleton";
@@ -19,6 +20,7 @@ import { getNoStoreHeaders } from "@/lib/no-store-headers";
 import { revalidateUnlessThemeFailed } from "@/lib/theme";
 import type { Route } from "./+types/layout";
 
+const OVERVIEW_PATH = "/overview";
 const TEAM_PATH = "/team";
 const PROJECTS_PATH = "/projects";
 // One Project's view: /projects/<id>, not /projects itself.
@@ -78,7 +80,9 @@ function getSkeleton(
   role: "owner" | "member",
 ): React.ReactNode {
   let skeleton: React.ReactNode = null;
-  if (path === TEAM_PATH) {
+  if (path === OVERVIEW_PATH) {
+    skeleton = <OverviewSkeleton />;
+  } else if (path === TEAM_PATH) {
     skeleton = <ClientTeamSkeleton isOwner={role === "owner"} />;
   } else if (path === PROJECTS_PATH) {
     skeleton = <ProjectsPageSkeleton />;
@@ -90,10 +94,10 @@ function getSkeleton(
   return skeleton;
 }
 
-// The Team, Profile, Projects and Project view loaders are awaited (Projects
-// streams its list, but the page still loads first), so a client-side
-// navigation into any of them shows its skeleton meanwhile. The path being
-// loaded, or null when no other page is.
+// The Overview, Team, Profile, Projects and Project view loaders are awaited
+// (Overview and Projects stream their list, but the page still loads first),
+// so a client-side navigation into any of them shows its skeleton meanwhile.
+// The path being loaded, or null when no other page is.
 function useNavigatingToPath(): string | null {
   const navigation = useNavigation();
   const { pathname } = useLocation();
