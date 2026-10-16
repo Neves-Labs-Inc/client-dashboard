@@ -1,4 +1,4 @@
-import { Users } from "lucide-react";
+import { FolderKanban, Users } from "lucide-react";
 import ClientUserMenu from "@/components/client/client-user-menu";
 import AppShell from "@/components/ui/app-shell";
 import MobileTopBar from "@/components/ui/mobile-top-bar";
@@ -9,12 +9,15 @@ import type { ClientAccess } from "@/lib/auth/auth";
 
 const BRAND_SUBTITLE = "Neves Labs · portal";
 const TEAM_PATH = "/team";
+const PROJECTS_PATH = "/projects";
 
 type ClientShellProps = {
   clientName: string;
   name: string;
   email: string;
   role: ClientAccess["role"];
+  // Null when the count couldn't load: the sidebar shows none.
+  activeProjectCount: number | null;
   children: React.ReactNode;
 };
 
@@ -23,6 +26,7 @@ export default function ClientShell({
   name,
   email,
   role,
+  activeProjectCount,
   children,
 }: ClientShellProps): React.ReactNode {
   const brand = (
@@ -39,6 +43,15 @@ export default function ClientShell({
         >
           <ul className="flex flex-col gap-px">
             <li>
+              <NavItem
+                to={PROJECTS_PATH}
+                label="Projects"
+                icon={FolderKanban}
+                count={activeProjectCount ?? undefined}
+                countLabel="active"
+              />
+            </li>
+            <li>
               <NavItem to={TEAM_PATH} label="Team" icon={Users} />
             </li>
           </ul>
@@ -49,7 +62,15 @@ export default function ClientShell({
           brand={brand}
           action={<ClientUserMenu {...user} placement="mobile" />}
           nav={
-            <NavItem variant="tab" to={TEAM_PATH} label="Team" icon={Users} />
+            <>
+              <NavItem
+                variant="tab"
+                to={PROJECTS_PATH}
+                label="Projects"
+                icon={FolderKanban}
+              />
+              <NavItem variant="tab" to={TEAM_PATH} label="Team" icon={Users} />
+            </>
           }
         />
       }

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import DevButtonsPanel from "@/components/dev/dev-buttons-panel";
 import DevFieldsPanel from "@/components/dev/dev-fields-panel";
+import DevHealthPanel from "@/components/dev/dev-health-panel";
 import DevOverlaysPanel from "@/components/dev/dev-overlays-panel";
 import DevShell from "@/components/dev/dev-shell";
 import DevStatesPanel from "@/components/dev/dev-states-panel";
@@ -44,6 +45,7 @@ export default function DevComponents(): React.ReactNode {
         <DevThemePanel />
       </div>
       <DevStatesPanel />
+      <DevHealthPanel />
     </DevShell>
   );
 }

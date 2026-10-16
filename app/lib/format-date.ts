@@ -63,3 +63,9 @@ const ISO_DATE_FORMAT = new Intl.DateTimeFormat("en-CA", {
 export function formatIsoDate(date: Date): string {
   return ISO_DATE_FORMAT.format(date);
 }
+
+// A date-only value ("2026-11-14", a `date` column) as an instant at noon
+// UTC: midnight UTC would format as the previous evening in New York.
+export function parseDateOnly(value: string): Date {
+  return new Date(`${value}T12:00:00Z`);
+}

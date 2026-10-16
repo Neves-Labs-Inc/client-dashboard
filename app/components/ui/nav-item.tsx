@@ -8,6 +8,8 @@ type NavItemProps = {
   label: string;
   icon?: LucideIcon;
   count?: number;
+  // Spoken after the count ("3 active"); the count itself shows as a number.
+  countLabel?: string;
   variant?: "sidebar" | "tab";
   // Overrides NavLink's route matching (the gallery's hash links).
   active?: boolean;
@@ -33,6 +35,7 @@ export default function NavItem({
   label,
   icon: Icon,
   count,
+  countLabel,
   variant = "sidebar",
   active,
   isHighlighted = false,
@@ -50,7 +53,9 @@ export default function NavItem({
       <span className="min-w-0 truncate">{label}</span>
       {variant === "sidebar" && Boolean(count) && (
         <span className="ml-auto font-mono text-xs/4 text-fg-2 tabular-nums">
+          {countLabel && <span className="sr-only">, </span>}
           {count}
+          {countLabel && <span className="sr-only"> {countLabel}</span>}
         </span>
       )}
     </>
