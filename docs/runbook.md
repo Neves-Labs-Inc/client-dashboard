@@ -491,6 +491,23 @@ After the Phase 6 deploy (§3.10), and locally with the qa-visual seed. Use a te
 8. The Withdrawn Request is read-only in the Admin. An archived Client's Requests tab is read-only, and its Requests are absent from the inbox.
 9. The **Overview** shows the Requests panel (5 newest, "View all" past 5), and "+ New" (aria-label "New request") works from there.
 
-## 12. Adding to this runbook
+## 12. Phase 5a walkthrough
+
+After the Phase 5a deploy, and locally with the qa-visual seed. Use a test Client with an Owner, a few linked boards (Projects) and Requests (one Task marked `Internal`), and an archived test Client. Locally, never click "Sync now" (`.env` holds real GitHub credentials).
+
+1. **As the Admin**, open a Client and click **Preview** on each tab (Projects & boards, Team, Requests). Each opens the preview Overview in the same tab, under the banner "Previewing <Client> as an Owner · Read-only".
+2. Check the Overview KPIs and panels, the Projects list, a Project view (the `Internal` Task is absent), the Requests list and a Request detail. No "New request", Edit, Withdraw, Team, Profile or Sign out shows. The "Admin preview" menu holds the theme toggle and Exit.
+3. Click a link on each page (a Project row, a Request row, a Request's Project or Task link): you stay under `/admin/clients/<id>/preview`.
+4. Click **Exit preview**: you land on the Client's Projects & boards tab.
+5. Preview an archived Client: the banner adds "Archived: its users can't sign in".
+6. Open the Link drawer on Home: the org's client board template is not listed. To fix an issue-field board, see [Client board setup](#client-board-setup).
+7. Open the board detail of a board whose `Client visibility` is an org issue field: the Required fields panel shows **Issue field**, the sync panel shows `<field> is an issue field; add it as a project field`, and the meta counts it in "<n> to fix". No sync-problem icon appears for it.
+
+Known follow-ups, found in review and not fixed:
+
+- The Request detail's links are below the 44px touch target (issue #49).
+- A document POST to a preview page gets a 405, but the preview layout's loader still runs its reads first (the Client lookup and the nav counts). Nothing is written.
+
+## 13. Adding to this runbook
 
 Every Phase adds its settings here and to `.env.example` (roadmap gate 3): new env vars and secrets in section 2, new manual setup in section 3, new checks in a Phase walkthrough.
