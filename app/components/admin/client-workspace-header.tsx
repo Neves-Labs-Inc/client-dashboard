@@ -6,6 +6,7 @@ import PreviewLink from "@/components/admin/preview-link";
 import PageHeader from "@/components/ui/page-header";
 import TabNav from "@/components/ui/tab-nav";
 import type { ArchiveClient } from "@/hooks/use-archive-client";
+import { getClientInvoicesPath } from "@/lib/admin-invoices";
 import { getClientRequestsPath } from "@/lib/admin-requests";
 import { getProjectsPath } from "@/lib/link-board";
 import { getTeamPath } from "@/lib/new-client";
@@ -20,7 +21,7 @@ export type ClientWorkspace = {
 
 type ClientWorkspaceHeaderProps = {
   client: ClientWorkspace;
-  tab: "projects" | "team" | "requests";
+  tab: "projects" | "team" | "invoices" | "requests";
   archive: ArchiveClient;
   titleRef: React.RefObject<HTMLHeadingElement | null>;
   // An active Client's primary action before "Archive client".
@@ -76,6 +77,11 @@ export default function ClientWorkspaceHeader({
             label: "Team",
             to: getTeamPath(client.clientId),
             current: tab === "team",
+          },
+          {
+            label: "Invoices",
+            to: getClientInvoicesPath(client.clientId),
+            current: tab === "invoices",
           },
           {
             label: "Requests",

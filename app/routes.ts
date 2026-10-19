@@ -52,6 +52,11 @@ export default [
       "clients/:clientId/requests/:requestId",
       "routes/admin/client-request.tsx",
     ),
+    route("clients/:clientId/invoices", "routes/admin/client-invoices.tsx"),
+    route(
+      "clients/:clientId/invoices/:invoiceId",
+      "routes/admin/client-invoice.tsx",
+    ),
     route(
       "clients/:clientId/projects/:projectId",
       "routes/admin/client-board.tsx",

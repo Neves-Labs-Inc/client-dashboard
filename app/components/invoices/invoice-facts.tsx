@@ -5,10 +5,12 @@ import { parseDateOnly } from "@/lib/format-date";
 import type { InvoiceDetail } from "@/lib/invoices/invoices";
 
 type InvoiceFactsProps = {
+  // statusChangedAt is the Admin's only: the client's detail omits it.
   detail: Pick<
     InvoiceDetail,
     "issueDate" | "dueDate" | "status" | "paidDate" | "project"
-  >;
+  > &
+    Partial<Pick<InvoiceDetail, "statusChangedAt">>;
   // Each area links the Project its own way (the client's paths, the
   // Admin's).
   getProjectHref: (projectId: string) => string;
@@ -36,6 +38,12 @@ export default function InvoiceFacts({
       {detail.status === "PAID" && detail.paidDate !== null && (
         <ProfileReadOnlyRow label="Paid">
           <DateText date={parseDateOnly(detail.paidDate)} />
+        </ProfileReadOnlyRow>
+      )}
+      {/* Admin only: the client never gets a Void Invoice. */}
+      {detail.status === "VOID" && detail.statusChangedAt !== undefined && (
+        <ProfileReadOnlyRow label="Voided">
+          <DateText date={detail.statusChangedAt} />
         </ProfileReadOnlyRow>
       )}
       <ProfileReadOnlyRow label="Project">

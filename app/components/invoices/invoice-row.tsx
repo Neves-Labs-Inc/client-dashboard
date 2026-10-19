@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import { Link } from "react-router";
 import { CELL_CLASS, ROW_GRID_CLASS } from "@/components/invoices/invoice-grid";
 import DataTableCell from "@/components/ui/data-table-cell";
@@ -11,6 +12,10 @@ import type { InvoiceRow as InvoiceRowData } from "@/lib/invoices/invoices";
 type InvoiceRowProps = {
   invoice: InvoiceRowData;
   href: string;
+  // The Admin's: the row just issued.
+  isHighlighted?: boolean;
+  // The Admin's: back from this Invoice's detail.
+  shouldFocusNumber?: boolean;
 };
 
 // One link: the number's stretched ::after covers the row, and the row draws
@@ -18,11 +23,29 @@ type InvoiceRowProps = {
 export default function InvoiceRow({
   invoice,
   href,
+  isHighlighted = false,
+  shouldFocusNumber = false,
 }: InvoiceRowProps): React.ReactNode {
+  const numberRef = useRef<HTMLAnchorElement>(null);
+
+  useEffect(() => {
+    if (shouldFocusNumber) numberRef.current?.focus();
+  }, [shouldFocusNumber]);
+
+  // A just-issued Invoice can land mid-list (a past issue date).
+  useEffect(() => {
+    if (isHighlighted) numberRef.current?.scrollIntoView({ block: "nearest" });
+  }, [isHighlighted]);
+
   return (
-    <DataTableRow gridClassName={ROW_GRID_CLASS} isLink>
+    <DataTableRow
+      gridClassName={ROW_GRID_CLASS}
+      isLink
+      isHighlighted={isHighlighted}
+    >
       <DataTableCell className={CELL_CLASS.number}>
         <Link
+          ref={numberRef}
           to={href}
           className="block truncate font-mono text-[13px]/5 font-medium text-fg tabular-nums outline-hidden after:absolute after:inset-0"
         >

@@ -7,7 +7,9 @@ import {
   type ShouldRevalidateFunctionArgs,
 } from "react-router";
 import AdminShell from "@/components/admin/admin-shell";
+import AdminInvoiceDetailSkeleton from "@/components/admin/admin-invoice-detail-skeleton";
 import BoardDetailSkeleton from "@/components/admin/board-detail-skeleton";
+import ClientInvoicesSkeleton from "@/components/admin/client-invoices-skeleton";
 import ClientRequestsSkeleton from "@/components/admin/client-requests-skeleton";
 import RequestTriageSkeleton from "@/components/admin/request-triage-skeleton";
 import RequestsInboxSkeleton from "@/components/admin/requests-inbox-skeleton";
@@ -37,6 +39,11 @@ import {
   INBOX_REQUEST_ROUTE_PATTERN,
   INBOX_ROUTE_PATTERN,
 } from "@/lib/admin-requests";
+import {
+  CLIENT_INVOICE_ROUTE_PATTERN,
+  CLIENT_INVOICES_ROUTE_PATTERN,
+  isInvoiceDrawerToggle,
+} from "@/lib/admin-invoices";
 import { describeError } from "@/lib/describe-error";
 import { requests } from "@/lib/requests/requests.server";
 import type { Route } from "./+types/layout";
@@ -105,6 +112,7 @@ export function shouldRevalidate(args: ShouldRevalidateFunctionArgs): boolean {
     !isNewClientDrawerToggle(args) &&
     !isLinkDrawerToggle(args) &&
     !isMapDrawerToggle(args) &&
+    !isInvoiceDrawerToggle(args) &&
     !isInviteFlagRemoval(args)
   );
 }
@@ -135,6 +143,8 @@ type LoadingTab =
   | "board"
   | "requests"
   | "request"
+  | "invoices"
+  | "invoice"
   | "inbox"
   | "inbox-request";
 
@@ -144,6 +154,8 @@ const WORKSPACE_SKELETONS: Record<LoadingTab, React.ReactNode> = {
   board: <BoardDetailSkeleton />,
   requests: <ClientRequestsSkeleton />,
   request: <RequestTriageSkeleton route="client" />,
+  invoices: <ClientInvoicesSkeleton />,
+  invoice: <AdminInvoiceDetailSkeleton />,
   inbox: <RequestsInboxSkeleton />,
   "inbox-request": <RequestTriageSkeleton route="inbox" />,
 };
@@ -156,6 +168,8 @@ const LOADING_TAB_PATTERNS: [string, LoadingTab][] = [
   [PROJECTS_ROUTE_PATTERN, "projects"],
   [CLIENT_REQUEST_ROUTE_PATTERN, "request"],
   [CLIENT_REQUESTS_ROUTE_PATTERN, "requests"],
+  [CLIENT_INVOICE_ROUTE_PATTERN, "invoice"],
+  [CLIENT_INVOICES_ROUTE_PATTERN, "invoices"],
   [INBOX_REQUEST_ROUTE_PATTERN, "inbox-request"],
   [INBOX_ROUTE_PATTERN, "inbox"],
 ];
