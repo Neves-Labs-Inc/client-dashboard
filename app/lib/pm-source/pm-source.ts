@@ -62,7 +62,7 @@ export type PmBoard = PmBoardSummary & {
 // Every method throws PmSourceError on an infra failure (network, 5xx, rate
 // limit, bad credentials, malformed response). Only a missing board is null.
 export type PmSource = {
-  // Every board of the org, open and closed.
+  // Every non-template board of the org, open and closed.
   listBoards(): Promise<PmBoardSummary[]>;
   // null when the board doesn't exist (deleted).
   getBoard(boardNodeId: string): Promise<PmBoard | null>;

@@ -74,7 +74,7 @@ const CLOSED_BOARD_RESPONSES = {
 
 describe("GitHub PmSource", () => {
   describe("listBoards", () => {
-    it("returns the org's open and closed boards across pages, in order", async () => {
+    it("returns the org's open and closed non-template boards across pages, in order", async () => {
       const { graphql, calls } = createFakeGraphql({
         PmOrgBoards: "org-boards-page-1",
         [`PmOrgBoards@${BOARDS_PAGE_2_CURSOR}`]: "org-boards-page-2",
@@ -108,6 +108,12 @@ describe("GitHub PmSource", () => {
           updatedAt: new Date("2026-10-10T10:00:00Z"),
         },
       ]);
+      expect(boards.map((board) => board.nodeId)).not.toContain(
+        "PVT_kwDOTemplate01",
+      );
+      expect(boards.map((board) => board.nodeId)).not.toContain(
+        "PVT_kwDOTemplate02",
+      );
       expect(calls.map((call) => call.variables.org)).toEqual([
         "Example-Org",
         "Example-Org",
@@ -403,6 +409,24 @@ describe("GitHub PmSource", () => {
         () => createSource(graphql).getBoard(BOARD_ID),
         "GitHub returned an unexpected response",
       );
+    });
+
+    it("rejects a board whose template flag is missing or not a boolean", async () => {
+      for (const template of [undefined, "false", null]) {
+        const page = loadFixture("org-boards-page-2") as {
+          data: { organization: { projectsV2: { nodes: object[] } } };
+        };
+        page.data.organization.projectsV2.nodes[0] = {
+          ...page.data.organization.projectsV2.nodes[0],
+          template,
+        };
+        const graphql: GraphqlTransport = async () => page;
+
+        await expectPmSourceError(
+          () => createSource(graphql).listBoards(),
+          "GitHub returned an unexpected response",
+        );
+      }
     });
 
     it("rejects a board url that isn't an https GitHub URL", async () => {

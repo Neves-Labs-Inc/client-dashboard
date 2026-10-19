@@ -62,7 +62,7 @@ const ORG_BOARDS_QUERY = `
     organization(login: $org) {
       projectsV2(first: $first, after: $after) {
         pageInfo { hasNextPage endCursor }
-        nodes { id number title url closed updatedAt }
+        nodes { id number title url closed updatedAt template }
       }
     }
   }
@@ -158,19 +158,31 @@ const pageInfoSchema = z.object({
   endCursor: z.string().nullable(),
 });
 
-const boardSummarySchema = z
-  .object({
-    id: z.string(),
-    number: z.number().int(),
-    title: z.string(),
-    // Rendered as a link later, so only ever an https GitHub URL.
-    url: z.url({ protocol: /^https$/, hostname: /^github\.com$/ }),
-    closed: z.boolean(),
-    updatedAt: isoDateTime,
-  })
-  .transform(({ id, ...summary }): PmBoardSummary => ({
-    nodeId: id,
-    ...summary,
+const boardSummaryFields = z.object({
+  id: z.string(),
+  number: z.number().int(),
+  title: z.string(),
+  // Rendered as a link later, so only ever an https GitHub URL.
+  url: z.url({ protocol: /^https$/, hostname: /^github\.com$/ }),
+  closed: z.boolean(),
+  updatedAt: isoDateTime,
+});
+
+function toBoardSummary({
+  id,
+  ...summary
+}: z.infer<typeof boardSummaryFields>): PmBoardSummary {
+  return { nodeId: id, ...summary };
+}
+
+const boardSummarySchema = boardSummaryFields.transform(toBoardSummary);
+
+// Only the org listing asks for `template`; getBoard never needs it.
+const listedBoardSchema = boardSummaryFields
+  .extend({ template: z.boolean() })
+  .transform(({ template, ...fields }) => ({
+    isTemplate: template,
+    summary: toBoardSummary(fields),
   }));
 
 const statusOptionSchema = z.object({ id: z.string(), name: z.string() });
@@ -243,7 +255,7 @@ function connectionSchema<T extends z.ZodType>(node: T) {
 }
 
 const orgBoardsDataSchema = z.object({
-  organization: z.object({ projectsV2: connectionSchema(boardSummarySchema) }),
+  organization: z.object({ projectsV2: connectionSchema(listedBoardSchema) }),
 });
 const boardHeaderDataSchema = z.object({ node: boardHeaderSchema.nullable() });
 const boardItemsDataSchema = z.object({
@@ -289,7 +301,10 @@ class GithubPmSource implements PmSource {
       return data.organization.projectsV2;
     });
     // The org always exists, so no page is ever null.
-    return boards ?? [];
+    // Templates are boards for copying from, never for linking.
+    return (boards ?? [])
+      .filter(({ isTemplate }) => !isTemplate)
+      .map(({ summary }) => summary);
   }
 
   async getBoard(boardNodeId: string): Promise<PmBoard | null> {

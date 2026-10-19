@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { eq, inArray } from "drizzle-orm";
 import pg from "pg";
 import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
@@ -9,7 +11,8 @@ import {
 import { createDb } from "@/lib/db/db";
 import { clients, githubBoards, projects } from "@/lib/db/schema";
 import { getAppEnv, getMigrateEnv } from "@/lib/env";
-import { PmSourceError } from "@/lib/pm-source/pm-source";
+import { createGithubPmSource } from "@/lib/pm-source/github-pm-source";
+import { PmSourceError, type PmSource } from "@/lib/pm-source/pm-source";
 import { insertProject } from "../../support/board";
 import { deleteClients, insertClients } from "../../support/clients";
 import { buildBoard, FakePmSource, toSummary } from "../../support/pm-board";
@@ -59,7 +62,7 @@ afterAll(async () => {
   }
 });
 
-function createSync(pmSource: FakePmSource) {
+function createSync(pmSource: PmSource) {
   return createBoardSync({ db, pmSource, now: () => NOW });
 }
 
@@ -164,6 +167,43 @@ describe("refreshPool", () => {
         refreshedAt: NOW,
       },
     ]);
+  });
+});
+
+describe("refreshPool with templates", () => {
+  it("keeps GitHub Project templates out of the pool, removing one already there", async () => {
+    const templateNodeId = "PVT_kwDOTemplate01";
+    createdBoardIds.push(templateNodeId, "PVT_kwDOBoard0001");
+    await db.withSystem((tx) =>
+      tx
+        .insert(githubBoards)
+        .values(buildPoolRow(templateNodeId, "Client onboarding template")),
+    );
+    const pages = ["org-boards-page-1", "org-boards-page-2"];
+    const pmSource = createGithubPmSource({
+      appId: "123456",
+      privateKey: "not-a-key",
+      installationId: 987654,
+      org: "Example-Org",
+      graphql: async () =>
+        JSON.parse(
+          readFileSync(
+            join(
+              import.meta.dirname,
+              "../../fixtures/github",
+              `${pages.shift()}.json`,
+            ),
+            "utf8",
+          ),
+        ),
+    });
+
+    await createSync(pmSource).refreshPool();
+
+    const nodeIds = (await getPool()).map(({ nodeId }) => nodeId);
+    expect(nodeIds).toContain("PVT_kwDOBoard0001");
+    expect(nodeIds).not.toContain(templateNodeId);
+    expect(nodeIds).not.toContain("PVT_kwDOTemplate02");
   });
 });
 
