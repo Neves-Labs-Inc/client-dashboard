@@ -1,6 +1,6 @@
 import Panel from "@/components/ui/panel";
 import StatusIcon, { type Status } from "@/components/ui/status-icon";
-import { BOARD_DETAIL_COPY } from "@/lib/board-detail";
+import { BOARD_DETAIL_COPY, getFieldsMeta } from "@/lib/board-detail";
 import type { BoardDetail, FieldCheck } from "@/lib/board-sync/board-sync";
 import { cn } from "@/lib/utils";
 
@@ -18,6 +18,11 @@ const CHECK_DISPLAY: Record<
     label: BOARD_DETAIL_COPY.missing,
     textClass: "text-fg",
   },
+  "issue-field": {
+    status: "off",
+    label: BOARD_DETAIL_COPY.issueField,
+    textClass: "text-fg",
+  },
   "not-checked": {
     status: "idle",
     label: BOARD_DETAIL_COPY.notChecked,
@@ -25,20 +30,15 @@ const CHECK_DISPLAY: Record<
   },
 };
 
-// The board fields the sync reads: present, missing, or not checked yet
-// (never synced).
+// The board fields the sync reads: present, missing, an issue field, or not
+// checked yet (never synced).
 export default function BoardRequiredFieldsPanel({
   fieldChecks,
 }: {
   fieldChecks: BoardDetail["fieldChecks"];
 }): React.ReactNode {
-  const missing = fieldChecks.filter(({ check }) => check === "missing");
-
   return (
-    <Panel
-      title="Required fields"
-      meta={missing.length > 0 ? `${missing.length} missing` : undefined}
-    >
+    <Panel title="Required fields" meta={getFieldsMeta(fieldChecks)}>
       <ul>
         {fieldChecks.map(({ field, check }) => {
           const display = CHECK_DISPLAY[check];

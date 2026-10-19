@@ -80,6 +80,16 @@ Board sync is off until the five `GITHUB_*` vars are set: Home says "GitHub isn'
 
 Deliveries the dev server missed (it was off, or `pnpm dev:webhooks` wasn't running) are lost; the next Sync now or poll catches up. The App's **Advanced** tab lists recent deliveries and can redeliver one.
 
+### Client board setup
+
+Each Client's board starts from the org's **client board template** (a template never appears in the Link list). The sync reads three fields, and each must be a **project** field of the exact name and type, not an org **issue field**:
+
+- `Client visibility`: single select with the options `Visible` and `Internal`;
+- `Client note`: text;
+- `Target date`: date.
+
+An org issue field shows on the board like a column, but the sync reads only project field values, so no Task would sync. To spot it: the board detail's Required fields panel shows **Issue field** for that row, and the sync panel shows `<field> is an issue field; add it as a project field`. Fix it by adding the field to the board as a project field, then **Sync now**.
+
 ## 2. Env vars and secrets
 
 Env is read and validated in one place, `app/lib/env.ts`. A missing or malformed var fails with its name, never its value. For the five `GITHUB_*` vars, `CRON_SECRET` and `SMEE_URL`, an empty value (`GITHUB_ORG=`) counts as unset.

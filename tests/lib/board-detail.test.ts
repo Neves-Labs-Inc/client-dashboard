@@ -1,11 +1,42 @@
 import { describe, expect, it } from "vitest";
-import { getWarningLine, isHttpsUrl } from "@/lib/board-detail";
+import type { FieldCheck } from "@/lib/board-sync/board-sync";
+import { getFieldsMeta, getWarningLine, isHttpsUrl } from "@/lib/board-detail";
+
+describe("getFieldsMeta", () => {
+  const check = (field: FieldCheck) => ({
+    field: "Client note" as const,
+    check: field,
+  });
+
+  it("counts missing and issue fields together as 'to fix'", () => {
+    expect(
+      getFieldsMeta([check("issue-field"), check("missing"), check("present")]),
+    ).toBe("2 to fix");
+  });
+
+  it("counts only missing fields as 'missing'", () => {
+    expect(getFieldsMeta([check("missing"), check("present")])).toBe(
+      "1 missing",
+    );
+  });
+
+  it("shows nothing when every field is present or not checked", () => {
+    expect(getFieldsMeta([check("present"), check("present")])).toBeUndefined();
+    expect(getFieldsMeta([check("not-checked")])).toBeUndefined();
+  });
+});
 
 describe("getWarningLine", () => {
   it("names a missing field", () => {
     expect(
       getWarningLine({ kind: "missing-field", field: "Client note" }),
     ).toBe("Missing field: Client note");
+  });
+
+  it("names a field that is an issue field and how to fix it", () => {
+    expect(
+      getWarningLine({ kind: "issue-field", field: "Client visibility" }),
+    ).toBe("Client visibility is an issue field; add it as a project field");
   });
 
   it("lists a Milestone's due dates on their own days", () => {

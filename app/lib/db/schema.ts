@@ -120,6 +120,11 @@ export type SyncWarning =
       kind: "missing-field";
       field: "Client visibility" | "Client note" | "Target date";
     }
+  // The field exists as an org issue field, which the sync can't read.
+  | {
+      kind: "issue-field";
+      field: "Client visibility" | "Client note" | "Target date";
+    }
   | { kind: "milestone-date-mismatch"; title: string; dueDates: string[] }
   | { kind: "unreadable-items"; count: number };
 

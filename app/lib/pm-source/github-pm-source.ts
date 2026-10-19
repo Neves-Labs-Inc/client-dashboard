@@ -4,6 +4,7 @@ import {
   PmSourceError,
   type PmBoard,
   type PmBoardSummary,
+  type PmFieldState,
   type PmItem,
   type PmSource,
   type PmStatusOption,
@@ -75,7 +76,7 @@ const BOARD_FIELDS_QUERY = `
         id number title url closed updatedAt
         fields(first: 100) {
           nodes {
-            ... on ProjectV2FieldCommon { name dataType }
+            ... on ProjectV2FieldCommon { name dataType isIssueField }
             ... on ProjectV2SingleSelectField { options { id name } }
           }
         }
@@ -190,6 +191,7 @@ const statusOptionSchema = z.object({ id: z.string(), name: z.string() });
 const boardFieldSchema = z.object({
   name: z.string(),
   dataType: z.string(),
+  isIssueField: z.boolean(),
   options: z.array(statusOptionSchema).optional(),
 });
 
@@ -337,13 +339,13 @@ class GithubPmSource implements PmSource {
       ...summary,
       statusOptions: findStatusOptions(fields.nodes),
       fields: {
-        clientVisibility: hasField(
+        clientVisibility: getFieldState(
           fields.nodes,
           CLIENT_VISIBILITY_FIELD,
           SINGLE_SELECT_TYPE,
         ),
-        clientNote: hasField(fields.nodes, CLIENT_NOTE_FIELD, TEXT_TYPE),
-        targetDate: hasField(fields.nodes, TARGET_DATE_FIELD, DATE_TYPE),
+        clientNote: getFieldState(fields.nodes, CLIENT_NOTE_FIELD, TEXT_TYPE),
+        targetDate: getFieldState(fields.nodes, TARGET_DATE_FIELD, DATE_TYPE),
       },
       items,
       statusUpdates,
@@ -487,14 +489,19 @@ function findStatusOptions(
   return statusField?.options ?? [];
 }
 
-function hasField(
+// An issue field wins over a project field of the same name: the Admin has to
+// fix it either way.
+function getFieldState(
   fields: z.infer<typeof boardFieldSchema>[],
   name: string,
   dataType: string,
-): boolean {
-  return fields.some(
-    (field) => field.name === name && field.dataType === dataType,
-  );
+): PmFieldState {
+  const named = fields.filter((field) => field.name === name);
+  if (named.some((field) => field.isIssueField)) return "issue-field";
+
+  return named.some((field) => field.dataType === dataType)
+    ? "present"
+    : "missing";
 }
 
 function toPmItem(item: {

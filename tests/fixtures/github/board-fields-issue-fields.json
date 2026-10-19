@@ -1,0 +1,47 @@
+{
+  "data": {
+    "node": {
+      "__typename": "ProjectV2",
+      "id": "PVT_kwDOBoard0004",
+      "number": 11,
+      "title": "Issue field board",
+      "url": "https://github.com/orgs/Example-Org/projects/11",
+      "closed": false,
+      "updatedAt": "2026-10-01T12:30:00Z",
+      "fields": {
+        "nodes": [
+          {
+            "name": "Title",
+            "dataType": "TITLE",
+            "isIssueField": false
+          },
+          {
+            "name": "Client visibility",
+            "dataType": "SINGLE_SELECT",
+            "isIssueField": true,
+            "options": [
+              {
+                "id": "a1",
+                "name": "Visible"
+              },
+              {
+                "id": "a2",
+                "name": "Internal"
+              }
+            ]
+          },
+          {
+            "name": "Client note",
+            "dataType": "TEXT",
+            "isIssueField": true
+          },
+          {
+            "name": "Target date",
+            "dataType": "DATE",
+            "isIssueField": false
+          }
+        ]
+      }
+    }
+  }
+}

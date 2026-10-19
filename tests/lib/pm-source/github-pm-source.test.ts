@@ -139,7 +139,11 @@ describe("GitHub PmSource", () => {
           { id: "47fc9ee4", name: "In progress" },
           { id: "98236657", name: "Done" },
         ],
-        fields: { clientVisibility: true, clientNote: true, targetDate: true },
+        fields: {
+          clientVisibility: "present",
+          clientNote: "present",
+          targetDate: "present",
+        },
       });
     });
 
@@ -234,9 +238,9 @@ describe("GitHub PmSource", () => {
         statusOptions: [],
         // "Client visibility" is text, "client note" has the wrong case.
         fields: {
-          clientVisibility: false,
-          clientNote: false,
-          targetDate: true,
+          clientVisibility: "missing",
+          clientNote: "missing",
+          targetDate: "present",
         },
         statusUpdates: [],
       });
@@ -255,6 +259,22 @@ describe("GitHub PmSource", () => {
           targetDate: "2025-07-01",
         },
       ]);
+    });
+
+    it("reports a required field that is an issue field as issue-field, whatever its type", async () => {
+      const { graphql } = createFakeGraphql({
+        PmBoardFields: "board-fields-issue-fields",
+        PmBoardItems: "board-items-wrong-types",
+        PmBoardStatusUpdates: "board-status-updates-empty",
+      });
+
+      const board = await createSource(graphql).getBoard("PVT_kwDOBoard0004");
+
+      expect(board?.fields).toEqual({
+        clientVisibility: "issue-field",
+        clientNote: "issue-field",
+        targetDate: "present",
+      });
     });
 
     it("returns null when the board doesn't exist", async () => {
