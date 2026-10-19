@@ -1,3 +1,4 @@
+import type { FieldCheck } from "@/lib/board-sync/board-sync";
 import type { SyncWarning } from "@/lib/db/schema";
 import { formatDate, parseDateOnly } from "@/lib/format-date";
 import { getProjectsPath } from "@/lib/link-board";
@@ -13,6 +14,7 @@ export const BOARD_DETAIL_COPY = {
   never: "Never",
   present: "Present",
   missing: "Missing",
+  issueField: "Issue field",
   notChecked: "Not checked yet",
   noMilestones: "No Milestones.",
   noTasks: "No client-visible Tasks.",
@@ -40,9 +42,28 @@ export function getFromProjectId(state: unknown): string | null {
   return isFromProject ? (state as FromProjectState).fromProjectId : null;
 }
 
+// The Required fields panel's header: issue fields need fixing like missing
+// ones, so they count together once any exists.
+export function getFieldsMeta(
+  fieldChecks: { check: FieldCheck }[],
+): string | undefined {
+  const missingCount = fieldChecks.filter(
+    ({ check }) => check === "missing",
+  ).length;
+  const issueFieldCount = fieldChecks.filter(
+    ({ check }) => check === "issue-field",
+  ).length;
+  if (issueFieldCount > 0) return `${missingCount + issueFieldCount} to fix`;
+
+  return missingCount > 0 ? `${missingCount} missing` : undefined;
+}
+
 export function getWarningLine(warning: SyncWarning): string {
   if (warning.kind === "missing-field") {
     return `Missing field: ${warning.field}`;
+  }
+  if (warning.kind === "issue-field") {
+    return `${warning.field} is an issue field; add it as a project field`;
   }
   if (warning.kind === "milestone-date-mismatch") {
     const dates = warning.dueDates

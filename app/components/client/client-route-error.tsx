@@ -7,7 +7,7 @@ import ClientRouteNotFound from "@/components/client/client-route-not-found";
 import PageHeader from "@/components/ui/page-header";
 import PanelError from "@/components/ui/panel-error";
 
-const LAYOUT_ROUTE_ID = "routes/client/layout";
+const CLIENT_LAYOUT_ROUTE_ID = "routes/client/layout";
 const NOT_FOUND = 404;
 
 type ClientRouteErrorProps = {
@@ -15,6 +15,8 @@ type ClientRouteErrorProps = {
   title: string;
   // A page that 404s (an unknown id) shows this instead of the generic error.
   notFound?: { title: string; backHref: string; backLabel: string };
+  // The layout whose data names the Client (the Admin preview's has its own).
+  layoutRouteId?: string;
 };
 
 // The client area's route ErrorBoundary: it renders inside the layout's
@@ -24,9 +26,10 @@ type ClientRouteErrorProps = {
 export default function ClientRouteError({
   title,
   notFound,
+  layoutRouteId = CLIENT_LAYOUT_ROUTE_ID,
 }: ClientRouteErrorProps): React.ReactNode {
   const error = useRouteError();
-  const layout = useRouteLoaderData<{ clientName: string }>(LAYOUT_ROUTE_ID);
+  const layout = useRouteLoaderData<{ clientName: string }>(layoutRouteId);
   const isNotFound = isRouteErrorResponse(error) && error.status === NOT_FOUND;
   if (notFound && isNotFound) {
     return (

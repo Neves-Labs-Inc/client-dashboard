@@ -144,7 +144,7 @@ Prerequisites come in two buckets per Phase: **before coding** (local dev and te
 
 **Depends on:** Phase 5.
 
-**Notes:** entry, exit, expiry and audit are settled when this Phase is planned. Its tickets get the security review axis: the preview reads tenant data through `app_tenant` + `SET LOCAL`, never the system pool.
+**Notes:** entry, exit, expiry and audit were settled in Phase 5a planning (`docs/spec-v1.md` "Admin preview (view as Client)"): no preview state, so a preview lasts as long as the Admin's session, and no audit (Franklin, Phase 5a planning (2026-10-16)). Its tickets get the security review axis: the preview reads tenant data through `app_tenant` + `SET LOCAL`, never the system pool.
 
 **Before coding / before prod deploy:** none.
 

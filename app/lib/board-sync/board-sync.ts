@@ -35,6 +35,7 @@ import {
   PmSourceError,
   type PmBoard,
   type PmBoardSummary,
+  type PmFieldState,
   type PmItem,
   type PmSource,
   type PmStatusOption,
@@ -109,7 +110,7 @@ export type RequiredField = Extract<
 >["field"];
 
 // "not-checked": the Project has never synced, so nothing has looked yet.
-export type FieldCheck = "present" | "missing" | "not-checked";
+export type FieldCheck = "present" | "missing" | "issue-field" | "not-checked";
 
 export type BoardMilestone = {
   id: string;
@@ -261,7 +262,6 @@ const STATUS_BY_LINK_ERROR = {
 const CREATED = 201;
 
 type IssueItem = Extract<PmItem, { kind: "issue" }>;
-type MissingField = RequiredField;
 
 export const REQUIRED_FIELDS: readonly RequiredField[] = [
   "Client visibility",
@@ -1380,14 +1380,18 @@ function buildWarnings(
   board: PmBoard,
   milestoneDueDates: Map<string, string[]>,
 ): SyncWarning[] {
-  const requiredFields: { isPresent: boolean; field: MissingField }[] = [
-    { isPresent: board.fields.clientVisibility, field: "Client visibility" },
-    { isPresent: board.fields.clientNote, field: "Client note" },
-    { isPresent: board.fields.targetDate, field: "Target date" },
+  const requiredFields: { state: PmFieldState; field: RequiredField }[] = [
+    { state: board.fields.clientVisibility, field: "Client visibility" },
+    { state: board.fields.clientNote, field: "Client note" },
+    { state: board.fields.targetDate, field: "Target date" },
   ];
-  const missingFields: SyncWarning[] = requiredFields
-    .filter(({ isPresent }) => !isPresent)
-    .map(({ field }) => ({ kind: "missing-field", field }));
+  const missingFields = requiredFields.flatMap(
+    ({ state, field }): SyncWarning[] => {
+      if (state === "missing") return [{ kind: "missing-field", field }];
+
+      return state === "issue-field" ? [{ kind: "issue-field", field }] : [];
+    },
+  );
   const dateMismatches: SyncWarning[] = [...milestoneDueDates]
     .filter(([, dueDates]) => dueDates.length > 1)
     .map(([title, dueDates]) => ({
@@ -1520,8 +1524,14 @@ function getFieldChecks(
       warning.kind === "missing-field" ? [warning.field] : [],
     ),
   );
+  const issueFields = new Set(
+    warnings.flatMap((warning) =>
+      warning.kind === "issue-field" ? [warning.field] : [],
+    ),
+  );
   const checkOf = (field: RequiredField): FieldCheck => {
     if (lastSyncedAt === null) return "not-checked";
+    if (issueFields.has(field)) return "issue-field";
 
     return missing.has(field) ? "missing" : "present";
   };

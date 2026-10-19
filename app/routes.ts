@@ -27,6 +27,15 @@ export default [
     route("team", "routes/client/team.tsx"),
     route("profile", "routes/client/profile.tsx"),
   ]),
+  // The Admin's read-only preview of a Client, in the client shell: outside
+  // the admin layout, so the Admin shell doesn't wrap it.
+  route("admin/clients/:clientId/preview", "routes/preview/layout.tsx", [
+    index("routes/preview/overview.tsx"),
+    route("projects", "routes/preview/projects.tsx"),
+    route("projects/:projectId", "routes/preview/project.tsx"),
+    route("requests", "routes/preview/requests.tsx"),
+    route("requests/:requestId", "routes/preview/request.tsx"),
+  ]),
   route("admin", "routes/admin/layout.tsx", [
     index("routes/admin/index.tsx"),
     route("requests", "routes/admin/requests.tsx"),

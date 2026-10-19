@@ -2,6 +2,7 @@ import ArchiveControl, {
   ArchiveStatus,
 } from "@/components/admin/archive-control";
 import ArchivedBadge from "@/components/admin/archived-badge";
+import PreviewLink from "@/components/admin/preview-link";
 import PageHeader from "@/components/ui/page-header";
 import TabNav from "@/components/ui/tab-nav";
 import type { ArchiveClient } from "@/hooks/use-archive-client";
@@ -27,8 +28,8 @@ type ClientWorkspaceHeaderProps = {
 };
 
 // A Client workspace's top, the same on every tab: breadcrumb, the name
-// with its Archived badge, the archive control and its status, then the
-// tabs.
+// with its Archived badge, Preview and the archive control and its status,
+// then the tabs.
 export default function ClientWorkspaceHeader({
   client,
   tab,
@@ -49,7 +50,11 @@ export default function ClientWorkspaceHeader({
           isArchived && <ArchivedBadge isAnimated={archive.isJustArchived} />
         }
         action={
-          <ArchiveControl variant={archiveVariant} archive={archive}>
+          <ArchiveControl
+            variant={archiveVariant}
+            archive={archive}
+            secondaryAction={<PreviewLink clientId={client.clientId} />}
+          >
             {children}
           </ArchiveControl>
         }

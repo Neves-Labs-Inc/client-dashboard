@@ -14,8 +14,12 @@ function PanelBar(): React.ReactNode {
 }
 
 // A Request's detail in blocks, on the real view's grid, so nothing shifts
-// when the page arrives.
-export default function RequestDetailSkeleton(): React.ReactNode {
+// when the page arrives. The Admin preview has only the back link: one block.
+export default function RequestDetailSkeleton({
+  actionCount = 2,
+}: {
+  actionCount?: 1 | 2;
+}): React.ReactNode {
   return (
     <SkeletonGroup label="Request">
       <div className="flex flex-col gap-4">
@@ -33,7 +37,9 @@ export default function RequestDetailSkeleton(): React.ReactNode {
           </div>
           <div className="flex gap-2">
             <Skeleton className="h-11 w-28 md:h-8 md:w-24" />
-            <Skeleton className="h-11 w-32 md:h-8 md:w-28" />
+            {actionCount === 2 && (
+              <Skeleton className="h-11 w-32 md:h-8 md:w-28" />
+            )}
           </div>
         </div>
         <div className="grid gap-4 xl:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)] xl:items-start">

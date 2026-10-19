@@ -4,10 +4,10 @@ import SkeletonGroup from "@/components/ui/skeleton-group";
 import SummaryRow from "@/components/ui/summary-row";
 import SummaryRowSkeleton from "@/components/ui/summary-row-skeleton";
 import SummaryTile from "@/components/ui/summary-tile";
+import { useClientPaths } from "@/hooks/use-client-paths";
 import type { ProjectSummary } from "@/lib/client-projects/client-projects";
 import { getProjectKpis } from "@/lib/client-projects/client-project-rules";
 
-const PROJECTS_PATH = "/projects";
 const TILE_COUNT = 2;
 const UNAVAILABLE = <span className="text-fg-2">—</span>;
 
@@ -40,6 +40,7 @@ function Tiles({
   summaries: ProjectSummary[] | null;
 }): React.ReactNode {
   const kpis = summaries && getProjectKpis(summaries);
+  const paths = useClientPaths();
 
   return (
     <SummaryRow label="Summary">
@@ -47,7 +48,7 @@ function Tiles({
         label="Active projects"
         value={kpis ? kpis.active : UNAVAILABLE}
         srValue={kpis ? undefined : "unavailable"}
-        href={PROJECTS_PATH}
+        href={paths.projects}
       />
       <SummaryTile
         label="On track"

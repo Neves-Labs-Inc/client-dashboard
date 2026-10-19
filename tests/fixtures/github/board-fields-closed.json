@@ -12,23 +12,28 @@
         "nodes": [
           {
             "name": "Title",
-            "dataType": "TITLE"
+            "dataType": "TITLE",
+            "isIssueField": false
           },
           {
             "name": "Client visibility",
-            "dataType": "TEXT"
+            "dataType": "TEXT",
+            "isIssueField": false
           },
           {
             "name": "client note",
-            "dataType": "TEXT"
+            "dataType": "TEXT",
+            "isIssueField": false
           },
           {
             "name": "Target date",
-            "dataType": "DATE"
+            "dataType": "DATE",
+            "isIssueField": false
           },
           {
             "name": "Priority",
             "dataType": "SINGLE_SELECT",
+            "isIssueField": false,
             "options": [
               {
                 "id": "p1",

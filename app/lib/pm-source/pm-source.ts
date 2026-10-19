@@ -46,14 +46,17 @@ export type PmItem =
   // GitHub redacts it: it lives in a repo the App can't read.
   | { kind: "unreadable"; itemNodeId: string };
 
+// "present": a project field with that exact name and type. "issue-field": an
+// org issue field with that name (any type), whose values the sync can't read.
+export type PmFieldState = "present" | "missing" | "issue-field";
+
 export type PmBoard = PmBoardSummary & {
   // [] when the board has no single-select field named "Status".
   statusOptions: PmStatusOption[];
-  // True only when a field with that exact name and type exists.
   fields: {
-    clientVisibility: boolean;
-    clientNote: boolean;
-    targetDate: boolean;
+    clientVisibility: PmFieldState;
+    clientNote: PmFieldState;
+    targetDate: PmFieldState;
   };
   items: PmItem[];
   statusUpdates: PmStatusUpdate[];
@@ -62,7 +65,7 @@ export type PmBoard = PmBoardSummary & {
 // Every method throws PmSourceError on an infra failure (network, 5xx, rate
 // limit, bad credentials, malformed response). Only a missing board is null.
 export type PmSource = {
-  // Every board of the org, open and closed.
+  // Every non-template board of the org, open and closed.
   listBoards(): Promise<PmBoardSummary[]>;
   // null when the board doesn't exist (deleted).
   getBoard(boardNodeId: string): Promise<PmBoard | null>;

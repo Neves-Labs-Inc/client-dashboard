@@ -14,10 +14,10 @@ import type {
 type IssueItem = Extract<PmItem, { kind: "issue" }>;
 
 const ALL_FIELDS = {
-  clientVisibility: true,
-  clientNote: true,
-  targetDate: true,
-};
+  clientVisibility: "present",
+  clientNote: "present",
+  targetDate: "present",
+} as const;
 
 export function buildBoard(overrides: Partial<PmBoard> = {}): PmBoard {
   return {

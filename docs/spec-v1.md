@@ -206,7 +206,8 @@ Sources: [Which PM tool should feed client-facing project status?][#2], [Lock th
   - the `issues` and `milestone` webhooks, for the issue changes the board's own events don't carry (an issue closed, a milestone's title or due date). An `issues` event refetches the linked boards that hold the issue, a `milestone` event those that hold an issue from its repository (Franklin, Phase 4 planning (2026-10-14));
   - a **reconcile poll** covers missed deliveries. It is an HTTP-triggered job called by **Vercel Cron** (on AWS later, a timer or EventBridge calls the same code), guarded by `pg_try_advisory_xact_lock` inside an interactive transaction. It runs **once a day** (09:00–09:59 UTC on Vercel Hobby): webhooks are the primary sync path, the daily run is the safety net for missed deliveries, and **Sync now** is the manual refresh. Vercel Pro would allow restoring `*/15`. Running rarely lets Neon scale to zero between runs and stay within the Free plan's compute ([Settle the ops and infra gaps][#22]);
   - the Admin's **"Sync now"** button on a board.
-- **Required board fields** (fixed names): `Client visibility` (single-select `Visible / Internal`), `Client note` (text), `Target date` (date). The sync flags a board missing any of them (`sync_warnings`).
+- **Templates:** org boards marked as templates (`ProjectV2.template`) are left out of the board pool, so they never appear in Link. A linked board that becomes a template keeps syncing (Franklin, Phase 5a planning (2026-10-16)).
+- **Required board fields** (fixed names): `Client visibility` (single-select `Visible / Internal`), `Client note` (text), `Target date` (date). The sync flags a board missing any of them (`sync_warnings`). A required field that is an org **issue field** is flagged the same way, because the sync reads only project fields; issue-field values are never read (Franklin, Phase 5a planning (2026-10-16)).
 - **Mapping:**
 
 | Dashboard | GitHub source |
@@ -269,7 +270,7 @@ Sources: [What does the Admin area look like?][#19], `DESIGN.md` §6.3, prototyp
 - **Create Client:** drawer asks for a name; then the Team tab opens with "Invite first Owner".
 - **Team:** first-Owner Invitation; promote, demote, remove users; pending Invitations (revoke/resend). Expired Invitations drop off.
 - **Archive / unarchive** a Client. An archived Client's data is kept, read-only for the Admin ([#16][#16]).
-- **Projects & boards:** link and unlink boards, column → client-status mapping (saving with unmapped columns allowed; those Tasks count as In progress and the board is flagged). Board detail: required-field check, Milestone progress, Tasks with client status, sync state, "Sync now". Board detail also lists the client-visible Tasks (with their GitHub Status option name) and a count of hidden ones. Boards that are sync problems (error, or stale over 26 hours) are flagged on the row, on the board detail and by an alert icon on the Client's sidebar row (and on Home's Clients table). Delete Project.
+- **Projects & boards:** link and unlink boards, column → client-status mapping (saving with unmapped columns allowed; those Tasks count as In progress and the board is flagged). Board detail: required-field check (a required field that is an org issue field shows "Issue field", warns `<field> is an issue field; add it as a project field`, and counts in the panel's "<n> to fix"; it is not a sync problem), Milestone progress, Tasks with client status, sync state, "Sync now". Board detail also lists the client-visible Tasks (with their GitHub Status option name) and a count of hidden ones. Boards that are sync problems (error, or stale over 26 hours) are flagged on the row, on the board detail and by an alert icon on the Client's sidebar row (and on Home's Clients table). Delete Project.
 - **Invoices:** author (see [Invoices](#invoices)); mark Paid, revert Paid to Open, and Void, each with a confirmation.
 - **Requests:** triage from the global inbox or the Client's tab; the detail view sets the status and the one response note and links a Task (only while Accepted or Done). Withdrawn Requests are read-only. The global inbox lists the Requests of active Clients only, filtered New (default) or All; an archived Client's Requests are read-only on its own tab and absent from the inbox (Franklin, Phase 6 planning (2026-10-16)).
 - The Admin always runs as `app_system` (ADR 0003).
@@ -281,7 +282,18 @@ Source: Franklin, 2026-10-13. Story 49. Built in its own mini-Phase after Phase 
 - **Read-only:** actions are hidden or disabled, nothing is written, and no Client User session is ever created.
 - **The Owner's view of the Client:** no user or role picker.
 - **Tenant isolation:** Client data in the preview goes through the same `app_tenant` + `SET LOCAL` scope as a real Client User, never the system pool, and the preview opens no path for the Admin's session to read tenant data outside a preview.
-- Entry, exit, expiry and audit are settled when its Phase is planned. Its tickets get the security review axis.
+- **Entry:** a "Preview" button in the Client workspace header, on every tab and for archived Clients too, opening in the same tab (Franklin, Phase 5a planning (2026-10-16)).
+- **Exit:** the banner's "Exit preview" returns to the Client's Projects & boards tab (Franklin, Phase 5a planning (2026-10-16)).
+- **Routes and guard:** the preview lives at `/admin/clients/:clientId/preview/{,projects,projects/:id,requests,requests/:id}`. Every request is re-authorised as the Admin (`requirePreviewClient`), and an unknown Client is a 404. Tenant reads go through `withTenant` with the Client id from the URL and no user id. Every preview action answers 405 (Franklin, Phase 5a planning (2026-10-16)).
+- **Expiry:** none of its own. The preview holds no state, so it lasts as long as the Admin session (Franklin, Phase 5a planning (2026-10-16)).
+- **Audit:** none of any kind (Franklin, Phase 5a planning (2026-10-16)).
+- **Pages:** Overview, Projects, Project view, Requests and Request detail. Team and Profile are left out. "New request", Edit and Withdraw are hidden. The Requests empty state reads "No Requests yet." with no button (Franklin, Phase 5a planning (2026-10-16); Franklin, Phase 5a plan approval (2026-10-19)). Not-found titles include the Client's name.
+- **Chrome:**
+  - the banner "Previewing <Client> as an Owner · Read-only", plus "Archived: its users can't sign in" for an archived Client;
+  - an "Admin preview" block (theme toggle, Exit) in place of the user menu;
+  - the nav shows Overview, Projects and Requests.
+- **Later:** Phase 7 adds Invoices to the preview.
+- Its tickets get the security review axis.
 
 ### Invoices
 

@@ -5,6 +5,7 @@ import DataTableRow from "@/components/ui/data-table-row";
 import DateText from "@/components/ui/date-text";
 import HealthBadge from "@/components/ui/health-badge";
 import ProgressBar from "@/components/ui/progress-bar";
+import { useClientPaths } from "@/hooks/use-client-paths";
 import type { ProjectSummary } from "@/lib/client-projects/client-projects";
 import { parseDateOnly } from "@/lib/format-date";
 import { getHealthTone } from "@/lib/project-health";
@@ -23,6 +24,7 @@ export default function ProjectRow({
   project,
 }: ProjectRowProps): React.ReactNode {
   const { id, name, isPast, health, latestUpdateAt, latestNote } = project;
+  const paths = useClientPaths();
 
   return (
     <DataTableRow gridClassName={ROW_GRID_CLASS} isLink>
@@ -31,7 +33,7 @@ export default function ProjectRow({
       </DataTableCell>
       <DataTableCell className={CELL_CLASS.project}>
         <Link
-          to={`/projects/${id}`}
+          to={paths.getProjectPath(id)}
           className={cn(
             "line-clamp-2 text-sm/5 font-semibold break-words outline-hidden after:absolute after:inset-0",
             isPast ? "text-fg-2" : "text-fg",

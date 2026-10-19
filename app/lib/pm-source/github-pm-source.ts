@@ -4,6 +4,7 @@ import {
   PmSourceError,
   type PmBoard,
   type PmBoardSummary,
+  type PmFieldState,
   type PmItem,
   type PmSource,
   type PmStatusOption,
@@ -62,7 +63,7 @@ const ORG_BOARDS_QUERY = `
     organization(login: $org) {
       projectsV2(first: $first, after: $after) {
         pageInfo { hasNextPage endCursor }
-        nodes { id number title url closed updatedAt }
+        nodes { id number title url closed updatedAt template }
       }
     }
   }
@@ -75,7 +76,7 @@ const BOARD_FIELDS_QUERY = `
         id number title url closed updatedAt
         fields(first: 100) {
           nodes {
-            ... on ProjectV2FieldCommon { name dataType }
+            ... on ProjectV2FieldCommon { name dataType isIssueField }
             ... on ProjectV2SingleSelectField { options { id name } }
           }
         }
@@ -158,19 +159,31 @@ const pageInfoSchema = z.object({
   endCursor: z.string().nullable(),
 });
 
-const boardSummarySchema = z
-  .object({
-    id: z.string(),
-    number: z.number().int(),
-    title: z.string(),
-    // Rendered as a link later, so only ever an https GitHub URL.
-    url: z.url({ protocol: /^https$/, hostname: /^github\.com$/ }),
-    closed: z.boolean(),
-    updatedAt: isoDateTime,
-  })
-  .transform(({ id, ...summary }): PmBoardSummary => ({
-    nodeId: id,
-    ...summary,
+const boardSummaryFields = z.object({
+  id: z.string(),
+  number: z.number().int(),
+  title: z.string(),
+  // Rendered as a link later, so only ever an https GitHub URL.
+  url: z.url({ protocol: /^https$/, hostname: /^github\.com$/ }),
+  closed: z.boolean(),
+  updatedAt: isoDateTime,
+});
+
+function toBoardSummary({
+  id,
+  ...summary
+}: z.infer<typeof boardSummaryFields>): PmBoardSummary {
+  return { nodeId: id, ...summary };
+}
+
+const boardSummarySchema = boardSummaryFields.transform(toBoardSummary);
+
+// Only the org listing asks for `template`; getBoard never needs it.
+const listedBoardSchema = boardSummaryFields
+  .extend({ template: z.boolean() })
+  .transform(({ template, ...fields }) => ({
+    isTemplate: template,
+    summary: toBoardSummary(fields),
   }));
 
 const statusOptionSchema = z.object({ id: z.string(), name: z.string() });
@@ -178,6 +191,7 @@ const statusOptionSchema = z.object({ id: z.string(), name: z.string() });
 const boardFieldSchema = z.object({
   name: z.string(),
   dataType: z.string(),
+  isIssueField: z.boolean(),
   options: z.array(statusOptionSchema).optional(),
 });
 
@@ -243,7 +257,7 @@ function connectionSchema<T extends z.ZodType>(node: T) {
 }
 
 const orgBoardsDataSchema = z.object({
-  organization: z.object({ projectsV2: connectionSchema(boardSummarySchema) }),
+  organization: z.object({ projectsV2: connectionSchema(listedBoardSchema) }),
 });
 const boardHeaderDataSchema = z.object({ node: boardHeaderSchema.nullable() });
 const boardItemsDataSchema = z.object({
@@ -289,7 +303,10 @@ class GithubPmSource implements PmSource {
       return data.organization.projectsV2;
     });
     // The org always exists, so no page is ever null.
-    return boards ?? [];
+    // Templates are boards for copying from, never for linking.
+    return (boards ?? [])
+      .filter(({ isTemplate }) => !isTemplate)
+      .map(({ summary }) => summary);
   }
 
   async getBoard(boardNodeId: string): Promise<PmBoard | null> {
@@ -322,13 +339,13 @@ class GithubPmSource implements PmSource {
       ...summary,
       statusOptions: findStatusOptions(fields.nodes),
       fields: {
-        clientVisibility: hasField(
+        clientVisibility: getFieldState(
           fields.nodes,
           CLIENT_VISIBILITY_FIELD,
           SINGLE_SELECT_TYPE,
         ),
-        clientNote: hasField(fields.nodes, CLIENT_NOTE_FIELD, TEXT_TYPE),
-        targetDate: hasField(fields.nodes, TARGET_DATE_FIELD, DATE_TYPE),
+        clientNote: getFieldState(fields.nodes, CLIENT_NOTE_FIELD, TEXT_TYPE),
+        targetDate: getFieldState(fields.nodes, TARGET_DATE_FIELD, DATE_TYPE),
       },
       items,
       statusUpdates,
@@ -472,14 +489,19 @@ function findStatusOptions(
   return statusField?.options ?? [];
 }
 
-function hasField(
+// An issue field wins over a project field of the same name: the Admin has to
+// fix it either way.
+function getFieldState(
   fields: z.infer<typeof boardFieldSchema>[],
   name: string,
   dataType: string,
-): boolean {
-  return fields.some(
-    (field) => field.name === name && field.dataType === dataType,
-  );
+): PmFieldState {
+  const named = fields.filter((field) => field.name === name);
+  if (named.some((field) => field.isIssueField)) return "issue-field";
+
+  return named.some((field) => field.dataType === dataType)
+    ? "present"
+    : "missing";
 }
 
 function toPmItem(item: {

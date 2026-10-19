@@ -74,7 +74,7 @@ const CLOSED_BOARD_RESPONSES = {
 
 describe("GitHub PmSource", () => {
   describe("listBoards", () => {
-    it("returns the org's open and closed boards across pages, in order", async () => {
+    it("returns the org's open and closed non-template boards across pages, in order", async () => {
       const { graphql, calls } = createFakeGraphql({
         PmOrgBoards: "org-boards-page-1",
         [`PmOrgBoards@${BOARDS_PAGE_2_CURSOR}`]: "org-boards-page-2",
@@ -108,6 +108,12 @@ describe("GitHub PmSource", () => {
           updatedAt: new Date("2026-10-10T10:00:00Z"),
         },
       ]);
+      expect(boards.map((board) => board.nodeId)).not.toContain(
+        "PVT_kwDOTemplate01",
+      );
+      expect(boards.map((board) => board.nodeId)).not.toContain(
+        "PVT_kwDOTemplate02",
+      );
       expect(calls.map((call) => call.variables.org)).toEqual([
         "Example-Org",
         "Example-Org",
@@ -133,7 +139,11 @@ describe("GitHub PmSource", () => {
           { id: "47fc9ee4", name: "In progress" },
           { id: "98236657", name: "Done" },
         ],
-        fields: { clientVisibility: true, clientNote: true, targetDate: true },
+        fields: {
+          clientVisibility: "present",
+          clientNote: "present",
+          targetDate: "present",
+        },
       });
     });
 
@@ -228,9 +238,9 @@ describe("GitHub PmSource", () => {
         statusOptions: [],
         // "Client visibility" is text, "client note" has the wrong case.
         fields: {
-          clientVisibility: false,
-          clientNote: false,
-          targetDate: true,
+          clientVisibility: "missing",
+          clientNote: "missing",
+          targetDate: "present",
         },
         statusUpdates: [],
       });
@@ -249,6 +259,22 @@ describe("GitHub PmSource", () => {
           targetDate: "2025-07-01",
         },
       ]);
+    });
+
+    it("reports a required field that is an issue field as issue-field, whatever its type", async () => {
+      const { graphql } = createFakeGraphql({
+        PmBoardFields: "board-fields-issue-fields",
+        PmBoardItems: "board-items-wrong-types",
+        PmBoardStatusUpdates: "board-status-updates-empty",
+      });
+
+      const board = await createSource(graphql).getBoard("PVT_kwDOBoard0004");
+
+      expect(board?.fields).toEqual({
+        clientVisibility: "issue-field",
+        clientNote: "issue-field",
+        targetDate: "present",
+      });
     });
 
     it("returns null when the board doesn't exist", async () => {
@@ -403,6 +429,24 @@ describe("GitHub PmSource", () => {
         () => createSource(graphql).getBoard(BOARD_ID),
         "GitHub returned an unexpected response",
       );
+    });
+
+    it("rejects a board whose template flag is missing or not a boolean", async () => {
+      for (const template of [undefined, "false", null]) {
+        const page = loadFixture("org-boards-page-2") as {
+          data: { organization: { projectsV2: { nodes: object[] } } };
+        };
+        page.data.organization.projectsV2.nodes[0] = {
+          ...page.data.organization.projectsV2.nodes[0],
+          template,
+        };
+        const graphql: GraphqlTransport = async () => page;
+
+        await expectPmSourceError(
+          () => createSource(graphql).listBoards(),
+          "GitHub returned an unexpected response",
+        );
+      }
     });
 
     it("rejects a board url that isn't an https GitHub URL", async () => {

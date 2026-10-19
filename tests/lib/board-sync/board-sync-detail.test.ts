@@ -119,7 +119,11 @@ describe("getBoardDetail", () => {
 
   it("reports a field the board lacks as missing", async () => {
     const board = buildBoard({
-      fields: { clientVisibility: true, clientNote: false, targetDate: true },
+      fields: {
+        clientVisibility: "present",
+        clientNote: "missing",
+        targetDate: "present",
+      },
     });
     const { sync, clientId, projectId } = await linkBoard(board);
 
@@ -133,6 +137,45 @@ describe("getBoardDetail", () => {
     expect(detail?.syncWarnings).toEqual([
       { kind: "missing-field", field: "Client note" },
     ]);
+  });
+
+  it("reports a field that is an issue field, stores its warning, and syncs no Task from it", async () => {
+    const board = buildBoard({
+      fields: {
+        clientVisibility: "issue-field",
+        clientNote: "missing",
+        targetDate: "present",
+      },
+      // The adapter reads visibility as null: only project values count.
+      items: [buildIssue({ title: "Hidden", visibility: null })],
+    });
+    const { sync, clientId, projectId } = await linkBoard(board);
+
+    const detail = await sync.getBoardDetail(clientId, projectId);
+
+    expect(detail?.fieldChecks).toEqual([
+      { field: "Client visibility", check: "issue-field" },
+      { field: "Client note", check: "missing" },
+      { field: "Target date", check: "present" },
+    ]);
+    expect(detail?.syncWarnings).toEqual([
+      { kind: "issue-field", field: "Client visibility" },
+      { kind: "missing-field", field: "Client note" },
+    ]);
+    expect(detail?.tasks).toEqual([]);
+  });
+
+  it("doesn't flag a freshly synced board with an issue-field warning as a sync problem", async () => {
+    const board = buildBoard({
+      fields: {
+        clientVisibility: "issue-field",
+        clientNote: "present",
+        targetDate: "present",
+      },
+    });
+    const { sync, clientId } = await linkBoard(board);
+
+    expect(await sync.listSyncProblemClientIds()).not.toContain(clientId);
   });
 
   it("checks no field on a board that has never synced", async () => {

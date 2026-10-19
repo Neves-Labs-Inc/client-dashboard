@@ -308,7 +308,11 @@ describe("syncProject: soft-hiding tasks", () => {
         nodeId,
         // The adapter reads visibility as null when the field is missing.
         items: [{ ...issue, visibility: null }],
-        fields: { clientVisibility: false, clientNote: true, targetDate: true },
+        fields: {
+          clientVisibility: "missing",
+          clientNote: "present",
+          targetDate: "present",
+        },
       }),
     );
     await createSync(pmSource).syncProject(projectId);
@@ -325,7 +329,11 @@ describe("syncProject: soft-hiding tasks", () => {
 describe("syncProject: warnings", () => {
   it("warns once per missing field and per batch of unreadable items", async () => {
     const { projectId } = await syncBoard({
-      fields: { clientVisibility: false, clientNote: false, targetDate: false },
+      fields: {
+        clientVisibility: "missing",
+        clientNote: "missing",
+        targetDate: "missing",
+      },
       items: [
         { kind: "unreadable", itemNodeId: `PVTI_${randomUUID()}` },
         { kind: "unreadable", itemNodeId: `PVTI_${randomUUID()}` },
@@ -344,13 +352,21 @@ describe("syncProject: warnings", () => {
 
   it("replaces the previous sync's warnings", async () => {
     const { projectId, nodeId, pmSource } = await syncBoard({
-      fields: { clientVisibility: true, clientNote: false, targetDate: true },
+      fields: {
+        clientVisibility: "present",
+        clientNote: "missing",
+        targetDate: "present",
+      },
     });
     pmSource.setBoard(
       nodeId,
       buildBoard({
         nodeId,
-        fields: { clientVisibility: true, clientNote: true, targetDate: false },
+        fields: {
+          clientVisibility: "present",
+          clientNote: "present",
+          targetDate: "missing",
+        },
       }),
     );
     await createSync(pmSource).syncProject(projectId);

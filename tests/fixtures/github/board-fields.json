@@ -12,15 +12,18 @@
         "nodes": [
           {
             "name": "Title",
-            "dataType": "TITLE"
+            "dataType": "TITLE",
+            "isIssueField": false
           },
           {
             "name": "Assignees",
-            "dataType": "ASSIGNEES"
+            "dataType": "ASSIGNEES",
+            "isIssueField": false
           },
           {
             "name": "Status",
             "dataType": "SINGLE_SELECT",
+            "isIssueField": false,
             "options": [
               {
                 "id": "f75ad846",
@@ -39,6 +42,7 @@
           {
             "name": "Client visibility",
             "dataType": "SINGLE_SELECT",
+            "isIssueField": false,
             "options": [
               {
                 "id": "a1b2c3d4",
@@ -52,19 +56,23 @@
           },
           {
             "name": "Client note",
-            "dataType": "TEXT"
+            "dataType": "TEXT",
+            "isIssueField": false
           },
           {
             "name": "Target date",
-            "dataType": "DATE"
+            "dataType": "DATE",
+            "isIssueField": false
           },
           {
             "name": "Repository",
-            "dataType": "REPOSITORY"
+            "dataType": "REPOSITORY",
+            "isIssueField": false
           },
           {
             "name": "Milestone",
-            "dataType": "MILESTONE"
+            "dataType": "MILESTONE",
+            "isIssueField": false
           }
         ]
       }
