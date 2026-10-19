@@ -20,3 +20,4 @@
 - **Tenant inserts:** Drizzle's `insert()` sends `default` for every column, which fails (42501) when `app_tenant` has column-level INSERT grants; use explicit-column `sql`.
 - **Simulating load failures with a table lock:** when holding `LOCK TABLE … ; SELECT pg_sleep(…)` in a background psql, wait for that psql to exit before the next browser step, or the script hangs.
 - **Never use `git stash`:** the stash stack is shared across every worktree and other sessions. To check a test fails without your change, copy the file aside or use a temporary commit instead.
+- **Postgres init race:** a fresh `postgres:18` container answers `pg_isready` before `docker-entrypoint-initdb.d` has finished (the server restarts after init). Wait until the test database actually exists (e.g. `psql -lqt | grep client_dashboard_test`) before running tests.
