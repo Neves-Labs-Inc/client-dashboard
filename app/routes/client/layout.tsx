@@ -10,6 +10,7 @@ import { requireClientUser } from "@/lib/auth/require-access.server";
 import { CLIENT_PATHS, getClientPage } from "@/lib/client-paths";
 import { clientProjects } from "@/lib/client-projects/client-projects.server";
 import { describeError } from "@/lib/describe-error";
+import { invoices } from "@/lib/invoices/invoices.server";
 import { getNoStoreHeaders } from "@/lib/no-store-headers";
 import { isRequestDrawerToggle } from "@/lib/request-drawer";
 import { requests } from "@/lib/requests/requests.server";
@@ -24,16 +25,31 @@ const TEAM_PATH = "/team";
 export async function loader({ request }: Route.LoaderArgs) {
   const { access, headers } = await requireClientUser(request);
   const { clientId, clientName, name, email, role } = access;
-  const [activeProjectCount, newRequestCount] = await Promise.all([
-    loadNavCount("the active Projects", clientId, () =>
-      clientProjects.countActiveProjects(clientId),
-    ),
-    loadNavCount("the New Requests", clientId, () =>
-      requests.countNewRequests(clientId),
-    ),
-  ]);
+  const [activeProjectCount, newRequestCount, openInvoiceCount] =
+    await Promise.all([
+      loadNavCount("the active Projects", clientId, () =>
+        clientProjects.countActiveProjects(clientId),
+      ),
+      loadNavCount("the New Requests", clientId, () =>
+        requests.countNewRequests(clientId),
+      ),
+      // Open and Overdue alike.
+      loadNavCount("the open Invoices", clientId, () =>
+        invoices
+          .getInvoiceSummary(clientId)
+          .then((summary) => summary.openCount),
+      ),
+    ]);
   return data(
-    { clientName, name, email, role, activeProjectCount, newRequestCount },
+    {
+      clientName,
+      name,
+      email,
+      role,
+      activeProjectCount,
+      newRequestCount,
+      openInvoiceCount,
+    },
     { headers },
   );
 }
@@ -75,8 +91,8 @@ export default function ClientLayout({
   );
 }
 
-// The Overview, Team, Profile, Projects, Project view, Requests and Request
-// detail loaders are awaited
+// The Overview, Team, Profile, Projects, Project view, Requests, Request
+// detail, Invoices and Invoice detail loaders are awaited
 // (Overview and Projects stream their list, but the page still loads first),
 // so a client-side navigation into any of them shows its skeleton meanwhile.
 function getSkeleton(

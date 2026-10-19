@@ -24,6 +24,8 @@ export default [
     route("projects/:projectId", "routes/client/project.tsx"),
     route("requests", "routes/client/requests.tsx"),
     route("requests/:requestId", "routes/client/request.tsx"),
+    route("invoices", "routes/client/invoices.tsx"),
+    route("invoices/:invoiceId", "routes/client/invoice.tsx"),
     route("team", "routes/client/team.tsx"),
     route("profile", "routes/client/profile.tsx"),
   ]),
@@ -35,6 +37,8 @@ export default [
     route("projects/:projectId", "routes/preview/project.tsx"),
     route("requests", "routes/preview/requests.tsx"),
     route("requests/:requestId", "routes/preview/request.tsx"),
+    route("invoices", "routes/preview/invoices.tsx"),
+    route("invoices/:invoiceId", "routes/preview/invoice.tsx"),
   ]),
   route("admin", "routes/admin/layout.tsx", [
     index("routes/admin/index.tsx"),

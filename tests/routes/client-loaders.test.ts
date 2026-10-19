@@ -5,6 +5,11 @@ import type {
   ProjectSummary,
 } from "@/lib/client-projects/client-projects";
 import { requireClientMutation } from "@/lib/auth/require-access.server";
+import type {
+  InvoiceDetail,
+  InvoiceRow,
+  Invoices,
+} from "@/lib/invoices/invoices";
 import type { Requests } from "@/lib/requests/requests";
 import { loader as adminLoader } from "@/routes/admin/layout";
 import {
@@ -12,6 +17,18 @@ import {
   loader as clientLayoutLoader,
   shouldRevalidate as clientLayoutShouldRevalidate,
 } from "@/routes/client/layout";
+import * as invoiceRoute from "@/routes/client/invoice";
+import {
+  headers as invoiceHeaders,
+  loader as invoiceLoader,
+  shouldRevalidate as invoiceShouldRevalidate,
+} from "@/routes/client/invoice";
+import * as invoicesRoute from "@/routes/client/invoices";
+import {
+  headers as invoicesHeaders,
+  loader as invoicesLoader,
+  shouldRevalidate as invoicesShouldRevalidate,
+} from "@/routes/client/invoices";
 import { loader as overviewLoader } from "@/routes/client/overview";
 import {
   headers as projectsHeaders,
@@ -88,10 +105,26 @@ vi.mock("@/lib/requests/requests.server", () => ({
   },
 }));
 
+const listInvoices = vi.fn<Invoices["listInvoices"]>();
+const getInvoice = vi.fn<Invoices["getInvoice"]>();
+const getInvoiceSummary = vi.fn<Invoices["getInvoiceSummary"]>();
+
+vi.mock("@/lib/invoices/invoices.server", () => ({
+  invoices: {
+    listInvoices: (...args: Parameters<Invoices["listInvoices"]>) =>
+      listInvoices(...args),
+    getInvoice: (...args: Parameters<Invoices["getInvoice"]>) =>
+      getInvoice(...args),
+    getInvoiceSummary: (clientId: string) => getInvoiceSummary(clientId),
+  },
+}));
+
 const PORTAL_ORIGIN = "http://localhost:5173";
 const CLIENT_ID = "0199d0a4-5b6c-7d8e-9f01-23456789abcd";
 const OTHER_CLIENT_ID = "0199d0a4-5b6c-7d8e-9f01-23456789ffff";
 const INVITEE_EMAIL = "pending.invitee@acme.test";
+const INVOICE_ID = "0199d0a4-5b6c-7d8e-9f01-2345678900cc";
+const NOT_FOUND = 404;
 const INVITATION_ID = "0199d0a4-5b6c-7d8e-9f01-23456789eeee";
 const ADMIN_SENT_EMAIL = "first.owner@acme.test";
 
@@ -160,6 +193,15 @@ function argsFor<Args>(
   return { request, params: {}, context: {} } as Args;
 }
 
+// The Invoice detail's args: its loader reads the id from the params.
+function invoiceArgsFor<Args>(invoiceId: string, method = "GET"): Args {
+  const args = argsFor<{ request: Request; context: object }>(
+    `/invoices/${invoiceId}`,
+    method,
+  );
+  return { ...args, params: { invoiceId } } as Args;
+}
+
 function answerAs(access: Access): void {
   const headers = new Headers();
   headers.append("set-cookie", RENEWED_COOKIE);
@@ -197,6 +239,16 @@ beforeEach(() => {
   listRequests.mockResolvedValue([]);
   listProjectOptions.mockReset();
   listProjectOptions.mockResolvedValue([]);
+  listInvoices.mockReset();
+  listInvoices.mockResolvedValue([]);
+  getInvoice.mockReset();
+  getInvoice.mockResolvedValue(null);
+  getInvoiceSummary.mockReset();
+  getInvoiceSummary.mockResolvedValue({
+    openCount: 4,
+    openBalanceCents: 425_000,
+    overdueCount: 1,
+  });
   getAccess.mockReset();
   getTeam.mockReset();
   getTeam.mockResolvedValue(TEAM);
@@ -251,6 +303,8 @@ describe("the client guard", () => {
     "Team loader": () => teamLoader(argsFor("/team")),
     "Projects loader": () => projectsLoader(argsFor("/projects")),
     "Overview loader": () => overviewLoader(argsFor("/overview")),
+    "Invoices loader": () => invoicesLoader(argsFor("/invoices")),
+    "Invoice detail loader": () => invoiceLoader(invoiceArgsFor(INVOICE_ID)),
   };
   const turnedAway: [string, Access, string][] = [
     ["the Admin", ADMIN, "/admin"],
@@ -294,9 +348,11 @@ describe("the client guard", () => {
       role: "owner",
       activeProjectCount: 3,
       newRequestCount: 2,
+      openInvoiceCount: 4,
     });
     expect(countActiveProjects).toHaveBeenCalledWith(CLIENT_ID);
     expect(countNewRequests).toHaveBeenCalledWith(CLIENT_ID);
+    expect(getInvoiceSummary).toHaveBeenCalledWith(CLIENT_ID);
   });
 
   it("still renders the shell, without a count, when the count fails", async () => {
@@ -313,6 +369,22 @@ describe("the client guard", () => {
       role: "owner",
       activeProjectCount: null,
       newRequestCount: 2,
+      openInvoiceCount: 4,
+    });
+    expect(errorLog).toHaveBeenCalled();
+  });
+
+  it("still renders the shell, without the open Invoice count, when it fails", async () => {
+    answerAs(MEMBER);
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+    getInvoiceSummary.mockRejectedValue(new Error("connection lost"));
+
+    const { data } = await settle(() => clientLayoutLoader(argsFor("/team")));
+
+    expect(data).toMatchObject({
+      activeProjectCount: 3,
+      newRequestCount: 2,
+      openInvoiceCount: null,
     });
     expect(errorLog).toHaveBeenCalled();
   });
@@ -555,6 +627,131 @@ describe("the Overview loader", () => {
     await expect(loaded.projects).resolves.toEqual([PROJECT]);
     expect(errorLog).toHaveBeenCalled();
   });
+});
+
+describe("the Invoices loader", () => {
+  const ROW: InvoiceRow = {
+    id: INVOICE_ID,
+    number: "NL-0007-2026",
+    issueDate: "2026-09-01",
+    dueDate: "2026-10-01",
+    totalCents: 125_000,
+    status: "OVERDUE",
+  };
+
+  it("lists only the signed-in Client's Invoices, with its open balance, whatever the URL says", async () => {
+    answerAs(MEMBER);
+    listInvoices.mockResolvedValue([ROW]);
+
+    const { headers, data } = await settle(() =>
+      invoicesLoader(argsFor(`/invoices?clientId=${OTHER_CLIENT_ID}`)),
+    );
+
+    expect(data).toEqual({
+      clientName: "Acme",
+      invoices: [ROW],
+      openBalanceCents: 425_000,
+    });
+    expect(listInvoices.mock.calls).toEqual([[CLIENT_ID]]);
+    expect(getInvoiceSummary.mock.calls).toEqual([[CLIENT_ID]]);
+    expect(headers.getSetCookie()).toEqual([RENEWED_COOKIE]);
+  });
+
+  it("gives the panel null, not the error, when the list can't load", async () => {
+    answerAs(OWNER);
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+    listInvoices.mockRejectedValue(new Error("connection lost"));
+
+    const { data } = await settle(() => invoicesLoader(argsFor("/invoices")));
+
+    expect(data).toMatchObject({ invoices: null, openBalanceCents: 425_000 });
+    expect(errorLog).toHaveBeenCalled();
+  });
+
+  it("keeps the list, without the open balance, when the summary can't load", async () => {
+    answerAs(OWNER);
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+    listInvoices.mockResolvedValue([ROW]);
+    getInvoiceSummary.mockRejectedValue(new Error("connection lost"));
+
+    const { data } = await settle(() => invoicesLoader(argsFor("/invoices")));
+
+    expect(data).toMatchObject({ invoices: [ROW], openBalanceCents: null });
+    expect(errorLog).toHaveBeenCalled();
+  });
+});
+
+describe("the Invoice detail loader", () => {
+  const DETAIL: InvoiceDetail = {
+    id: INVOICE_ID,
+    number: "NL-0007-2026",
+    issueDate: "2026-09-01",
+    dueDate: "2026-10-01",
+    totalCents: 375_000,
+    status: "PAID",
+    memo: "Thanks!",
+    paidDate: "2026-10-03",
+    statusChangedAt: new Date("2026-10-03T15:00:00Z"),
+    project: null,
+    lineItems: [
+      { id: "l1", description: "Design sprint", amountCents: 400_000 },
+      { id: "l2", description: "Credit", amountCents: -25_000 },
+    ],
+  };
+
+  it("reads the Invoice in the signed-in Client, never the URL's", async () => {
+    answerAs(MEMBER);
+    getInvoice.mockResolvedValue(DETAIL);
+
+    const { headers, data } = await settle(() =>
+      invoiceLoader(invoiceArgsFor(INVOICE_ID)),
+    );
+
+    // The Admin's last status change never reaches the Client.
+    const { statusChangedAt, ...shown } = DETAIL;
+    expect(statusChangedAt).toBeInstanceOf(Date);
+    expect(data).toEqual({ clientName: "Acme", detail: shown });
+    expect(getInvoice.mock.calls).toEqual([[CLIENT_ID, INVOICE_ID]]);
+    expect(headers.getSetCookie()).toEqual([RENEWED_COOKIE]);
+  });
+
+  // The module reads a Void, another Client's, an unknown and a non-UUID id
+  // all as null (its own tests cover each).
+  it("answers 404 when the Client can't see the Invoice, keeping the session's cookie", async () => {
+    answerAs(OWNER);
+    getInvoice.mockResolvedValue(null);
+
+    let thrown: unknown = null;
+    try {
+      await invoiceLoader(invoiceArgsFor("not-a-uuid"));
+    } catch (error) {
+      thrown = error;
+    }
+
+    // data() returns a plain { data, init } object (a library return value).
+    const response = thrown as { init: ResponseInit };
+    expect(response.init.status).toBe(NOT_FOUND);
+    expect(new Headers(response.init.headers).getSetCookie()).toEqual([
+      RENEWED_COOKIE,
+    ]);
+    expect(getInvoice.mock.calls).toEqual([[CLIENT_ID, "not-a-uuid"]]);
+  });
+});
+
+// React Router answers a POST to a route without an action with 405, before
+// any loader runs.
+describe("the Invoices routes' POSTs", () => {
+  const routes = {
+    "Invoices page": invoicesRoute,
+    "Invoice detail": invoiceRoute,
+  };
+
+  for (const [page, route] of Object.entries(routes)) {
+    it(`gives the ${page} no action or clientAction, so nothing can write`, () => {
+      expect(Object.keys(route)).not.toContain("action");
+      expect(Object.keys(route)).not.toContain("clientAction");
+    });
+  }
 });
 
 describe("the Overview loader's drawer options", () => {
@@ -1015,6 +1212,14 @@ describe("every new route", () => {
     Projects: {
       shouldRevalidate: projectsShouldRevalidate,
       headers: projectsHeaders,
+    },
+    Invoices: {
+      shouldRevalidate: invoicesShouldRevalidate,
+      headers: invoicesHeaders,
+    },
+    "Invoice detail": {
+      shouldRevalidate: invoiceShouldRevalidate,
+      headers: invoiceHeaders,
     },
     "No access": {
       shouldRevalidate: noAccessShouldRevalidate,
