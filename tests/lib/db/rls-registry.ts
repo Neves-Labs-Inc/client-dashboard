@@ -3,6 +3,8 @@ import type { PgColumn, PgTable } from "drizzle-orm/pg-core";
 import type { Tx } from "@/lib/db/db";
 import {
   clients,
+  invoices,
+  lineItems,
   milestones,
   projects,
   projectStatusMappings,
@@ -18,6 +20,7 @@ import {
   insertTask,
 } from "../../support/board";
 import { insertClients } from "../../support/clients";
+import { insertInvoice } from "../../support/invoices";
 import { insertRequest } from "../../support/requests";
 
 export type RlsTableEntry = {
@@ -184,6 +187,46 @@ export const RLS_REGISTRY: RlsTableEntry[] = [
         projectId,
         submitterId: REQUEST_SUBMITTER_ID,
       });
+    },
+  },
+  {
+    table: invoices,
+    tenantColumn: invoices.clientId,
+    tenantReadable: [
+      invoices.id,
+      invoices.clientId,
+      invoices.projectId,
+      invoices.number,
+      invoices.issueDate,
+      invoices.dueDate,
+      invoices.memo,
+      invoices.status,
+      invoices.paidAt,
+      invoices.statusChangedAt,
+      invoices.createdAt,
+    ],
+    // With a Project, so the (project_id, client_id) FK is in play too. Open,
+    // so invoices_tenant_not_void lets app_tenant see it.
+    seed: async (tx, clientId) => {
+      await insertClients(tx, [clientId]);
+      const projectId = await insertProject(tx, { clientId });
+      await insertInvoice(tx, { clientId, projectId, memo: "Phase 1" });
+    },
+  },
+  {
+    table: lineItems,
+    tenantColumn: lineItems.clientId,
+    tenantReadable: [
+      lineItems.id,
+      lineItems.clientId,
+      lineItems.invoiceId,
+      lineItems.position,
+      lineItems.description,
+      lineItems.amountCents,
+    ],
+    seed: async (tx, clientId) => {
+      await insertClients(tx, [clientId]);
+      await insertInvoice(tx, { clientId });
     },
   },
 ];

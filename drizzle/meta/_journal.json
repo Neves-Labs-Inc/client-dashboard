@@ -50,6 +50,13 @@
       "when": 1792162149748,
       "tag": "0006_requests",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1792435792946,
+      "tag": "0007_invoices",
+      "breakpoints": true
     }
   ]
 }

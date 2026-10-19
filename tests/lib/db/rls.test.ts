@@ -16,6 +16,7 @@ import { createDb } from "@/lib/db/db";
 import {
   AUTH_TABLES,
   githubBoards,
+  invoiceCounters,
   organization,
   requests,
   tasks,
@@ -24,6 +25,7 @@ import {
 import { getAppEnv, getMigrateEnv } from "@/lib/env";
 import { insertProject, insertTask } from "../../support/board";
 import { insertClients } from "../../support/clients";
+import { insertInvoice } from "../../support/invoices";
 import { insertRequest, insertUser } from "../../support/requests";
 import { getPgError } from "../../support/pg-error";
 import { RLS_REGISTRY } from "./rls-registry";
@@ -840,6 +842,154 @@ describe("requests as app_tenant", () => {
     );
 
     expect(outcome).toEqual(PERMISSION_DENIED);
+  });
+});
+
+// Void Invoices, and their Line Items, are hidden from app_tenant; Client
+// Users never write Invoices.
+describe("invoices as app_tenant", () => {
+  const clientA = randomUUID();
+  const clientB = randomUUID();
+  let openId = "";
+  let paidId = "";
+  let voidId = "";
+  let otherClientId = "";
+
+  beforeAll(async () => {
+    seededClientIds.push(clientA, clientB);
+    await db.withSystem(async (tx) => {
+      await insertClients(tx, [clientA, clientB]);
+      openId = (await insertInvoice(tx, { clientId: clientA })).id;
+      paidId = (await insertInvoice(tx, { clientId: clientA, status: "PAID" }))
+        .id;
+      voidId = (await insertInvoice(tx, { clientId: clientA, status: "VOID" }))
+        .id;
+      otherClientId = (await insertInvoice(tx, { clientId: clientB })).id;
+    });
+  });
+
+  async function readInvoiceIdsAsTenant(
+    table: "invoices" | "line_items",
+  ): Promise<string[]> {
+    const invoiceId = sql.identifier(
+      table === "invoices" ? "id" : "invoice_id",
+    );
+    const outcome = await readAsTenant(
+      clientA,
+      sql`select distinct ${invoiceId} as "invoiceId"
+        from ${sql.identifier(table)}
+        where ${invoiceId} in (${openId}, ${paidId}, ${voidId}, ${otherClientId})`,
+    );
+    const rows = outcome.kind === "read" ? outcome.rows : [];
+    return rows.map((row) => String(row.invoiceId)).toSorted();
+  }
+
+  it.each(["invoices", "line_items"] as const)(
+    "shows the Client its Open and Paid Invoices in %s, never Void ones",
+    async (table) => {
+      const invoiceIds = await readInvoiceIdsAsTenant(table);
+
+      expect(invoiceIds).toEqual([openId, paidId].toSorted());
+    },
+  );
+
+  it("still shows app_system the Void Invoice and its Line Items", async () => {
+    const counts = await db.withSystem(async (tx) => {
+      const result = await tx.execute<{ invoices: number; lineItems: number }>(
+        sql`select
+            (select count(*)::int from invoices where id = ${voidId})
+              as invoices,
+            (select count(*)::int from line_items where invoice_id = ${voidId})
+              as "lineItems"`,
+      );
+      return result.rows[0];
+    });
+
+    expect(counts).toEqual({ invoices: 1, lineItems: 1 });
+  });
+
+  it.each([
+    {
+      label: "inserting an Invoice",
+      statement: sql`insert into invoices
+        (client_id, number, issue_date, due_date)
+        values (${clientA}, 'NL-9001-2026', '2026-03-02', '2026-04-01')`,
+    },
+    {
+      label: "updating an Invoice's status",
+      statement: sql`update invoices set status = 'VOID'
+        where client_id = ${clientA}`,
+    },
+    {
+      label: "deleting an Invoice",
+      statement: sql`delete from invoices where client_id = ${clientA}`,
+    },
+    {
+      label: "inserting a Line Item",
+      statement: sql`insert into line_items
+        (client_id, invoice_id, position, description, amount_cents)
+        select ${clientA}, id, 2, 'Extra', 100 from invoices
+        where client_id = ${clientA} and status = 'OPEN'`,
+    },
+    {
+      label: "updating a Line Item",
+      statement: sql`update line_items set amount_cents = 1
+        where client_id = ${clientA}`,
+    },
+    {
+      label: "deleting a Line Item",
+      statement: sql`delete from line_items where client_id = ${clientA}`,
+    },
+  ])("refuses $label", async ({ statement }) => {
+    const outcome = await writeAsTenant(clientA, statement);
+
+    expect(outcome).toEqual(PERMISSION_DENIED);
+  });
+});
+
+describe("invoice_counters", () => {
+  const tableName = getTableName(invoiceCounters);
+
+  it("gives app_tenant no privileges", async () => {
+    const granted = await getTenantPrivileges([tableName]);
+
+    expect(granted).toEqual([]);
+  });
+
+  it("refuses app_tenant reading it", async () => {
+    const outcome = await readAsTenant(
+      randomUUID(),
+      sql`select year, last_seq from invoice_counters`,
+    );
+
+    expect(outcome).toEqual(PERMISSION_DENIED);
+  });
+
+  it("refuses app_tenant bumping it", async () => {
+    const outcome = await writeAsTenant(
+      randomUUID(),
+      sql`insert into invoice_counters (year, last_seq)
+        values (2026, 1) on conflict (year)
+        do update set last_seq = invoice_counters.last_seq + 1`,
+    );
+
+    expect(outcome).toEqual(PERMISSION_DENIED);
+  });
+
+  it("gives app_system read, insert and update but no delete", async () => {
+    const privileges = await db.withSystem(async (tx) => {
+      const result = await tx.execute<{ privilege: string }>(
+        sql`select privilege_type as privilege
+          from information_schema.role_table_grants
+          where grantee = 'app_system'
+            and table_schema = 'public'
+            and table_name = ${tableName}
+          order by privilege_type`,
+      );
+      return result.rows.map((row) => row.privilege);
+    });
+
+    expect(privileges).toEqual(["INSERT", "SELECT", "UPDATE"]);
   });
 });
 

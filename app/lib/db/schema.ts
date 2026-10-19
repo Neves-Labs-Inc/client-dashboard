@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import {
+  bigint,
   boolean,
   check,
   date,
@@ -10,6 +11,7 @@ import {
   pgEnum,
   pgPolicy,
   pgTable,
+  smallint,
   text,
   timestamp,
   unique,
@@ -409,5 +411,158 @@ export const requests = pgTable(
       using: sql`${table.status} = 'NEW' AND ${table.submitterId} = ${CURRENT_USER_ID}`,
       withCheck: sql`${table.status} IN ('NEW', 'WITHDRAWN') AND ${table.submitterId} = ${CURRENT_USER_ID}`,
     }),
+  ],
+);
+
+// ---------------------------------------------------------------------------
+// Invoices: the Admin issues them, Client Users only read them. An issued
+// Invoice is never edited; only its status changes. Grants (column-level),
+// FORCE RLS, the column list on invoices_project_fk's SET NULL, the
+// status_changed_at trigger and the commit-time Line Item check are in the
+// migration's custom SQL: Drizzle can't express them.
+
+const INVOICE_MEMO_MAX = 2000;
+const LINE_ITEM_DESCRIPTION_MAX = 200;
+const LINE_ITEMS_MAX = 50;
+// $1,000,000.00, the largest amount one Line Item may carry either way.
+const LINE_ITEM_AMOUNT_MAX_CENTS = 100_000_000;
+// The sequence is four digits.
+const INVOICE_SEQUENCE_MAX = 9999;
+
+export const invoiceStatus = pgEnum("invoice_status", ["OPEN", "PAID", "VOID"]);
+
+export const invoices = pgTable(
+  "invoices",
+  {
+    id: id(),
+    // No cascade: Clients are archive-only.
+    clientId: uuid("client_id")
+      .notNull()
+      .references(() => clients.id),
+    projectId: uuid("project_id"),
+    // NL-<4-digit sequence>-<issue year>, assigned at create.
+    number: text("number").notNull().unique(),
+    issueDate: date("issue_date", { mode: "string" }).notNull(),
+    dueDate: date("due_date", { mode: "string" }).notNull(),
+    memo: text("memo"),
+    status: invoiceStatus("status").notNull().default("OPEN"),
+    paidAt: date("paid_at", { mode: "string" }),
+    // Set by a trigger whenever status changes.
+    statusChangedAt: timestamptz("status_changed_at").notNull().defaultNow(),
+    createdAt: timestamptz("created_at").notNull().defaultNow(),
+  },
+  (table) => [
+    // Target of line_items' composite FK.
+    unique("invoices_id_client_id_key").on(table.id, table.clientId),
+    // Composite, so the Project is the Invoice's Client's. The migration
+    // narrows this SET NULL to project_id: as written here it would null
+    // client_id too, which is NOT NULL.
+    foreignKey({
+      name: "invoices_project_fk",
+      columns: [table.projectId, table.clientId],
+      foreignColumns: [projects.id, projects.clientId],
+    }).onDelete("set null"),
+    // CASE, so a malformed number fails the check instead of the int cast.
+    check(
+      "invoices_number_format",
+      sql`CASE WHEN ${table.number} ~ '^NL-[0-9]{4}-[0-9]{4}$' THEN right(${table.number}, 4)::int = extract(year from ${table.issueDate}) ELSE false END`,
+    ),
+    check(
+      "invoices_due_after_issue",
+      sql`${table.dueDate} >= ${table.issueDate}`,
+    ),
+    check(
+      "invoices_memo_length",
+      sql`${table.memo} IS NULL OR char_length(${table.memo}) BETWEEN 1 AND ${sql.raw(String(INVOICE_MEMO_MAX))}`,
+    ),
+    // A paid date exactly when the Invoice is Paid.
+    check(
+      "invoices_paid_at_status",
+      sql`(${table.status} = 'PAID') = (${table.paidAt} IS NOT NULL)`,
+    ),
+    check(
+      "invoices_paid_after_issue",
+      sql`${table.paidAt} IS NULL OR ${table.paidAt} >= ${table.issueDate}`,
+    ),
+    index("invoices_client_id_issue_date_idx").on(
+      table.clientId,
+      table.issueDate.desc(),
+    ),
+    buildTenantPolicy("invoices", table.clientId),
+    // Restrictive, so it narrows the tenant policy above: Client reads never
+    // see Void Invoices. app_system bypasses RLS, so the Admin does.
+    pgPolicy("invoices_tenant_not_void", {
+      as: "restrictive",
+      for: "select",
+      to: "app_tenant",
+      using: sql`${table.status} <> 'VOID'`,
+    }),
+  ],
+);
+
+export const lineItems = pgTable(
+  "line_items",
+  {
+    id: id(),
+    // No cascade: Clients are archive-only.
+    clientId: uuid("client_id")
+      .notNull()
+      .references(() => clients.id),
+    invoiceId: uuid("invoice_id").notNull(),
+    // Display order on the Invoice, from 1.
+    position: smallint("position").notNull(),
+    description: text("description").notNull(),
+    // Negative for a credit; the Invoice's total must still be positive.
+    amountCents: bigint("amount_cents", { mode: "number" }).notNull(),
+  },
+  (table) => [
+    // Composite, so a Line Item's client_id can never differ from its
+    // Invoice's. No cascade: Invoices are never deleted.
+    foreignKey({
+      name: "line_items_invoice_fk",
+      columns: [table.invoiceId, table.clientId],
+      foreignColumns: [invoices.id, invoices.clientId],
+    }),
+    unique("line_items_invoice_id_position_key").on(
+      table.invoiceId,
+      table.position,
+    ),
+    check(
+      "line_items_position_range",
+      sql`${table.position} BETWEEN 1 AND ${sql.raw(String(LINE_ITEMS_MAX))}`,
+    ),
+    check(
+      "line_items_description_length",
+      sql`char_length(${table.description}) BETWEEN 1 AND ${sql.raw(String(LINE_ITEM_DESCRIPTION_MAX))}`,
+    ),
+    check(
+      "line_items_amount_range",
+      sql`${table.amountCents} <> 0 AND abs(${table.amountCents}) <= ${sql.raw(String(LINE_ITEM_AMOUNT_MAX_CENTS))}`,
+    ),
+    buildTenantPolicy("line_items", table.clientId),
+    // A Void Invoice's Line Items are as hidden as the Invoice.
+    pgPolicy("line_items_tenant_not_void", {
+      as: "restrictive",
+      for: "select",
+      to: "app_tenant",
+      using: sql`EXISTS (SELECT 1 FROM "invoices" i WHERE i."id" = ${table.invoiceId} AND i."status" <> 'VOID')`,
+    }),
+  ],
+);
+
+// The last number issued in each year: the sequence restarts yearly and is
+// global across Clients. Not Client-owned, so no RLS; app_tenant has no
+// grant at all.
+export const invoiceCounters = pgTable(
+  "invoice_counters",
+  {
+    year: integer("year").primaryKey(),
+    lastSeq: integer("last_seq").notNull(),
+  },
+  (table) => [
+    check(
+      "invoice_counters_last_seq_range",
+      sql`${table.lastSeq} BETWEEN 1 AND ${sql.raw(String(INVOICE_SEQUENCE_MAX))}`,
+    ),
   ],
 );
