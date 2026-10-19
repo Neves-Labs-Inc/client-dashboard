@@ -21,6 +21,8 @@ import type { RequestRow } from "@/lib/requests/requests";
 import { loader as layoutLoader } from "@/routes/preview/layout";
 import { loader as overviewLoader } from "@/routes/preview/overview";
 import { loader as projectLoader } from "@/routes/preview/project";
+import { loader as requestLoader } from "@/routes/preview/request";
+import { loader as requestsLoader } from "@/routes/preview/requests";
 import { loader as projectsLoader } from "@/routes/preview/projects";
 import {
   insertMilestone,
@@ -59,6 +61,8 @@ const clientB = randomUUID();
 const submitterIds: string[] = [];
 let projectA = "";
 let projectB = "";
+let requestA = "";
+let requestB = "";
 
 function teamFor(clientId: string): Team {
   return {
@@ -71,7 +75,7 @@ function teamFor(clientId: string): Team {
   };
 }
 
-type Params = { clientId: string; projectId?: string };
+type Params = { clientId: string; projectId?: string; requestId?: string };
 
 function argsFor<Args>(params: Params): Args {
   const request = new Request(
@@ -102,7 +106,7 @@ async function seedClient(
   tx: Tx,
   clientId: string,
   label: string,
-): Promise<string> {
+): Promise<{ projectId: string; requestId: string }> {
   const projectId = await insertProject(tx, {
     clientId,
     name: `${label} website`,
@@ -138,14 +142,22 @@ async function seedClient(
     title: `${label} request`,
   });
   submitterIds.push(request.submitterId);
-  return projectId;
+  return { projectId, requestId: request.id };
 }
 
 beforeAll(async () => {
   await seedDb.withSystem(async (tx) => {
     await insertClients(tx, [clientA, clientB]);
-    projectA = await seedClient(tx, clientA, "Acme");
-    projectB = await seedClient(tx, clientB, "Beta");
+    ({ projectId: projectA, requestId: requestA } = await seedClient(
+      tx,
+      clientA,
+      "Acme",
+    ));
+    ({ projectId: projectB, requestId: requestB } = await seedClient(
+      tx,
+      clientB,
+      "Beta",
+    ));
   });
 });
 
@@ -239,5 +251,32 @@ describe("the preview, on the real tenant path", () => {
       activeProjectCount: 1,
       newRequestCount: 1,
     });
+  });
+
+  it("lists only the Client's Requests", async () => {
+    const { data } = await settle(() =>
+      requestsLoader(argsFor({ clientId: clientA })),
+    );
+    const { requests } = data as { requests: RequestRow[] | null };
+
+    expect(requests?.map((request) => request.id)).toEqual([requestA]);
+  });
+
+  it("shows the Client's Request, never as an editable one", async () => {
+    const { data } = await settle(() =>
+      requestLoader(argsFor({ clientId: clientA, requestId: requestA })),
+    );
+
+    expect(data).toMatchObject({
+      detail: { id: requestA, title: "Acme request", canChange: false },
+    });
+  });
+
+  it("answers 404 for another Client's Request", async () => {
+    const { status } = await settle(() =>
+      requestLoader(argsFor({ clientId: clientA, requestId: requestB })),
+    );
+
+    expect(status).toBe(NOT_FOUND);
   });
 });

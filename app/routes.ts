@@ -33,6 +33,8 @@ export default [
     index("routes/preview/overview.tsx"),
     route("projects", "routes/preview/projects.tsx"),
     route("projects/:projectId", "routes/preview/project.tsx"),
+    route("requests", "routes/preview/requests.tsx"),
+    route("requests/:requestId", "routes/preview/request.tsx"),
   ]),
   route("admin", "routes/admin/layout.tsx", [
     index("routes/admin/index.tsx"),

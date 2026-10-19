@@ -105,7 +105,7 @@ export default function PreviewLayout({
       newRequestCount={loaderData.newRequestCount}
       preview={{ clientId, isArchived }}
     >
-      {getClientPageSkeleton(page) ?? <Outlet />}
+      {getClientPageSkeleton(page, true) ?? <Outlet />}
     </ClientShell>
   );
 }

@@ -41,7 +41,9 @@ type RequestDetailViewProps = {
   clientName: string;
   detail: RequestDetail;
   // For the edit drawer; empty when the viewer can't edit.
-  projectOptions: ProjectOption[];
+  projectOptions?: ProjectOption[];
+  // The Admin preview's: no edit drawer, whatever the Request's state.
+  isReadOnly?: boolean;
 };
 
 function toFormValues(detail: RequestDetail): RequestFormValues {
@@ -58,7 +60,8 @@ function toFormValues(detail: RequestDetail): RequestFormValues {
 export default function RequestDetailView({
   clientName,
   detail,
-  projectOptions,
+  projectOptions = [],
+  isReadOnly = false,
 }: RequestDetailViewProps): React.ReactNode {
   const [searchParams, setSearchParams] = useSearchParams();
   const titleRef = useRef<HTMLHeadingElement>(null);
@@ -251,18 +254,20 @@ export default function RequestDetailView({
           </div>
         )}
       </div>
-      <RequestDrawer
-        open={isEditing}
-        onOpenChange={handleOpenChange}
-        mode="edit"
-        initial={toFormValues(detail)}
-        projectOptions={projectOptions}
-        clientName={clientName}
-        action={path}
-        onSaved={handleSaved}
-        onNoLongerNew={handleNoLongerNew}
-        getReturnFocusTarget={() => editLinkRef.current ?? titleRef.current}
-      />
+      {!isReadOnly && (
+        <RequestDrawer
+          open={isEditing}
+          onOpenChange={handleOpenChange}
+          mode="edit"
+          initial={toFormValues(detail)}
+          projectOptions={projectOptions}
+          clientName={clientName}
+          action={path}
+          onSaved={handleSaved}
+          onNoLongerNew={handleNoLongerNew}
+          getReturnFocusTarget={() => editLinkRef.current ?? titleRef.current}
+        />
+      )}
     </div>
   );
 }

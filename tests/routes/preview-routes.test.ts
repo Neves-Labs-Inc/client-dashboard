@@ -5,7 +5,11 @@ import type {
   ProjectSummary,
   ProjectView,
 } from "@/lib/client-projects/client-projects";
-import type { Requests, RequestRow } from "@/lib/requests/requests";
+import type {
+  RequestDetail,
+  Requests,
+  RequestRow,
+} from "@/lib/requests/requests";
 import {
   action as layoutAction,
   headers as layoutHeaders,
@@ -20,7 +24,19 @@ import {
   action as projectAction,
   headers as projectHeaders,
   loader as projectLoader,
+  meta as projectMeta,
 } from "@/routes/preview/project";
+import {
+  action as requestAction,
+  headers as requestHeaders,
+  loader as requestLoader,
+  meta as requestMeta,
+} from "@/routes/preview/request";
+import {
+  action as requestsAction,
+  headers as requestsHeaders,
+  loader as requestsLoader,
+} from "@/routes/preview/requests";
 import {
   action as projectsAction,
   headers as projectsHeaders,
@@ -58,9 +74,24 @@ vi.mock("@/lib/client-projects/client-projects.server", () => ({
 
 const countNewRequests = vi.fn<Requests["countNewRequests"]>();
 const listRequests = vi.fn<Requests["listRequests"]>();
+const getRequest = vi.fn<Requests["getRequest"]>();
+const listProjectOptions = vi.fn<Requests["listProjectOptions"]>();
+const submitRequest = vi.fn<Requests["submitRequest"]>();
+const editRequest = vi.fn<Requests["editRequest"]>();
+const withdrawRequest = vi.fn<Requests["withdrawRequest"]>();
 
 vi.mock("@/lib/requests/requests.server", () => ({
   requests: {
+    getRequest: (...args: Parameters<Requests["getRequest"]>) =>
+      getRequest(...args),
+    listProjectOptions: (...args: Parameters<Requests["listProjectOptions"]>) =>
+      listProjectOptions(...args),
+    submitRequest: (...args: Parameters<Requests["submitRequest"]>) =>
+      submitRequest(...args),
+    editRequest: (...args: Parameters<Requests["editRequest"]>) =>
+      editRequest(...args),
+    withdrawRequest: (...args: Parameters<Requests["withdrawRequest"]>) =>
+      withdrawRequest(...args),
     countNewRequests: (...args: Parameters<Requests["countNewRequests"]>) =>
       countNewRequests(...args),
     listRequests: (...args: Parameters<Requests["listRequests"]>) =>
@@ -71,6 +102,7 @@ vi.mock("@/lib/requests/requests.server", () => ({
 const PORTAL_ORIGIN = "http://localhost:5173";
 const CLIENT_ID = "0199d0a4-5b6c-7d8e-9f01-23456789abcd";
 const PROJECT_ID = "0199d0a4-5b6c-7d8e-9f01-2345678900aa";
+const REQUEST_ID = "0199d0a4-5b6c-7d8e-9f01-2345678900bb";
 const PREVIEW_PATH = `/admin/clients/${CLIENT_ID}/preview`;
 const NOT_FOUND = 404;
 const METHOD_NOT_ALLOWED = 405;
@@ -127,7 +159,7 @@ const REQUEST_ROW: RequestRow = {
   createdAt: new Date("2026-10-07"),
 };
 
-type Params = { clientId: string; projectId?: string };
+type Params = { clientId: string; projectId?: string; requestId?: string };
 
 function argsFor<Args>(path: string, params: Params, method = "GET"): Args {
   const request = new Request(`${PORTAL_ORIGIN}${path}`, {
@@ -169,6 +201,20 @@ async function settle(run: () => Promise<unknown>): Promise<Settled> {
 
 const PARAMS: Params = { clientId: CLIENT_ID };
 const PROJECT_PARAMS: Params = { clientId: CLIENT_ID, projectId: PROJECT_ID };
+const REQUEST_PARAMS: Params = { clientId: CLIENT_ID, requestId: REQUEST_ID };
+
+const REQUEST_DETAIL: RequestDetail = {
+  ...REQUEST_ROW,
+  id: REQUEST_ID,
+  description: "The footer link 404s.",
+  statusChangedAt: new Date("2026-10-08"),
+  responseNote: null,
+  project: null,
+  task: null,
+  // The real read model says true for the submitter; the preview never
+  // acts as one.
+  canChange: true,
+};
 
 // Each preview page's loader, run for a Client id (and the Project's).
 const LOADERS: Record<string, (params: Params) => Promise<unknown>> = {
@@ -176,6 +222,15 @@ const LOADERS: Record<string, (params: Params) => Promise<unknown>> = {
   "preview Overview": (params) => overviewLoader(argsFor(PREVIEW_PATH, params)),
   "preview Projects": (params) =>
     projectsLoader(argsFor(`${PREVIEW_PATH}/projects`, params)),
+  "preview Requests": (params) =>
+    requestsLoader(argsFor(`${PREVIEW_PATH}/requests`, params)),
+  "preview Request detail": (params) =>
+    requestLoader(
+      argsFor(`${PREVIEW_PATH}/requests/${REQUEST_ID}`, {
+        requestId: REQUEST_ID,
+        ...params,
+      }),
+    ),
   "preview Project view": (params) =>
     projectLoader(
       argsFor(`${PREVIEW_PATH}/projects/${PROJECT_ID}`, {
@@ -191,6 +246,12 @@ const ACTIONS: Record<string, () => Promise<unknown>> = {
     overviewAction(argsFor(`${PREVIEW_PATH}?index`, PARAMS, "POST")),
   "preview Projects": () =>
     projectsAction(argsFor(`${PREVIEW_PATH}/projects`, PARAMS, "POST")),
+  "preview Requests": () =>
+    requestsAction(argsFor(`${PREVIEW_PATH}/requests`, PARAMS, "POST")),
+  "preview Request detail": () =>
+    requestAction(
+      argsFor(`${PREVIEW_PATH}/requests/${REQUEST_ID}`, REQUEST_PARAMS, "POST"),
+    ),
   "preview Project view": () =>
     projectAction(
       argsFor(`${PREVIEW_PATH}/projects/${PROJECT_ID}`, PROJECT_PARAMS, "POST"),
@@ -203,6 +264,11 @@ function expectNoReadModelCalls(): void {
   expect(getProject).not.toHaveBeenCalled();
   expect(countNewRequests).not.toHaveBeenCalled();
   expect(listRequests).not.toHaveBeenCalled();
+  expect(getRequest).not.toHaveBeenCalled();
+  expect(listProjectOptions).not.toHaveBeenCalled();
+  expect(submitRequest).not.toHaveBeenCalled();
+  expect(editRequest).not.toHaveBeenCalled();
+  expect(withdrawRequest).not.toHaveBeenCalled();
 }
 
 beforeEach(() => {
@@ -220,6 +286,12 @@ beforeEach(() => {
   countNewRequests.mockResolvedValue(2);
   listRequests.mockReset();
   listRequests.mockResolvedValue([REQUEST_ROW]);
+  getRequest.mockReset();
+  getRequest.mockResolvedValue(REQUEST_DETAIL);
+  listProjectOptions.mockReset();
+  submitRequest.mockReset();
+  editRequest.mockReset();
+  withdrawRequest.mockReset();
 });
 
 describe("the preview guard", () => {
@@ -397,12 +469,105 @@ describe("the preview Project view", () => {
   });
 });
 
+describe("the preview Requests", () => {
+  it("reads the URL's Client's Requests, never a user's or the options", async () => {
+    const { data } = await settle(() => LOADERS["preview Requests"](PARAMS));
+
+    expect(data).toMatchObject({ clientName: "Acme", requests: [REQUEST_ROW] });
+    expect(listRequests.mock.calls).toEqual([[CLIENT_ID]]);
+    expect(listProjectOptions).not.toHaveBeenCalled();
+  });
+
+  it("gives the panel null, not a throw, when the list fails", async () => {
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+    listRequests.mockRejectedValue(new Error("connection lost"));
+
+    const { data } = await settle(() => LOADERS["preview Requests"](PARAMS));
+
+    expect(data).toMatchObject({ requests: null });
+    expect(errorLog).toHaveBeenCalled();
+    errorLog.mockRestore();
+  });
+});
+
+describe("the preview Request detail", () => {
+  it("reads the Request for the URL's Client, as a viewer who isn't its submitter", async () => {
+    const { data } = await settle(() =>
+      LOADERS["preview Request detail"](REQUEST_PARAMS),
+    );
+
+    expect(data).toMatchObject({
+      clientName: "Acme",
+      detail: { id: REQUEST_ID, canChange: false },
+    });
+    expect(getRequest.mock.calls).toEqual([
+      [{ clientId: CLIENT_ID, userId: "" }, REQUEST_ID],
+    ]);
+    expect(listProjectOptions).not.toHaveBeenCalled();
+  });
+
+  it("answers 404 for a Request the Client can't see", async () => {
+    getRequest.mockResolvedValue(null);
+
+    const { status, headers } = await settle(() =>
+      LOADERS["preview Request detail"](REQUEST_PARAMS),
+    );
+
+    expect(status).toBe(NOT_FOUND);
+    expect(headers.getSetCookie()).toEqual([RENEWED_COOKIE]);
+  });
+});
+
+describe("the preview not-found titles", () => {
+  // The shape React Router gives a thrown data(…, { status }).
+  const notFound = {
+    status: NOT_FOUND,
+    statusText: "",
+    internal: false,
+    data: null,
+  };
+  const withLayout = [
+    { id: "root", data: undefined },
+    { id: "routes/preview/layout", data: { clientName: "Acme" } },
+  ];
+  const withoutLayout = [{ id: "root", data: undefined }];
+
+  type LooseMeta = (args: unknown) => unknown;
+  const titleOf = (descriptors: unknown): unknown =>
+    (descriptors as { title: string }[])[0].title;
+
+  const cases = [
+    ["Request", requestMeta, "Request not found"],
+    ["Project", projectMeta, "Project not found"],
+  ] as const;
+
+  for (const [what, meta, label] of cases) {
+    it(`names the Client in the ${what} not-found title`, () => {
+      const args = { error: notFound, matches: withLayout };
+
+      expect(titleOf((meta as LooseMeta)(args))).toBe(
+        `Preview · ${label} · Acme · Neves Labs`,
+      );
+    });
+
+    it(`leaves the Client out of the ${what} not-found title without layout data`, () => {
+      const args = { error: notFound, matches: withoutLayout };
+
+      expect(titleOf((meta as LooseMeta)(args))).toBe(
+        `Preview · ${label} · Neves Labs`,
+      );
+    });
+  }
+});
+
 describe("the preview responses", () => {
   const routeHeaders = {
     "preview layout": layoutHeaders,
     "preview Overview": overviewHeaders,
     "preview Projects": projectsHeaders,
     "preview Project view": projectHeaders,
+    "preview Requests": requestsHeaders,
+    "preview Request detail": requestHeaders,
   };
 
   for (const [page, getHeaders] of Object.entries(routeHeaders)) {

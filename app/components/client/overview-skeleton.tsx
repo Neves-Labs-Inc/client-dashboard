@@ -7,8 +7,12 @@ import SummaryRowSkeleton from "@/components/ui/summary-row-skeleton";
 const TILE_COUNT = 2;
 
 // The Overview in blocks, line box for line box, so nothing shifts when the
-// page arrives.
-export default function OverviewSkeleton(): React.ReactNode {
+// page arrives. The Admin preview has no actions, so it draws no blocks.
+export default function OverviewSkeleton({
+  isReadOnly = false,
+}: {
+  isReadOnly?: boolean;
+}): React.ReactNode {
   return (
     <SkeletonGroup label="overview">
       <div className="flex flex-col gap-4">
@@ -21,7 +25,9 @@ export default function OverviewSkeleton(): React.ReactNode {
               <Skeleton className="h-[18px] w-[20%]" />
             </div>
           </div>
-          <Skeleton className="h-11 w-36 md:h-8 md:w-[118px] pointer-coarse:h-11" />
+          {!isReadOnly && (
+            <Skeleton className="h-11 w-36 md:h-8 md:w-[118px] pointer-coarse:h-11" />
+          )}
         </div>
         <SummaryRowSkeleton count={TILE_COUNT} />
         <div className="rounded-[3px] border border-line bg-surface">
@@ -34,7 +40,9 @@ export default function OverviewSkeleton(): React.ReactNode {
           <div className="rounded-[3px] border border-line bg-surface">
             <div className="flex min-h-10 items-center justify-between border-b border-line px-3 py-2">
               <Skeleton className="h-3 w-16" />
-              <Skeleton className="h-11 w-16 md:h-8 md:w-14 pointer-coarse:h-11" />
+              {!isReadOnly && (
+                <Skeleton className="h-11 w-16 md:h-8 md:w-14 pointer-coarse:h-11" />
+              )}
             </div>
             <RequestTableSkeleton />
           </div>

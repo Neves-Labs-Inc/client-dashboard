@@ -7,10 +7,10 @@ import EmptyState from "@/components/ui/empty-state";
 import PageHeader from "@/components/ui/page-header";
 import Panel from "@/components/ui/panel";
 import PanelError from "@/components/ui/panel-error";
+import { useClientPaths } from "@/hooks/use-client-paths";
 import { EMPTY_REQUEST } from "@/hooks/use-request-form";
 import { useRowHighlight } from "@/hooks/use-row-highlight";
 import {
-  getRequestPath,
   NEW_REQUEST_PARAM,
   NEW_REQUEST_VALUE,
   SUBMIT_REQUEST_ACTION,
@@ -23,7 +23,10 @@ type RequestsPageProps = {
   clientName: string;
   // Newest first; null when they couldn't load.
   requests: RequestRow[] | null;
-  projectOptions: ProjectOption[];
+  // For the drawer; the read-only page has none.
+  projectOptions?: ProjectOption[];
+  // The Admin preview's: no "New request", no call to submit, no drawer.
+  isReadOnly?: boolean;
 };
 
 function getMeta(requests: RequestRow[]): string | undefined {
@@ -37,8 +40,10 @@ function getMeta(requests: RequestRow[]): string | undefined {
 export default function RequestsPage({
   clientName,
   requests,
-  projectOptions,
+  projectOptions = [],
+  isReadOnly = false,
 }: RequestsPageProps): React.ReactNode {
+  const paths = useClientPaths();
   const [searchParams, setSearchParams] = useSearchParams();
   const { highlightedId, highlight } = useRowHighlight(null);
   const headerLinkRef = useRef<HTMLAnchorElement>(null);
@@ -86,7 +91,7 @@ export default function RequestsPage({
           { label: "Requests" },
         ]}
         title="Requests"
-        action={<NewRequestLink ref={headerLinkRef} />}
+        action={isReadOnly ? undefined : <NewRequestLink ref={headerLinkRef} />}
       />
       <Panel
         title="Requests"
@@ -101,30 +106,38 @@ export default function RequestsPage({
         )}
         {requests !== null && requests.length === 0 && (
           <EmptyState
-            action={<NewRequestLink ref={emptyLinkRef} variant="secondary" />}
+            action={
+              isReadOnly ? undefined : (
+                <NewRequestLink ref={emptyLinkRef} variant="secondary" />
+              )
+            }
           >
-            No Requests yet. Report a bug or ask for a feature.
+            {isReadOnly
+              ? "No Requests yet."
+              : "No Requests yet. Report a bug or ask for a feature."}
           </EmptyState>
         )}
         {requests !== null && requests.length > 0 && (
           <RequestTable
             requests={requests}
             highlightedId={highlightedId}
-            getHref={getRequestPath}
+            getHref={paths.getRequestPath}
           />
         )}
       </Panel>
-      <RequestDrawer
-        open={isDrawerOpen}
-        onOpenChange={handleOpenChange}
-        mode="new"
-        initial={EMPTY_REQUEST}
-        projectOptions={projectOptions}
-        clientName={clientName}
-        action={SUBMIT_REQUEST_ACTION}
-        onSaved={handleSaved}
-        getReturnFocusTarget={getReturnFocusTarget}
-      />
+      {!isReadOnly && (
+        <RequestDrawer
+          open={isDrawerOpen}
+          onOpenChange={handleOpenChange}
+          mode="new"
+          initial={EMPTY_REQUEST}
+          projectOptions={projectOptions}
+          clientName={clientName}
+          action={SUBMIT_REQUEST_ACTION}
+          onSaved={handleSaved}
+          getReturnFocusTarget={getReturnFocusTarget}
+        />
+      )}
     </div>
   );
 }

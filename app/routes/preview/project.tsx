@@ -8,7 +8,11 @@ import ProjectView from "@/components/projects/project-view";
 import { useClientPaths } from "@/hooks/use-client-paths";
 import { clientProjects } from "@/lib/client-projects/client-projects.server";
 import { getNoStoreHeaders } from "@/lib/no-store-headers";
-import { getPreviewTitle, PREVIEW_LAYOUT_ROUTE_ID } from "@/lib/preview";
+import {
+  getLayoutClientName,
+  getPreviewTitle,
+  PREVIEW_LAYOUT_ROUTE_ID,
+} from "@/lib/preview";
 import {
   refusePreviewAction,
   requirePreviewClient,
@@ -21,12 +25,13 @@ const NOT_FOUND = 404;
 export function meta({
   loaderData,
   error,
+  matches,
 }: Route.MetaArgs): Route.MetaDescriptors {
   let title = getPreviewTitle("Projects");
   if (loaderData) {
     title = getPreviewTitle(loaderData.project.name, loaderData.clientName);
   } else if (isRouteErrorResponse(error) && error.status === NOT_FOUND) {
-    title = getPreviewTitle("Project not found");
+    title = getPreviewTitle("Project not found", getLayoutClientName(matches));
   }
   return [{ title }];
 }
