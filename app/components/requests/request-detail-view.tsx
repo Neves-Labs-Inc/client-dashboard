@@ -13,6 +13,7 @@ import DateText from "@/components/ui/date-text";
 import FormError from "@/components/ui/form-error";
 import PageHeader from "@/components/ui/page-header";
 import Panel from "@/components/ui/panel";
+import { useClientPaths } from "@/hooks/use-client-paths";
 import type { RequestFormValues } from "@/hooks/use-request-form";
 import { useRowHighlight } from "@/hooks/use-row-highlight";
 import { useWithdrawRequest } from "@/hooks/use-withdraw-request";
@@ -21,7 +22,6 @@ import {
   EDIT_REQUEST_SEARCH,
   EDIT_REQUEST_VALUE,
   getRequestPath,
-  REQUESTS_PATH,
 } from "@/lib/request-drawer";
 import { REQUEST_COPY } from "@/lib/request-outcome";
 import type { ProjectOption, RequestDetail } from "@/lib/requests/requests";
@@ -66,6 +66,7 @@ export default function RequestDetailView({
   // Set by a not-new refusal: the banner stays once the controls are gone.
   const [isNoLongerNew, setIsNoLongerNew] = useState(false);
   const { highlightedId, highlight } = useRowHighlight(null);
+  const paths = useClientPaths();
   const path = getRequestPath(detail.id);
   const isEditParam =
     searchParams.get(EDIT_REQUEST_PARAM) === EDIT_REQUEST_VALUE;
@@ -119,7 +120,7 @@ export default function RequestDetailView({
   const actions = (
     <div className="flex flex-wrap gap-2">
       <Link
-        to={REQUESTS_PATH}
+        to={paths.requests}
         className={cn(
           buttonStyles({ variant: "secondary" }),
           LINK_BUTTON_CLASS,
@@ -163,7 +164,7 @@ export default function RequestDetailView({
       <PageHeader
         breadcrumb={[
           { label: clientName, isTruncated: true },
-          { label: "Requests", href: REQUESTS_PATH },
+          { label: "Requests", href: paths.requests },
         ]}
         title={detail.title}
         titleRef={titleRef}
@@ -206,7 +207,7 @@ export default function RequestDetailView({
                 <span className="text-fg-2">No specific project</span>
               ) : (
                 <Link
-                  to={`/projects/${detail.project.id}`}
+                  to={paths.getProjectPath(detail.project.id)}
                   className="text-accent-fg hover:underline"
                 >
                   {detail.project.name}

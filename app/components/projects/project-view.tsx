@@ -3,6 +3,7 @@ import LatestUpdatePanel from "@/components/projects/latest-update-panel";
 import ProjectTasksPanel from "@/components/projects/project-tasks-panel";
 import PageHeader from "@/components/ui/page-header";
 import TagBadge from "@/components/ui/tag-badge";
+import { useClientPaths } from "@/hooks/use-client-paths";
 import type { ProjectView as ProjectViewData } from "@/lib/client-projects/client-projects";
 import { getHealthTone } from "@/lib/project-health";
 
@@ -18,13 +19,14 @@ export default function ProjectView({
   project,
 }: ProjectViewProps): React.ReactNode {
   const { name, isPast, latest, earlier, milestones, otherWork } = project;
+  const paths = useClientPaths();
 
   return (
     <div className="flex flex-col gap-4">
       <PageHeader
         breadcrumb={[
           { label: clientName, isTruncated: true },
-          { label: "Projects", href: "/projects" },
+          { label: "Projects", href: paths.projects },
         ]}
         title={name}
         badge={isPast && <TagBadge>Past Project</TagBadge>}

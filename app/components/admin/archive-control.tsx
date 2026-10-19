@@ -13,6 +13,9 @@ type ArchiveControlProps = {
   archive: ArchiveClient;
   // The primary action before "Archive client" (Invite first Owner).
   children?: React.ReactNode;
+  // Shown for either variant, after the primary action and before "Archive
+  // client" or "Unarchive" (Preview).
+  secondaryAction?: React.ReactNode;
 };
 
 // The Team header's action group: an active Client's actions and "Archive
@@ -21,6 +24,7 @@ export default function ArchiveControl({
   variant,
   archive,
   children,
+  secondaryAction,
 }: ArchiveControlProps): React.ReactNode {
   return (
     // One line from md (the header's right column); wraps below it.
@@ -28,6 +32,7 @@ export default function ArchiveControl({
       {variant === "active" ? (
         <>
           {children}
+          {secondaryAction}
           <Button
             ref={archive.triggerRef}
             icon={Archive}
@@ -41,16 +46,19 @@ export default function ArchiveControl({
           </Button>
         </>
       ) : (
-        <Button
-          variant="primary"
-          icon={ArchiveRestore}
-          className="whitespace-nowrap"
-          isPending={archive.isUnarchiving}
-          pendingLabel={ARCHIVE_COPY.unarchiving}
-          onClick={archive.handleUnarchive}
-        >
-          {ARCHIVE_COPY.unarchive}
-        </Button>
+        <>
+          {secondaryAction}
+          <Button
+            variant="primary"
+            icon={ArchiveRestore}
+            className="whitespace-nowrap"
+            isPending={archive.isUnarchiving}
+            pendingLabel={ARCHIVE_COPY.unarchiving}
+            onClick={archive.handleUnarchive}
+          >
+            {ARCHIVE_COPY.unarchive}
+          </Button>
+        </>
       )}
     </div>
   );

@@ -1,0 +1,425 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { Access, AccessResult, Auth, Team } from "@/lib/auth/auth";
+import type {
+  ClientProjects,
+  ProjectSummary,
+  ProjectView,
+} from "@/lib/client-projects/client-projects";
+import type { Requests, RequestRow } from "@/lib/requests/requests";
+import {
+  action as layoutAction,
+  headers as layoutHeaders,
+  loader as layoutLoader,
+} from "@/routes/preview/layout";
+import {
+  action as overviewAction,
+  headers as overviewHeaders,
+  loader as overviewLoader,
+} from "@/routes/preview/overview";
+import {
+  action as projectAction,
+  headers as projectHeaders,
+  loader as projectLoader,
+} from "@/routes/preview/project";
+import {
+  action as projectsAction,
+  headers as projectsHeaders,
+  loader as projectsLoader,
+} from "@/routes/preview/projects";
+
+// The session store and the Better Auth Client lookup are the boundary: a
+// fake getAccess answers as a slid session would, with a renewed cookie.
+const RENEWED_COOKIE = "better-auth.session_token=renewed; Path=/; HttpOnly";
+const getAccess = vi.fn<(request: Request) => Promise<AccessResult>>();
+const getTeam = vi.fn<Auth["getTeam"]>();
+
+vi.mock("@/lib/auth/auth.server", () => ({
+  auth: {
+    getAccess: (request: Request) => getAccess(request),
+    getTeam: (clientId: string) => getTeam(clientId),
+  },
+}));
+
+const listProjects = vi.fn<ClientProjects["listProjects"]>();
+const countActiveProjects = vi.fn<ClientProjects["countActiveProjects"]>();
+const getProject = vi.fn<ClientProjects["getProject"]>();
+
+vi.mock("@/lib/client-projects/client-projects.server", () => ({
+  clientProjects: {
+    listProjects: (...args: Parameters<ClientProjects["listProjects"]>) =>
+      listProjects(...args),
+    countActiveProjects: (
+      ...args: Parameters<ClientProjects["countActiveProjects"]>
+    ) => countActiveProjects(...args),
+    getProject: (...args: Parameters<ClientProjects["getProject"]>) =>
+      getProject(...args),
+  },
+}));
+
+const countNewRequests = vi.fn<Requests["countNewRequests"]>();
+const listRequests = vi.fn<Requests["listRequests"]>();
+
+vi.mock("@/lib/requests/requests.server", () => ({
+  requests: {
+    countNewRequests: (...args: Parameters<Requests["countNewRequests"]>) =>
+      countNewRequests(...args),
+    listRequests: (...args: Parameters<Requests["listRequests"]>) =>
+      listRequests(...args),
+  },
+}));
+
+const PORTAL_ORIGIN = "http://localhost:5173";
+const CLIENT_ID = "0199d0a4-5b6c-7d8e-9f01-23456789abcd";
+const PROJECT_ID = "0199d0a4-5b6c-7d8e-9f01-2345678900aa";
+const PREVIEW_PATH = `/admin/clients/${CLIENT_ID}/preview`;
+const NOT_FOUND = 404;
+const METHOD_NOT_ALLOWED = 405;
+// The Overview shows five Requests and asks for one more.
+const OVERVIEW_REQUEST_ASK = 6;
+
+const TEAM: Team = {
+  clientId: CLIENT_ID,
+  name: "Acme",
+  archivedAt: null,
+  members: [],
+  pendingInvitations: [],
+  canInviteFirstOwner: true,
+};
+
+const ADMIN: Access = { kind: "admin", email: "admin@test.local" };
+const OWNER: Access = {
+  kind: "client",
+  userId: "u1",
+  email: "maya@acme.test",
+  name: "Maya Chen",
+  clientId: CLIENT_ID,
+  clientName: "Acme",
+  role: "owner",
+};
+
+const SUMMARY: ProjectSummary = {
+  id: PROJECT_ID,
+  name: "Website",
+  isPast: false,
+  health: null,
+  latestUpdateAt: null,
+  latestNote: null,
+  currentMilestone: null,
+  taskCounts: { UP_NEXT: 0, IN_PROGRESS: 0, DONE: 0 },
+};
+
+const VIEW: ProjectView = {
+  id: PROJECT_ID,
+  name: "Website",
+  isPast: false,
+  latest: null,
+  earlier: [],
+  milestones: [],
+  otherWork: null,
+};
+
+const REQUEST_ROW: RequestRow = {
+  id: "r1",
+  kind: "BUG",
+  title: "Broken link",
+  status: "NEW",
+  submitterName: "Maya Chen",
+  createdAt: new Date("2026-10-07"),
+};
+
+type Params = { clientId: string; projectId?: string };
+
+function argsFor<Args>(path: string, params: Params, method = "GET"): Args {
+  const request = new Request(`${PORTAL_ORIGIN}${path}`, {
+    method,
+    headers: { origin: PORTAL_ORIGIN },
+  });
+  // Loaders and actions read only the request and params.
+  return { request, params, context: {} } as Args;
+}
+
+function answerAs(access: Access): void {
+  const headers = new Headers();
+  headers.append("set-cookie", RENEWED_COOKIE);
+  getAccess.mockResolvedValue({ access, headers });
+}
+
+type Settled = { status: number; headers: Headers; data: unknown };
+
+// What a loader or action returned or threw: a Response, or a data() result.
+async function settle(run: () => Promise<unknown>): Promise<Settled> {
+  let outcome: unknown;
+  try {
+    outcome = await run();
+  } catch (thrown) {
+    if (thrown instanceof Error) throw thrown;
+    outcome = thrown;
+  }
+  if (outcome instanceof Response) {
+    return { status: outcome.status, headers: outcome.headers, data: null };
+  }
+  // data() returns a plain { data, init } object (a library return value).
+  const result = outcome as { data: unknown; init?: ResponseInit | null };
+  return {
+    status: result.init?.status ?? 200,
+    headers: new Headers(result.init?.headers),
+    data: result.data,
+  };
+}
+
+const PARAMS: Params = { clientId: CLIENT_ID };
+const PROJECT_PARAMS: Params = { clientId: CLIENT_ID, projectId: PROJECT_ID };
+
+// Each preview page's loader, run for a Client id (and the Project's).
+const LOADERS: Record<string, (params: Params) => Promise<unknown>> = {
+  "preview layout": (params) => layoutLoader(argsFor(PREVIEW_PATH, params)),
+  "preview Overview": (params) => overviewLoader(argsFor(PREVIEW_PATH, params)),
+  "preview Projects": (params) =>
+    projectsLoader(argsFor(`${PREVIEW_PATH}/projects`, params)),
+  "preview Project view": (params) =>
+    projectLoader(
+      argsFor(`${PREVIEW_PATH}/projects/${PROJECT_ID}`, {
+        projectId: PROJECT_ID,
+        ...params,
+      }),
+    ),
+};
+
+const ACTIONS: Record<string, () => Promise<unknown>> = {
+  "preview layout": () => layoutAction(argsFor(PREVIEW_PATH, PARAMS, "POST")),
+  "preview Overview": () =>
+    overviewAction(argsFor(`${PREVIEW_PATH}?index`, PARAMS, "POST")),
+  "preview Projects": () =>
+    projectsAction(argsFor(`${PREVIEW_PATH}/projects`, PARAMS, "POST")),
+  "preview Project view": () =>
+    projectAction(
+      argsFor(`${PREVIEW_PATH}/projects/${PROJECT_ID}`, PROJECT_PARAMS, "POST"),
+    ),
+};
+
+function expectNoReadModelCalls(): void {
+  expect(listProjects).not.toHaveBeenCalled();
+  expect(countActiveProjects).not.toHaveBeenCalled();
+  expect(getProject).not.toHaveBeenCalled();
+  expect(countNewRequests).not.toHaveBeenCalled();
+  expect(listRequests).not.toHaveBeenCalled();
+}
+
+beforeEach(() => {
+  getAccess.mockReset();
+  answerAs(ADMIN);
+  getTeam.mockReset();
+  getTeam.mockResolvedValue(TEAM);
+  listProjects.mockReset();
+  listProjects.mockResolvedValue([SUMMARY]);
+  countActiveProjects.mockReset();
+  countActiveProjects.mockResolvedValue(3);
+  getProject.mockReset();
+  getProject.mockResolvedValue(VIEW);
+  countNewRequests.mockReset();
+  countNewRequests.mockResolvedValue(2);
+  listRequests.mockReset();
+  listRequests.mockResolvedValue([REQUEST_ROW]);
+});
+
+describe("the preview guard", () => {
+  const turnedAway: [string, Access, string][] = [
+    ["a visitor", { kind: "anonymous" }, "/sign-in"],
+    [
+      "a magic-link Admin",
+      { kind: "admin-needs-passkey", email: "admin@test.local" },
+      "/passkey",
+    ],
+    ["a Client User", OWNER, "/overview"],
+  ];
+
+  for (const [page, run] of Object.entries(LOADERS)) {
+    for (const [who, access, home] of turnedAway) {
+      it(`sends ${who} from the ${page} to ${home}, reading nothing`, async () => {
+        answerAs(access);
+
+        const { headers } = await settle(() => run(PARAMS));
+
+        expect(headers.get("location")).toBe(home);
+        expect(headers.getSetCookie()).toEqual([RENEWED_COOKIE]);
+        expect(getTeam).not.toHaveBeenCalled();
+        expectNoReadModelCalls();
+      });
+    }
+
+    it(`answers 404 from the ${page} for an unknown Client, reading nothing`, async () => {
+      getTeam.mockResolvedValue(null);
+
+      const { status, headers } = await settle(() => run(PARAMS));
+
+      expect(status).toBe(NOT_FOUND);
+      expect(headers.getSetCookie()).toEqual([RENEWED_COOKIE]);
+      expectNoReadModelCalls();
+    });
+
+    it(`answers 404 from the ${page} for a malformed Client id`, async () => {
+      // The real getTeam reads a non-UUID as no Client.
+      getTeam.mockResolvedValue(null);
+
+      const { status } = await settle(() => run({ clientId: "not-a-uuid" }));
+
+      expect(status).toBe(NOT_FOUND);
+      expect(getTeam).toHaveBeenCalledWith("not-a-uuid");
+      expectNoReadModelCalls();
+    });
+  }
+
+  for (const [page, run] of Object.entries(ACTIONS)) {
+    it(`refuses a POST to the ${page} with 405, reading nothing`, async () => {
+      const { status, headers } = await settle(run);
+
+      expect(status).toBe(METHOD_NOT_ALLOWED);
+      expect(headers.getSetCookie()).toEqual([RENEWED_COOKIE]);
+      expect(getTeam).not.toHaveBeenCalled();
+      expectNoReadModelCalls();
+    });
+
+    it(`sends a Client User's POST to the ${page} to /overview`, async () => {
+      answerAs(OWNER);
+
+      const { headers } = await settle(run);
+
+      expect(headers.get("location")).toBe("/overview");
+      expectNoReadModelCalls();
+    });
+  }
+});
+
+describe("the preview layout", () => {
+  it("gives the shell the Client and its Owner's nav counts", async () => {
+    const { data } = await settle(() => LOADERS["preview layout"](PARAMS));
+
+    expect(data).toEqual({
+      clientId: CLIENT_ID,
+      clientName: "Acme",
+      isArchived: false,
+      activeProjectCount: 3,
+      newRequestCount: 2,
+    });
+    expect(getTeam).toHaveBeenCalledWith(CLIENT_ID);
+    expect(countActiveProjects.mock.calls).toEqual([[CLIENT_ID]]);
+    expect(countNewRequests.mock.calls).toEqual([[CLIENT_ID]]);
+  });
+
+  it("flags an archived Client", async () => {
+    getTeam.mockResolvedValue({ ...TEAM, archivedAt: new Date("2026-10-01") });
+
+    const { data } = await settle(() => LOADERS["preview layout"](PARAMS));
+
+    expect(data).toMatchObject({ isArchived: true });
+  });
+
+  it("still renders the shell, without a count, when a count fails", async () => {
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+    countNewRequests.mockRejectedValue(new Error("connection lost"));
+
+    const { data } = await settle(() => LOADERS["preview layout"](PARAMS));
+
+    expect(data).toMatchObject({
+      activeProjectCount: 3,
+      newRequestCount: null,
+    });
+    expect(errorLog).toHaveBeenCalled();
+    errorLog.mockRestore();
+  });
+});
+
+describe("the preview Overview", () => {
+  it("reads the URL's Client's Projects and Requests, never a user's", async () => {
+    const { data } = await settle(() => LOADERS["preview Overview"](PARAMS));
+    const page = data as {
+      clientName: string;
+      projects: Promise<ProjectSummary[] | null>;
+      requests: Promise<RequestRow[] | null>;
+    };
+
+    expect(page.clientName).toBe("Acme");
+    await expect(page.projects).resolves.toEqual([SUMMARY]);
+    await expect(page.requests).resolves.toEqual([REQUEST_ROW]);
+    expect(listProjects.mock.calls).toEqual([[CLIENT_ID]]);
+    expect(listRequests.mock.calls).toEqual([
+      [CLIENT_ID, { limit: OVERVIEW_REQUEST_ASK }],
+    ]);
+  });
+
+  it("resolves a failed list to null, for the panel's error state", async () => {
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+    listRequests.mockRejectedValue(new Error("connection lost"));
+
+    const { data } = await settle(() => LOADERS["preview Overview"](PARAMS));
+
+    await expect(
+      (data as { requests: Promise<unknown> }).requests,
+    ).resolves.toBeNull();
+    expect(errorLog).toHaveBeenCalled();
+    errorLog.mockRestore();
+  });
+});
+
+describe("the preview Projects", () => {
+  it("reads the URL's Client's Projects", async () => {
+    const { data } = await settle(() => LOADERS["preview Projects"](PARAMS));
+    const page = data as {
+      clientName: string;
+      projects: Promise<ProjectSummary[] | null>;
+    };
+
+    expect(page.clientName).toBe("Acme");
+    await expect(page.projects).resolves.toEqual([SUMMARY]);
+    expect(listProjects.mock.calls).toEqual([[CLIENT_ID]]);
+  });
+});
+
+describe("the preview Project view", () => {
+  it("reads the URL's Client's Project", async () => {
+    const { data } = await settle(() =>
+      LOADERS["preview Project view"](PARAMS),
+    );
+
+    expect(data).toEqual({ clientName: "Acme", project: VIEW });
+    expect(getProject.mock.calls).toEqual([[CLIENT_ID, PROJECT_ID]]);
+  });
+
+  it("answers 404 for a Project the Client can't see", async () => {
+    getProject.mockResolvedValue(null);
+
+    const { status, headers } = await settle(() =>
+      LOADERS["preview Project view"](PARAMS),
+    );
+
+    expect(status).toBe(NOT_FOUND);
+    expect(headers.getSetCookie()).toEqual([RENEWED_COOKIE]);
+  });
+});
+
+describe("the preview responses", () => {
+  const routeHeaders = {
+    "preview layout": layoutHeaders,
+    "preview Overview": overviewHeaders,
+    "preview Projects": projectsHeaders,
+    "preview Project view": projectHeaders,
+  };
+
+  for (const [page, getHeaders] of Object.entries(routeHeaders)) {
+    it(`makes the ${page} no-store and keeps the session's cookie`, () => {
+      type HeadersArgs = Parameters<typeof getHeaders>[0];
+      const loaderHeaders = new Headers();
+      loaderHeaders.append("set-cookie", RENEWED_COOKIE);
+
+      const headers = new Headers(
+        getHeaders({
+          loaderHeaders,
+          parentHeaders: new Headers(),
+        } as HeadersArgs),
+      );
+
+      expect(headers.get("cache-control")).toBe("private, no-store");
+      expect(headers.getSetCookie()).toEqual([RENEWED_COOKIE]);
+    });
+  }
+});

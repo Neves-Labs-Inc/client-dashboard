@@ -3,6 +3,7 @@ import Panel from "@/components/ui/panel";
 import TaskStatusIcon, {
   TASK_STATUS_LABEL,
 } from "@/components/ui/task-status-icon";
+import { useClientPaths } from "@/hooks/use-client-paths";
 import type { LinkedTask } from "@/lib/requests/request-rules";
 
 type LinkedTaskPanelProps = {
@@ -14,13 +15,15 @@ type LinkedTaskPanelProps = {
 export default function LinkedTaskPanel({
   task,
 }: LinkedTaskPanelProps): React.ReactNode {
+  const paths = useClientPaths();
+
   return (
     <Panel title="Linked task">
       <div className="px-3 py-2">
         {task.tracked ? (
           <>
             <Link
-              to={`/projects/${task.projectId}`}
+              to={paths.getProjectPath(task.projectId)}
               className="text-sm/5 break-words text-accent-fg hover:underline"
             >
               {task.title}
