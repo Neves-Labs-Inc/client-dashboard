@@ -4032,8 +4032,14 @@ describe("Clients", () => {
         const first = await addClient("First");
         const second = await addClient("Second");
         const email = `${prefix}-leo@example.test`;
-        const firstId = await addInvitation(first, { ...LIVE, email });
-        const secondId = await addInvitation(second, { ...LIVE, email });
+        // Better Auth checks expiry against the real clock, not the suite's
+        // fixed NOW, so these two expire a week after the real now.
+        const realClockLive = { expiresAt: new Date(Date.now() + 7 * DAY_MS) };
+        const firstId = await addInvitation(first, { ...realClockLive, email });
+        const secondId = await addInvitation(second, {
+          ...realClockLive,
+          email,
+        });
         const request = await signInByLink(email);
         await portal.joinInvitation(request, firstId);
         const native = createBetterAuth(

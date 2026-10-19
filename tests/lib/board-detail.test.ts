@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { FieldCheck } from "@/lib/board-sync/board-sync";
 import { getFieldsMeta, getWarningLine, isHttpsUrl } from "@/lib/board-detail";
 
@@ -27,6 +27,10 @@ describe("getFieldsMeta", () => {
 });
 
 describe("getWarningLine", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("names a missing field", () => {
     expect(
       getWarningLine({ kind: "missing-field", field: "Client note" }),
@@ -40,6 +44,10 @@ describe("getWarningLine", () => {
   });
 
   it("lists a Milestone's due dates on their own days", () => {
+    // formatDate drops the year only within the current year, so pin "now".
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-11-01T12:00:00Z"));
+
     expect(
       getWarningLine({
         kind: "milestone-date-mismatch",
