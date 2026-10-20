@@ -2,6 +2,9 @@ import { data, type ShouldRevalidateFunctionArgs } from "react-router";
 import ClientRouteError from "@/components/client/client-route-error";
 import OverviewKpis from "@/components/client/overview-kpis";
 import ProjectsPanel from "@/components/projects/projects-panel";
+import InvoicesPanel, {
+  OVERVIEW_INVOICE_LIMIT,
+} from "@/components/invoices/invoices-panel";
 import RequestsPanel, {
   OVERVIEW_REQUEST_LIMIT,
 } from "@/components/requests/requests-panel";
@@ -15,6 +18,7 @@ import {
   refusePreviewAction,
   requirePreviewClient,
 } from "@/lib/preview.server";
+import { invoices } from "@/lib/invoices/invoices.server";
 import { requests } from "@/lib/requests/requests.server";
 import { revalidateUnlessThemeFailed } from "@/lib/theme";
 import type { Route } from "./+types/overview";
@@ -50,7 +54,33 @@ export async function loader({ request, params }: Route.LoaderArgs) {
       );
       return null;
     });
-  return data({ clientName, projects, requests: recentRequests }, { headers });
+  // One more than shown, so the panel knows whether to offer "View all".
+  const recentInvoices = invoices
+    .listInvoices(clientId, { limit: OVERVIEW_INVOICE_LIMIT + 1 })
+    .catch((error) => {
+      console.error(
+        `preview: couldn't load the Overview Invoices (${describeError(error)})`,
+        { clientId },
+      );
+      return null;
+    });
+  const invoiceSummary = invoices.getInvoiceSummary(clientId).catch((error) => {
+    console.error(
+      `preview: couldn't load the Overview Invoice summary (${describeError(error)})`,
+      { clientId },
+    );
+    return null;
+  });
+  return data(
+    {
+      clientName,
+      projects,
+      requests: recentRequests,
+      invoices: recentInvoices,
+      invoiceSummary,
+    },
+    { headers },
+  );
 }
 
 // The preview never writes.
@@ -89,13 +119,19 @@ export default function PreviewOverviewPage({
         ]}
         title="Overview"
       />
-      <OverviewKpis projects={loaderData.projects} />
+      <OverviewKpis
+        projects={loaderData.projects}
+        invoiceSummary={loaderData.invoiceSummary}
+      />
       <ProjectsPanel
         projects={loaderData.projects}
         titleHref={paths.projects}
       />
-      {/* A grid so Phase 7 can put Invoices beside the Requests at xl. */}
-      <div className="grid grid-cols-1 gap-4">
+      <div className="grid grid-cols-1 items-start gap-4 xl:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)]">
+        <InvoicesPanel
+          invoices={loaderData.invoices}
+          summary={loaderData.invoiceSummary}
+        />
         <RequestsPanel requests={loaderData.requests} isReadOnly />
       </div>
     </div>

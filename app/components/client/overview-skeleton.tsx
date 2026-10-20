@@ -1,10 +1,11 @@
+import InvoiceTableSkeleton from "@/components/invoices/invoice-table-skeleton";
 import ProjectTableSkeleton from "@/components/projects/project-table-skeleton";
 import RequestTableSkeleton from "@/components/requests/request-table-skeleton";
 import Skeleton from "@/components/ui/skeleton";
 import SkeletonGroup from "@/components/ui/skeleton-group";
 import SummaryRowSkeleton from "@/components/ui/summary-row-skeleton";
 
-const TILE_COUNT = 2;
+const TILE_COUNT = 4;
 
 // The Overview in blocks, line box for line box, so nothing shifts when the
 // page arrives. The Admin preview has no actions, so it draws no blocks.
@@ -36,7 +37,14 @@ export default function OverviewSkeleton({
           </div>
           <ProjectTableSkeleton />
         </div>
-        <div className="grid grid-cols-1 gap-4">
+        <div className="grid grid-cols-1 items-start gap-4 xl:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)]">
+          <div className="rounded-[3px] border border-line bg-surface">
+            <div className="flex min-h-10 items-center justify-between border-b border-line px-3 py-2">
+              <Skeleton className="h-3 w-16" />
+              <Skeleton className="h-3 w-24" />
+            </div>
+            <InvoiceTableSkeleton isCompact />
+          </div>
           <div className="rounded-[3px] border border-line bg-surface">
             <div className="flex min-h-10 items-center justify-between border-b border-line px-3 py-2">
               <Skeleton className="h-3 w-16" />

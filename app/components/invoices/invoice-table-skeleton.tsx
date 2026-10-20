@@ -1,4 +1,9 @@
-import { COLUMNS, TABLE_GRID_CLASS } from "@/components/invoices/invoice-grid";
+import {
+  COLUMNS,
+  COMPACT_COLUMNS,
+  COMPACT_TABLE_GRID_CLASS,
+  TABLE_GRID_CLASS,
+} from "@/components/invoices/invoice-grid";
 import InvoiceRowSkeleton from "@/components/invoices/invoice-row-skeleton";
 import Skeleton from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
@@ -8,16 +13,22 @@ const SKELETON_ROW_COUNT = 5;
 // The table in blocks: a text-free header row from md (hidden below, as the
 // real one is sr-only there), then placeholder rows. The caller wraps it in
 // a SkeletonGroup.
-export default function InvoiceTableSkeleton(): React.ReactNode {
+export default function InvoiceTableSkeleton({
+  isCompact = false,
+}: {
+  isCompact?: boolean;
+}): React.ReactNode {
+  const columns = isCompact ? COMPACT_COLUMNS : COLUMNS;
+
   return (
     <div>
       <div
         className={cn(
           "hidden gap-3 bg-surface-2 px-3 py-1.5 md:grid",
-          TABLE_GRID_CLASS,
+          isCompact ? COMPACT_TABLE_GRID_CLASS : TABLE_GRID_CLASS,
         )}
       >
-        {COLUMNS.map((column) => (
+        {columns.map((column) => (
           <div
             key={column.header}
             className={cn(
@@ -34,7 +45,7 @@ export default function InvoiceTableSkeleton(): React.ReactNode {
           table's does. */}
       <div>
         {Array.from({ length: SKELETON_ROW_COUNT }, (_, index) => (
-          <InvoiceRowSkeleton key={index} />
+          <InvoiceRowSkeleton key={index} isCompact={isCompact} />
         ))}
       </div>
     </div>

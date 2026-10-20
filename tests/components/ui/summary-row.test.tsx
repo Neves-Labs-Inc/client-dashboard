@@ -34,10 +34,10 @@ describe("the summary row", () => {
     );
 
     const tiles = html.split("<li ").slice(1);
-    expect(html).toContain("grid-cols-2 md:grid-cols-4");
+    expect(html).toContain("grid-cols-2 lg:grid-cols-4");
     expect(tiles[2]).toContain("border-t border-line");
-    expect(tiles[2]).toContain("md:border-t-0");
-    expect(tiles[2]).toContain("md:border-l");
+    expect(tiles[2]).toContain("lg:border-t-0");
+    expect(tiles[2]).toContain("lg:border-l");
     expect(tiles[2]).not.toMatch(/(^|\s)border-l(\s|")/);
     expect(tiles[0]).not.toContain("border");
   });

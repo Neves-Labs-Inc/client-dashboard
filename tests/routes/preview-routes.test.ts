@@ -533,6 +533,27 @@ describe("the preview Overview", () => {
   });
 });
 
+describe("the preview Overview's Invoices", () => {
+  it("resolves failed Invoices and summary to null, leaving the Projects", async () => {
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+    listInvoices.mockRejectedValue(new Error("connection lost"));
+    getInvoiceSummary.mockRejectedValue(new Error("connection lost"));
+
+    const { data } = await settle(() => LOADERS["preview Overview"](PARAMS));
+
+    const page = data as {
+      invoices: Promise<unknown>;
+      invoiceSummary: Promise<unknown>;
+      projects: Promise<unknown>;
+    };
+    await expect(page.invoices).resolves.toBeNull();
+    await expect(page.invoiceSummary).resolves.toBeNull();
+    await expect(page.projects).resolves.toEqual([SUMMARY]);
+    expect(errorLog).toHaveBeenCalledTimes(2);
+    errorLog.mockRestore();
+  });
+});
+
 describe("the preview Projects", () => {
   it("reads the URL's Client's Projects", async () => {
     const { data } = await settle(() => LOADERS["preview Projects"](PARAMS));

@@ -629,6 +629,57 @@ describe("the Overview loader", () => {
   });
 });
 
+describe("the Overview loader's Invoices", () => {
+  const ROW: InvoiceRow = {
+    id: INVOICE_ID,
+    number: "NL-0007-2026",
+    issueDate: "2026-09-01",
+    dueDate: "2026-10-01",
+    totalCents: 125_000,
+    status: "OVERDUE",
+  };
+  const SUMMARY = { openCount: 2, openBalanceCents: 425_000, overdueCount: 1 };
+
+  it("streams one more than five of the signed-in Client's Invoices and its summary, whatever the URL says", async () => {
+    answerAs(MEMBER);
+    listInvoices.mockResolvedValue([ROW]);
+    getInvoiceSummary.mockResolvedValue(SUMMARY);
+
+    const { data } = await settle(() =>
+      overviewLoader(argsFor(`/overview?clientId=${OTHER_CLIENT_ID}`)),
+    );
+
+    expect(listInvoices).toHaveBeenCalledWith(CLIENT_ID, { limit: 6 });
+    expect(getInvoiceSummary).toHaveBeenCalledWith(CLIENT_ID);
+    const loaded = data as {
+      invoices: Promise<unknown>;
+      invoiceSummary: Promise<unknown>;
+    };
+    await expect(loaded.invoices).resolves.toEqual([ROW]);
+    await expect(loaded.invoiceSummary).resolves.toEqual(SUMMARY);
+  });
+
+  it("streams null for each when they can't load, leaving the Projects", async () => {
+    answerAs(OWNER);
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+    listInvoices.mockRejectedValue(new Error("connection lost"));
+    getInvoiceSummary.mockRejectedValue(new Error("connection lost"));
+    listProjects.mockResolvedValue([]);
+
+    const { data } = await settle(() => overviewLoader(argsFor("/overview")));
+
+    const loaded = data as {
+      invoices: Promise<unknown>;
+      invoiceSummary: Promise<unknown>;
+      projects: Promise<unknown>;
+    };
+    await expect(loaded.invoices).resolves.toBeNull();
+    await expect(loaded.invoiceSummary).resolves.toBeNull();
+    await expect(loaded.projects).resolves.toEqual([]);
+    expect(errorLog).toHaveBeenCalledTimes(2);
+  });
+});
+
 describe("the Invoices loader", () => {
   const ROW: InvoiceRow = {
     id: INVOICE_ID,

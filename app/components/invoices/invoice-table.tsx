@@ -1,4 +1,9 @@
-import { COLUMNS, TABLE_GRID_CLASS } from "@/components/invoices/invoice-grid";
+import {
+  COLUMNS,
+  COMPACT_COLUMNS,
+  COMPACT_TABLE_GRID_CLASS,
+  TABLE_GRID_CLASS,
+} from "@/components/invoices/invoice-grid";
 import InvoiceRow from "@/components/invoices/invoice-row";
 import DataTable from "@/components/ui/data-table";
 import type { InvoiceRow as InvoiceRowData } from "@/lib/invoices/invoices";
@@ -14,6 +19,8 @@ type InvoiceTableProps = {
   // The Admin's: back from this Invoice's detail, its number link takes
   // focus once.
   focusInvoiceId?: string | null;
+  // The Overview panel's: Issued stays sr-only at every width.
+  isCompact?: boolean;
 };
 
 export default function InvoiceTable({
@@ -22,9 +29,14 @@ export default function InvoiceTable({
   label = "Invoices",
   highlightedId = null,
   focusInvoiceId = null,
+  isCompact = false,
 }: InvoiceTableProps): React.ReactNode {
   return (
-    <DataTable label={label} columns={COLUMNS} gridClassName={TABLE_GRID_CLASS}>
+    <DataTable
+      label={label}
+      columns={isCompact ? COMPACT_COLUMNS : COLUMNS}
+      gridClassName={isCompact ? COMPACT_TABLE_GRID_CLASS : TABLE_GRID_CLASS}
+    >
       {invoices.map((invoice) => (
         <InvoiceRow
           key={invoice.id}
@@ -32,6 +44,7 @@ export default function InvoiceTable({
           href={getHref(invoice.id)}
           isHighlighted={invoice.id === highlightedId}
           shouldFocusNumber={invoice.id === focusInvoiceId}
+          isCompact={isCompact}
         />
       ))}
     </DataTable>

@@ -349,7 +349,7 @@ Kind and Status per 2.4. A Request that points to a hidden Task shows its last t
 
 ### 9.9 Summary numbers (KPI row)
 
-Overview only. Four tiles in one bordered strip: `grid grid-cols-2 md:grid-cols-4 border border-line rounded-[3px] bg-surface`, tiles separated by hairlines (`border-l` / `border-t` per position, no double borders).
+Overview only. Four tiles in one bordered strip: `grid grid-cols-2 lg:grid-cols-4 border border-line rounded-[3px] bg-surface`, tiles separated by hairlines (`border-l` / `border-t` per position, no double borders).
 
 | Tile | Value | Notes |
 |---|---|---|

@@ -17,7 +17,7 @@ import type {
 import { createDb, type Tx } from "@/lib/db/db";
 import { db as appDb } from "@/lib/db/db.server";
 import { getAppEnv, getMigrateEnv } from "@/lib/env";
-import type { InvoiceRow } from "@/lib/invoices/invoices";
+import type { InvoiceRow, InvoiceSummary } from "@/lib/invoices/invoices";
 import type { RequestRow } from "@/lib/requests/requests";
 import { loader as invoiceLoader } from "@/routes/preview/invoice";
 import { loader as invoicesLoader } from "@/routes/preview/invoices";
@@ -255,6 +255,25 @@ describe("the preview, on the real tenant path", () => {
 
     expect(projects?.map((project) => project.name)).toEqual(["Acme website"]);
     expect(requests?.map((request) => request.title)).toEqual(["Acme request"]);
+  });
+
+  it("shows only the Client's Invoices and summary on its Overview, never a Void one", async () => {
+    const { data } = await settle(() =>
+      overviewLoader(argsFor({ clientId: clientA })),
+    );
+    const page = data as {
+      invoices: Promise<InvoiceRow[] | null>;
+      invoiceSummary: Promise<InvoiceSummary | null>;
+    };
+
+    expect((await page.invoices)?.map((invoice) => invoice.id)).toEqual(
+      invoiceIdsA,
+    );
+    expect(await page.invoiceSummary).toEqual({
+      openCount: 1,
+      openBalanceCents: 125_000,
+      overdueCount: 1,
+    });
   });
 
   it("shows only the Client's Projects on its Projects list", async () => {

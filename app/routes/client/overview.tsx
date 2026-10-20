@@ -9,6 +9,9 @@ import OverviewKpis from "@/components/client/overview-kpis";
 import ProjectsPanel from "@/components/projects/projects-panel";
 import NewRequestLink from "@/components/requests/new-request-link";
 import RequestDrawer from "@/components/requests/request-drawer";
+import InvoicesPanel, {
+  OVERVIEW_INVOICE_LIMIT,
+} from "@/components/invoices/invoices-panel";
 import RequestsPanel, {
   OVERVIEW_REQUEST_LIMIT,
 } from "@/components/requests/requests-panel";
@@ -27,6 +30,7 @@ import {
 } from "@/lib/request-drawer";
 import { REQUEST_COPY } from "@/lib/request-outcome";
 import type { ProjectOption } from "@/lib/requests/requests";
+import { invoices } from "@/lib/invoices/invoices.server";
 import { requests } from "@/lib/requests/requests.server";
 import { revalidateUnlessThemeFailed } from "@/lib/theme";
 import { toast } from "@/lib/toast";
@@ -67,9 +71,33 @@ export async function loader({ request }: Route.LoaderArgs) {
       );
       return null;
     });
+  // One more than shown, so the panel knows whether to offer "View all".
+  const recentInvoices = invoices
+    .listInvoices(clientId, { limit: OVERVIEW_INVOICE_LIMIT + 1 })
+    .catch((error) => {
+      console.error(
+        `client: couldn't load the Overview Invoices (${describeError(error)})`,
+        { clientId },
+      );
+      return null;
+    });
+  const invoiceSummary = invoices.getInvoiceSummary(clientId).catch((error) => {
+    console.error(
+      `client: couldn't load the Overview Invoice summary (${describeError(error)})`,
+      { clientId },
+    );
+    return null;
+  });
   const projectOptions = await loadProjectOptions(clientId);
   return data(
-    { clientName, projects, requests: recentRequests, projectOptions },
+    {
+      clientName,
+      projects,
+      requests: recentRequests,
+      invoices: recentInvoices,
+      invoiceSummary,
+      projectOptions,
+    },
     { headers },
   );
 }
@@ -154,10 +182,16 @@ export default function ClientOverviewPage({
           <NewRequestLink ref={headerLinkRef} onClick={handleOpenDrawer} />
         }
       />
-      <OverviewKpis projects={loaderData.projects} />
+      <OverviewKpis
+        projects={loaderData.projects}
+        invoiceSummary={loaderData.invoiceSummary}
+      />
       <ProjectsPanel projects={loaderData.projects} titleHref={PROJECTS_PATH} />
-      {/* A grid so Phase 7 can put Invoices beside the Requests at xl. */}
-      <div className="grid grid-cols-1 gap-4">
+      <div className="grid grid-cols-1 items-start gap-4 xl:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)]">
+        <InvoicesPanel
+          invoices={loaderData.invoices}
+          summary={loaderData.invoiceSummary}
+        />
         <RequestsPanel
           requests={loaderData.requests}
           highlightedId={highlightedId}

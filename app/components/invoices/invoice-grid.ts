@@ -29,3 +29,16 @@ export const CELL_CLASS = {
   status:
     "col-[3] row-[1/span_2] self-center justify-self-start md:col-auto md:row-auto",
 } as const;
+
+// The Overview panel's table: Issued stays sr-only at every width, so the
+// four visible tracks fit the ~523px column at xl (448px needed).
+export const COMPACT_TABLE_GRID_CLASS =
+  "md:grid-cols-[minmax(110px,1.2fr)_96px_minmax(90px,1fr)_92px]";
+
+export const COMPACT_ROW_GRID_CLASS = `grid-cols-[minmax(0,1fr)_auto_92px] gap-x-2.5 gap-y-0.5 md:gap-x-3 ${COMPACT_TABLE_GRID_CLASS}`;
+
+export const COMPACT_COLUMNS = COLUMNS.map((column) =>
+  column.header === "Issued" ? { ...column, className: "sr-only" } : column,
+);
+
+export const COMPACT_CELL_CLASS = { ...CELL_CLASS, issued: "sr-only" } as const;

@@ -1,4 +1,8 @@
-import { CELL_CLASS, ROW_GRID_CLASS } from "@/components/invoices/invoice-grid";
+import {
+  CELL_CLASS,
+  COMPACT_ROW_GRID_CLASS,
+  ROW_GRID_CLASS,
+} from "@/components/invoices/invoice-grid";
 import DataTableCell from "@/components/ui/data-table-cell";
 import DataTableRow from "@/components/ui/data-table-row";
 import Skeleton from "@/components/ui/skeleton";
@@ -18,19 +22,27 @@ function Line({
 
 // Same grid and cell placement as InvoiceRow, so nothing shifts when the rows
 // arrive. Issued is drawn from lg only: below, the real one is sr-only.
-export default function InvoiceRowSkeleton(): React.ReactNode {
+export default function InvoiceRowSkeleton({
+  isCompact = false,
+}: {
+  isCompact?: boolean;
+}): React.ReactNode {
   return (
-    <DataTableRow gridClassName={ROW_GRID_CLASS}>
+    <DataTableRow
+      gridClassName={isCompact ? COMPACT_ROW_GRID_CLASS : ROW_GRID_CLASS}
+    >
       <DataTableCell className={CELL_CLASS.number}>
         <Line className="h-5">
           <Skeleton className="h-3 w-24" />
         </Line>
       </DataTableCell>
-      <DataTableCell className="hidden lg:block">
-        <Line className="h-5">
-          <Skeleton className="h-3 w-12" />
-        </Line>
-      </DataTableCell>
+      {!isCompact && (
+        <DataTableCell className="hidden lg:block">
+          <Line className="h-5">
+            <Skeleton className="h-3 w-12" />
+          </Line>
+        </DataTableCell>
+      )}
       <DataTableCell className={CELL_CLASS.due}>
         <Line className="h-4 md:h-5">
           <Skeleton className="h-2.5 w-16" />
