@@ -4,6 +4,7 @@ import {
   getClientStatus,
 } from "@/lib/board-sync/board-sync";
 import {
+  type Health,
   isPastProject,
   sortProjects,
 } from "@/lib/client-projects/client-project-rules";
@@ -144,6 +145,9 @@ export type Requests = {
   ): Promise<Result<null, TriageError>>;
   // Active Clients with at least one New Request, by Client id.
   countNewByClient(): Promise<Record<string, number>>;
+  // Active Clients' Project options, by Client id; a Client without
+  // Projects is absent. Ordered as listProjectOptions.
+  listProjectOptionsByClient(): Promise<Record<string, ProjectOption[]>>;
 };
 
 type RequestsDeps = { db: Db };
@@ -195,6 +199,63 @@ const ACTIVE_CLIENT = isNull(clients.archivedAt);
 
 function isUuid(id: string): boolean {
   return UUID_PATTERN.test(id);
+}
+
+// A Project's facts for the Project select, with its Client.
+function selectProjectFacts(tx: Tx) {
+  return tx
+    .select({
+      id: projects.id,
+      clientId: projects.clientId,
+      name: projects.name,
+      closedOnGithub: projects.closedOnGithub,
+      unlinkedAt: projects.unlinkedAt,
+    })
+    .from(projects)
+    .$dynamic();
+}
+
+// One row per Project: its newest Status Update's health. Ordered for
+// DISTINCT ON, so callers only add joins and a filter.
+function selectLatestHealth(tx: Tx) {
+  return tx
+    .selectDistinctOn([statusUpdates.projectId], {
+      projectId: statusUpdates.projectId,
+      health: statusUpdates.health,
+    })
+    .from(statusUpdates)
+    .orderBy(
+      statusUpdates.projectId,
+      desc(statusUpdates.githubCreatedAt),
+      desc(statusUpdates.id),
+    )
+    .$dynamic();
+}
+
+// Active A–Z, then Past A–Z. `latestRows` may cover other Projects too.
+function toProjectOptions(
+  projectRows: readonly {
+    id: string;
+    name: string;
+    closedOnGithub: boolean;
+    unlinkedAt: Date | null;
+  }[],
+  latestRows: readonly { projectId: string; health: Health | null }[],
+): ProjectOption[] {
+  const healthByProject = new Map(
+    latestRows.map((row) => [row.projectId, row.health]),
+  );
+  return sortProjects(
+    projectRows.map((project) => ({
+      id: project.id,
+      name: project.name,
+      isPast: isPastProject({
+        latestHealth: healthByProject.get(project.id) ?? null,
+        closedOnGithub: project.closedOnGithub,
+        unlinkedAt: project.unlinkedAt,
+      }),
+    })),
+  );
 }
 
 // A positive integer up to MAX_LIST_LIMIT, whatever a caller passes.
@@ -413,41 +474,35 @@ export function createRequests(deps: RequestsDeps): Requests {
     clientId: string,
   ): Promise<ProjectOption[]> {
     return db.withTenant(clientId, async (tx) => {
-      const projectRows = await tx
-        .select({
-          id: projects.id,
-          name: projects.name,
-          closedOnGithub: projects.closedOnGithub,
-          unlinkedAt: projects.unlinkedAt,
-        })
-        .from(projects)
-        .where(eq(projects.clientId, clientId));
-      // One row per Project: its newest Status Update's health.
-      const latestRows = await tx
-        .selectDistinctOn([statusUpdates.projectId], {
-          projectId: statusUpdates.projectId,
-          health: statusUpdates.health,
-        })
-        .from(statusUpdates)
-        .where(eq(statusUpdates.clientId, clientId))
-        .orderBy(
-          statusUpdates.projectId,
-          desc(statusUpdates.githubCreatedAt),
-          desc(statusUpdates.id),
-        );
-      const healthByProject = new Map(
-        latestRows.map((row) => [row.projectId, row.health]),
+      const projectRows = await selectProjectFacts(tx).where(
+        eq(projects.clientId, clientId),
       );
-      return sortProjects(
-        projectRows.map((project) => ({
-          id: project.id,
-          name: project.name,
-          isPast: isPastProject({
-            latestHealth: healthByProject.get(project.id) ?? null,
-            closedOnGithub: project.closedOnGithub,
-            unlinkedAt: project.unlinkedAt,
-          }),
-        })),
+      const latestRows = await selectLatestHealth(tx).where(
+        eq(statusUpdates.clientId, clientId),
+      );
+      return toProjectOptions(projectRows, latestRows);
+    });
+  }
+
+  async function listProjectOptionsByClient(): Promise<
+    Record<string, ProjectOption[]>
+  > {
+    return db.withSystem(async (tx) => {
+      const projectRows = await selectProjectFacts(tx)
+        .innerJoin(clients, eq(clients.id, projects.clientId))
+        .where(ACTIVE_CLIENT);
+      const latestRows = await selectLatestHealth(tx)
+        .innerJoin(clients, eq(clients.id, statusUpdates.clientId))
+        .where(ACTIVE_CLIENT);
+      const clientIds = new Set(projectRows.map((project) => project.clientId));
+      return Object.fromEntries(
+        Array.from(clientIds, (clientId) => [
+          clientId,
+          toProjectOptions(
+            projectRows.filter((project) => project.clientId === clientId),
+            latestRows,
+          ),
+        ]),
       );
     });
   }
@@ -920,6 +975,7 @@ export function createRequests(deps: RequestsDeps): Requests {
     countNewRequests,
     getRequest,
     listProjectOptions,
+    listProjectOptionsByClient,
     submitRequest,
     editRequest,
     withdrawRequest,

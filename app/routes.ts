@@ -44,6 +44,8 @@ export default [
     index("routes/admin/index.tsx"),
     route("requests", "routes/admin/requests.tsx"),
     route("requests/:requestId", "routes/admin/request.tsx"),
+    route("invoices", "routes/admin/invoices.tsx"),
+    route("invoices/:invoiceId", "routes/admin/invoice.tsx"),
     route("clients/:clientId", "routes/admin/client.tsx"),
     route("clients/:clientId/team", "routes/admin/client-team.tsx"),
     route("clients/:clientId/projects", "routes/admin/client-projects.tsx"),

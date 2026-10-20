@@ -1,17 +1,13 @@
 import { data, type ShouldRevalidateFunctionArgs } from "react-router";
 import ClientInvoicesView from "@/components/admin/client-invoices-view";
+import { runCreateAction } from "@/lib/admin-invoice-create.server";
 import {
   type CreateInvoiceOutcome,
   type CreateInvoiceResponse,
-  getCreateStatus,
   isInvoiceDrawerToggle,
-  readInvoiceDraft,
   runInvoiceClientAction,
 } from "@/lib/admin-invoices";
-import {
-  requireAdmin,
-  requireAdminMutation,
-} from "@/lib/auth/require-access.server";
+import { requireAdmin } from "@/lib/auth/require-access.server";
 import { describeError } from "@/lib/describe-error";
 import type { InvoiceRow } from "@/lib/invoices/invoices";
 import { invoices } from "@/lib/invoices/invoices.server";
@@ -77,45 +73,12 @@ async function loadProjectOptions(
   }
 }
 
-// The New invoice drawer posts here. The guard comes first, before the body
-// is read: it is the CSRF protection. The module refuses an archived or
-// unknown Client, and validates the draft again.
-export async function action({
+// The New invoice drawer posts here, with the URL's Client.
+export function action({
   request,
   params,
 }: Route.ActionArgs): Promise<CreateInvoiceResponse> {
-  const { headers } = await requireAdminMutation(request);
-  const form = await request.formData().catch(() => null);
-  const { clientId } = params;
-
-  let outcome: CreateInvoiceOutcome;
-  try {
-    const result = await invoices.createInvoice(
-      clientId,
-      readInvoiceDraft(form),
-    );
-    if (result.error === null) {
-      outcome = {
-        kind: "created",
-        invoiceId: result.value.id,
-        number: result.value.number,
-      };
-    } else if (result.error === "invalid") {
-      outcome = { kind: "invalid", fieldErrors: result.fieldErrors };
-    } else {
-      outcome = { kind: "refused", error: result.error };
-    }
-  } catch (error) {
-    // Name and code only: a driver error's message lists its parameters.
-    console.error(
-      `admin: creating an Invoice failed (${describeError(error)})`,
-      {
-        clientId,
-      },
-    );
-    outcome = { kind: "failed" };
-  }
-  return data(outcome, { status: getCreateStatus(outcome), headers });
+  return runCreateAction(request, params.clientId);
 }
 
 export function clientAction({

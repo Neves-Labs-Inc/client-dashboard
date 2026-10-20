@@ -11,6 +11,7 @@ import AdminInvoiceDetailSkeleton from "@/components/admin/admin-invoice-detail-
 import BoardDetailSkeleton from "@/components/admin/board-detail-skeleton";
 import ClientInvoicesSkeleton from "@/components/admin/client-invoices-skeleton";
 import ClientRequestsSkeleton from "@/components/admin/client-requests-skeleton";
+import InvoicesListSkeleton from "@/components/admin/invoices-list-skeleton";
 import RequestTriageSkeleton from "@/components/admin/request-triage-skeleton";
 import RequestsInboxSkeleton from "@/components/admin/requests-inbox-skeleton";
 import ProjectsSkeleton from "@/components/admin/projects-skeleton";
@@ -41,7 +42,9 @@ import {
 } from "@/lib/admin-requests";
 import {
   CLIENT_INVOICE_ROUTE_PATTERN,
+  INVOICE_ROUTE_PATTERN,
   CLIENT_INVOICES_ROUTE_PATTERN,
+  INVOICES_ROUTE_PATTERN,
   isInvoiceDrawerToggle,
 } from "@/lib/admin-invoices";
 import { describeError } from "@/lib/describe-error";
@@ -65,12 +68,15 @@ export async function loader({ request }: Route.LoaderArgs) {
   // Clients' alert icons); none if they can't load.
   // Active Clients with an Overdue Invoice: the receipt icons and Home's
   // "Overdue invoice" lines; none if they can't load.
+  // Overdue Invoices of active Clients: the Invoices entry's count; hidden
+  // (0) if it can't load.
   const [
     clients,
     archivedClients,
     syncProblemClientIds,
     newRequestCounts,
     overdueInvoiceClientIds,
+    overdueInvoiceCount,
   ] = await Promise.all([
     auth.listClients().catch((error: unknown) => {
       console.error("admin: couldn't load the sidebar's Clients", error);
@@ -93,6 +99,7 @@ export async function loader({ request }: Route.LoaderArgs) {
         return {};
       }),
     loadOverdueInvoiceClientIds(),
+    loadOverdueInvoiceCount(),
   ]);
   return data(
     {
@@ -102,6 +109,7 @@ export async function loader({ request }: Route.LoaderArgs) {
       syncProblemClientIds,
       newRequestCounts,
       overdueInvoiceClientIds,
+      overdueInvoiceCount,
     },
     { headers },
   );
@@ -115,6 +123,17 @@ async function loadOverdueInvoiceClientIds(): Promise<string[]> {
       `admin: couldn't load the Overdue Invoice Clients (${describeError(error)})`,
     );
     return [];
+  }
+}
+
+async function loadOverdueInvoiceCount(): Promise<number> {
+  try {
+    return await invoices.countOverdueInvoices();
+  } catch (error) {
+    console.error(
+      `admin: couldn't load the Overdue Invoice count (${describeError(error)})`,
+    );
+    return 0;
   }
 }
 
@@ -153,6 +172,7 @@ export default function AdminLayout({
       syncProblemClientIds={loaderData.syncProblemClientIds}
       newRequestCounts={loaderData.newRequestCounts}
       overdueInvoiceClientIds={loaderData.overdueInvoiceClientIds}
+      overdueInvoiceCount={loaderData.overdueInvoiceCount}
     >
       {content}
     </AdminShell>
@@ -168,7 +188,9 @@ type LoadingTab =
   | "invoices"
   | "invoice"
   | "inbox"
-  | "inbox-request";
+  | "inbox-request"
+  | "global-invoices"
+  | "global-invoice";
 
 const WORKSPACE_SKELETONS: Record<LoadingTab, React.ReactNode> = {
   team: <TeamSkeleton />,
@@ -177,9 +199,11 @@ const WORKSPACE_SKELETONS: Record<LoadingTab, React.ReactNode> = {
   requests: <ClientRequestsSkeleton />,
   request: <RequestTriageSkeleton route="client" />,
   invoices: <ClientInvoicesSkeleton />,
-  invoice: <AdminInvoiceDetailSkeleton />,
+  invoice: <AdminInvoiceDetailSkeleton route="client" />,
   inbox: <RequestsInboxSkeleton />,
   "inbox-request": <RequestTriageSkeleton route="inbox" />,
+  "global-invoices": <InvoicesListSkeleton />,
+  "global-invoice": <AdminInvoiceDetailSkeleton route="global" />,
 };
 
 // Checked in order: the first pattern the target matches names its
@@ -194,6 +218,8 @@ const LOADING_TAB_PATTERNS: [string, LoadingTab][] = [
   [CLIENT_INVOICES_ROUTE_PATTERN, "invoices"],
   [INBOX_REQUEST_ROUTE_PATTERN, "inbox-request"],
   [INBOX_ROUTE_PATTERN, "inbox"],
+  [INVOICE_ROUTE_PATTERN, "global-invoice"],
+  [INVOICES_ROUTE_PATTERN, "global-invoices"],
 ];
 
 // The workspace tabs' and the Requests pages' loaders are awaited, so a

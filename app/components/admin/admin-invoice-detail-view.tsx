@@ -1,3 +1,4 @@
+import { Archive } from "lucide-react";
 import { useCallback, useRef } from "react";
 import ClientWorkspaceHeader, {
   CLIENTS_CRUMB,
@@ -18,18 +19,25 @@ import { useArrivalFocus } from "@/hooks/use-arrival-focus";
 import { useInvoiceStatusAction } from "@/hooks/use-invoice-status-action";
 import { useRowHighlight } from "@/hooks/use-row-highlight";
 import {
+  getRefusalBanner,
   getStatusIntents,
+  STATUS_COPY,
   STATUS_INTENT_COPY,
   type StatusIntent,
 } from "@/lib/admin-invoice-status";
 import {
   getClientInvoicePath,
   getClientInvoicesPath,
+  getInvoicePath,
   INVOICES_COPY,
+  INVOICES_PATH,
   toFromInvoiceState,
 } from "@/lib/admin-invoices";
 import { getBoardPath } from "@/lib/board-detail";
-import type { InvoiceDetail } from "@/lib/invoices/invoices";
+import type {
+  AdminInvoiceDetail,
+  InvoiceDetail,
+} from "@/lib/invoices/invoices";
 import type { IsoDate } from "@/lib/invoices/invoice-rules";
 import { getTeamPath } from "@/lib/new-client";
 import { toast } from "@/lib/toast";
@@ -38,23 +46,50 @@ import { cn } from "@/lib/utils";
 // The highlight fade's key after a status change.
 const STATUS_CHANGED = "status-changed";
 
-type AdminInvoiceDetailViewProps = {
-  clientId: string;
-  // Null when they couldn't load.
-  client: ClientWorkspace | null;
-  invoice: InvoiceDetail | null;
-  // The Mark paid confirm's default and latest date.
-  today: IsoDate;
+type AdminInvoiceDetailViewProps =
+  | {
+      route: "client";
+      clientId: string;
+      // Null when they couldn't load.
+      client: ClientWorkspace | null;
+      invoice: InvoiceDetail | null;
+      // The Mark paid confirm's default and latest date.
+      today: IsoDate;
+    }
+  | {
+      route: "global";
+      // Null when it couldn't load.
+      invoice: AdminInvoiceDetail | null;
+      today: IsoDate;
+      // The list, with the filters it came from.
+      backTo: string;
+    };
+
+// The header part of the detail, given the body's focus target, highlight
+// and status triggers (null when no change is allowed).
+type InvoiceHeaderParts = {
+  titleRef: React.RefObject<HTMLHeadingElement | null>;
+  titleClassName: string | undefined;
+  triggers: React.ReactNode;
 };
 
-// One Invoice in place of a Client's Invoices tab: the workspace header
-// keeps the h1, the number is an h2 under the back link.
-export default function AdminInvoiceDetailView({
-  clientId,
-  client,
-  invoice,
-  today,
-}: AdminInvoiceDetailViewProps): React.ReactNode {
+// One Invoice, two routes: from the global list (the number is the h1) or
+// in place of a Client's Invoices tab (the workspace header keeps the h1;
+// the number is an h2 under the back link).
+export default function AdminInvoiceDetailView(
+  props: AdminInvoiceDetailViewProps,
+): React.ReactNode {
+  if (props.route === "global") {
+    return (
+      <GlobalInvoice
+        invoice={props.invoice}
+        today={props.today}
+        backTo={props.backTo}
+      />
+    );
+  }
+
+  const { clientId, client, invoice, today } = props;
   const tabPath = getClientInvoicesPath(clientId);
   if (client === null) {
     return (
@@ -69,6 +104,79 @@ export default function AdminInvoiceDetailView({
   }
 
   return <WorkspaceInvoice client={client} invoice={invoice} today={today} />;
+}
+
+function GlobalInvoice({
+  invoice,
+  today,
+  backTo,
+}: {
+  invoice: AdminInvoiceDetail | null;
+  today: IsoDate;
+  backTo: string;
+}): React.ReactNode {
+  if (invoice === null) {
+    return (
+      <>
+        <PageHeader
+          breadcrumb={[{ label: INVOICES_COPY.invoices }]}
+          title={INVOICES_COPY.invoices}
+        />
+        <InvoiceLoadFailed backTo={backTo} />
+      </>
+    );
+  }
+
+  const { client } = invoice;
+  return (
+    <InvoiceBody
+      clientId={client.id}
+      isArchived={client.isArchived}
+      hasArchivedNote={client.isArchived}
+      invoice={invoice}
+      today={today}
+      action={getInvoicePath(invoice.id)}
+      renderHeader={({ titleRef, titleClassName, triggers }) => (
+        <>
+          <RequestBackLink
+            to={backTo}
+            label={INVOICES_COPY.invoices}
+            state={toFromInvoiceState(invoice.id)}
+          />
+          {/* The badge is inside the h1, so its name reads "NL-0007-2026
+              Open". */}
+          <PageHeader
+            breadcrumb={[
+              { label: INVOICES_COPY.invoices, href: INVOICES_PATH },
+              {
+                label: client.name,
+                href: getClientInvoicesPath(client.id),
+                isTruncated: true,
+              },
+            ]}
+            title={
+              <span className="font-mono tabular-nums">{invoice.number}</span>
+            }
+            badge={<InvoiceStatusBadge status={invoice.status} />}
+            titleRef={titleRef}
+            titleClassName={titleClassName}
+            action={triggers}
+          />
+          {/* In place of the workspace header's Archived badge. */}
+          {client.isArchived && (
+            <p className="flex items-start gap-1.5 text-[13px]/5 text-fg-2">
+              <Archive
+                size={16}
+                aria-hidden="true"
+                className="mt-0.5 shrink-0"
+              />
+              {STATUS_COPY.archived}
+            </p>
+          )}
+        </>
+      )}
+    />
+  );
 }
 
 function WorkspaceInvoice({
@@ -87,6 +195,7 @@ function WorkspaceInvoice({
     action: getTeamPath(client.clientId),
     titleRef: headerTitleRef,
   });
+  const tabPath = getClientInvoicesPath(client.clientId);
 
   return (
     <>
@@ -97,29 +206,70 @@ function WorkspaceInvoice({
         titleRef={headerTitleRef}
       />
       {invoice === null ? (
-        <InvoiceLoadFailed backTo={getClientInvoicesPath(client.clientId)} />
+        <InvoiceLoadFailed backTo={tabPath} />
       ) : (
         <InvoiceBody
           clientId={client.clientId}
           isArchived={client.archivedAt !== null}
+          hasArchivedNote={false}
           invoice={invoice}
           today={today}
+          action={getClientInvoicePath(client.clientId, invoice.id)}
+          renderHeader={({ titleRef, titleClassName, triggers }) => (
+            <div className="flex flex-col gap-1">
+              <RequestBackLink
+                to={tabPath}
+                label={INVOICES_COPY.invoices}
+                state={toFromInvoiceState(invoice.id)}
+              />
+              {/* The badge is inside the h2, so its name reads "NL-0007-2026
+                  Open". */}
+              <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                <h2
+                  ref={titleRef}
+                  tabIndex={-1}
+                  className={cn(
+                    "flex flex-wrap items-center gap-x-2 gap-y-1 text-sm/5 font-semibold text-fg outline-hidden",
+                    titleClassName,
+                  )}
+                >
+                  <span className="font-mono tabular-nums">
+                    {invoice.number}
+                  </span>
+                  <InvoiceStatusBadge status={invoice.status} />
+                </h2>
+                {triggers}
+              </div>
+            </div>
+          )}
         />
       )}
     </>
   );
 }
 
+// The status changes, confirm, refusal banner and panels, shared by both
+// routes. Each route renders its own header around the h1/h2 focus target
+// and the triggers.
 function InvoiceBody({
   clientId,
   isArchived,
+  hasArchivedNote,
   invoice,
   today,
+  action,
+  renderHeader,
 }: {
   clientId: string;
   isArchived: boolean;
+  // The header shows the archived copy already (the global detail's note),
+  // so an archived refusal adds no banner.
+  hasArchivedNote: boolean;
   invoice: InvoiceDetail;
   today: IsoDate;
+  // Where the status changes post: the route showing the Invoice.
+  action: string;
+  renderHeader: (parts: InvoiceHeaderParts) => React.ReactNode;
 }): React.ReactNode {
   const titleRef = useRef<HTMLHeadingElement>(null);
   useArrivalFocus(titleRef);
@@ -140,7 +290,7 @@ function InvoiceBody({
   }, []);
 
   const status = useInvoiceStatusAction({
-    action: getClientInvoicePath(clientId, invoice.id),
+    action,
     issueDate: invoice.issueDate,
     today,
     onChanged: handleChanged,
@@ -153,38 +303,22 @@ function InvoiceBody({
       ? status.openIntent
       : null;
   const isHighlighted = highlightedId === STATUS_CHANGED;
+  const refusalBanner = getRefusalBanner(status.refusal, hasArchivedNote);
 
   return (
     <>
-      <div className="flex flex-col gap-1">
-        <RequestBackLink
-          to={getClientInvoicesPath(clientId)}
-          label={INVOICES_COPY.invoices}
-          state={toFromInvoiceState(invoice.id)}
-        />
-        {/* The badge is inside the h2, so its name reads "NL-0007-2026
-            Open". */}
-        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-          <h2
-            ref={titleRef}
-            tabIndex={-1}
-            className={cn(
-              "flex flex-wrap items-center gap-x-2 gap-y-1 text-sm/5 font-semibold text-fg outline-hidden",
-              isHighlighted && "animate-row-highlight",
-            )}
-          >
-            <span className="font-mono tabular-nums">{invoice.number}</span>
-            <InvoiceStatusBadge status={invoice.status} />
-          </h2>
-          {intents.length > 0 && (
+      {renderHeader({
+        titleRef,
+        titleClassName: isHighlighted ? "animate-row-highlight" : undefined,
+        triggers:
+          intents.length > 0 ? (
             <InvoiceStatusTriggers
               intents={intents}
               openIntent={confirmIntent}
               status={status}
             />
-          )}
-        </div>
-      </div>
+          ) : null,
+      })}
       {confirmIntent !== null && (
         <InvoiceStatusConfirm
           intent={confirmIntent}
@@ -194,8 +328,8 @@ function InvoiceBody({
           status={status}
         />
       )}
-      {status.refusal !== null && (
-        <FormError variant="banner">{status.refusal}</FormError>
+      {refusalBanner !== null && (
+        <FormError variant="banner">{refusalBanner}</FormError>
       )}
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)] xl:grid-rows-[auto_1fr] xl:items-start">
         {/* DOM order is the stacked order; from xl, Line Items and Memo

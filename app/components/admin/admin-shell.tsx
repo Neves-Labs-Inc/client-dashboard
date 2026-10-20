@@ -1,4 +1,4 @@
-import { House, Inbox } from "lucide-react";
+import { House, Inbox, Receipt } from "lucide-react";
 import AdminSidebarNav from "@/components/admin/admin-sidebar-nav";
 import AdminUserMenu from "@/components/admin/admin-user-menu";
 import AppShell from "@/components/ui/app-shell";
@@ -7,6 +7,7 @@ import NavItem from "@/components/ui/nav-item";
 import ShellBrand from "@/components/ui/shell-brand";
 import Sidebar from "@/components/ui/sidebar";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { INVOICES_COPY, INVOICES_PATH } from "@/lib/admin-invoices";
 import { INBOX_PATH, REQUESTS_COPY } from "@/lib/admin-requests";
 import type { ArchivedClient, ClientSummary } from "@/lib/auth/auth";
 
@@ -19,6 +20,8 @@ type AdminShellProps = {
   newRequestCounts: Record<string, number>;
   // Active Clients with an Overdue Invoice.
   overdueInvoiceClientIds: string[];
+  // Overdue Invoices of active Clients; 0 when it couldn't load.
+  overdueInvoiceCount: number;
   children: React.ReactNode;
 };
 
@@ -29,6 +32,7 @@ export default function AdminShell({
   syncProblemClientIds,
   newRequestCounts,
   overdueInvoiceClientIds,
+  overdueInvoiceCount,
   children,
 }: AdminShellProps): React.ReactNode {
   return (
@@ -51,6 +55,7 @@ export default function AdminShell({
               syncProblemClientIds={syncProblemClientIds}
               newRequestCounts={newRequestCounts}
               overdueInvoiceClientIds={overdueInvoiceClientIds}
+              overdueInvoiceCount={overdueInvoiceCount}
             />
           </Sidebar>
         }
@@ -75,6 +80,12 @@ export default function AdminShell({
                   to={INBOX_PATH}
                   label={REQUESTS_COPY.requests}
                   icon={Inbox}
+                />
+                <NavItem
+                  variant="tab"
+                  to={INVOICES_PATH}
+                  label={INVOICES_COPY.invoices}
+                  icon={Receipt}
                 />
               </>
             }

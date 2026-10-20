@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { getRefusalCopy, getStatusIntents } from "@/lib/admin-invoice-status";
+import {
+  getRefusalBanner,
+  getRefusalCopy,
+  getStatusIntents,
+} from "@/lib/admin-invoice-status";
 
 describe("getStatusIntents", () => {
   it("offers Mark paid and Void on an Open or Overdue Invoice", () => {
@@ -47,5 +51,27 @@ describe("getRefusalCopy", () => {
         "This Client is archived; its Invoices are read-only.",
       );
     }
+  });
+});
+
+describe("getRefusalBanner", () => {
+  const ARCHIVED = "This Client is archived; its Invoices are read-only.";
+
+  it("drops the archived refusal where the archived note already says it", () => {
+    expect(getRefusalBanner(ARCHIVED, true)).toBeNull();
+  });
+
+  it("keeps the archived refusal where no note says it", () => {
+    expect(getRefusalBanner(ARCHIVED, false)).toBe(ARCHIVED);
+  });
+
+  it("keeps any other refusal beside the archived note", () => {
+    expect(getRefusalBanner("This Invoice is no longer Open.", true)).toBe(
+      "This Invoice is no longer Open.",
+    );
+  });
+
+  it("shows nothing without a refusal", () => {
+    expect(getRefusalBanner(null, true)).toBeNull();
   });
 });

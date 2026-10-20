@@ -229,7 +229,7 @@ Breakpoints (Tailwind defaults): base = 375px design target, `md` 768, `lg` 1024
 
 The Admin area **reuses this shell** (sidebar, header, panels, tables, tokens, components) and must not fork tokens. Its structure is **Client-centric** (decided in the "What does the Admin area look like?" ticket; prototype on branch `prototype/admin-area`, `?variant=A`):
 
-- Sidebar: Home, Requests inbox (New count, covering every Client), the list of active Clients (right-aligned alert icons per active reason, 16px lucide, `fg-2`, tooltip + `aria-label`: `inbox` + count for New Requests, `refresh-cw-off` for a sync problem, `receipt` for an Overdue Invoice), "+ New client", a collapsed Archived group.
+- Sidebar: Home, Requests inbox (New count, covering every Client), Invoices (`receipt` icon; Overdue count of active Clients, labelled "overdue", hidden at 0; current on an Invoice's detail; a tab without count on mobile) (Franklin, Phase 7b planning (2026-10-20)), the list of active Clients (right-aligned alert icons per active reason, 16px lucide, `fg-2`, tooltip + `aria-label`: `inbox` + count for New Requests, `refresh-cw-off` for a sync problem, `receipt` for an Overdue Invoice), "+ New client", a collapsed Archived group.
 - Home: a Clients table plus an "Unassigned GitHub boards" panel.
 - Client workspace: tabs Overview, Projects & boards, Team, Invoices, Requests. A row opens a detail view in place with a back link; create/edit forms use the Drawer (9.10).
 
@@ -342,6 +342,18 @@ From `md` to `lg` the table has 4 columns, `minmax(110px,1.2fr) 96px minmax(90px
 The Overview's Invoices panel uses a compact table at every width from `md`: Number | Due | Amount | Status, with Issued screen-reader only.
 Below `md`: `grid-cols-[minmax(0,1fr)_auto_92px] gap-x-2.5 gap-y-0.5`: Number over Due date ("Due Oct 1", mono `fg-2`) on the left, Amount, Status; Issued hidden visually (still present for screen readers as `sr-only`).
 Amounts are formatted `Intl.NumberFormat("en-US", { style: "currency", currency: "USD" })`. Sorted by issue date, newest first. Void never appears for Client Users (the Admin's tab shows it with the Void badge); the number gap is expected and not explained in the UI. Row links to the Invoice detail (Line Items, memo, Project). Panel meta: "open $X" = sum of Open + Overdue.
+
+**Client-column variant** (the Admin's global Invoices page; Franklin, Phase 7b planning (2026-10-20)). Same sorting, badge, amount format and row link; the columns gain **Client** after Number, and the Client name is `text-fg-2` below `lg` and `text-fg` from `lg`, truncated, with the "Archived" tag in a `shrink-0` span after it for an archived Client:
+- `lg`+ (six columns, fits the ~764px main column at 1024): Number | Client | Issued | Due | Amount | Status, template `minmax(110px,1fr) minmax(120px,1.4fr) 96px 96px minmax(90px,1fr) 92px`;
+- `md` to `lg` (four tracks as the default table, `minmax(110px,1.2fr) 96px minmax(90px,1fr) 92px`): the Client name stacks on the Number's second line, its header is `sr-only`, Issued is `sr-only`, and Due, Amount, Status span both lines;
+- below `md` (`grid-cols-[minmax(0,1fr)_auto_92px]`): Number, Client and "Due Oct 1" on three lines on the left; Amount and Status span all three and are vertically centered.
+The skeleton uses the same grid, so nothing shifts on load.
+
+**Global filter bar** (Franklin, Phase 7b planning (2026-10-20)). Under the page header, status is a `TabNav` (All, Open, Overdue, Paid, Void), then one `role="search"` GET form, then the Panel:
+- below `md`: a two-column grid, Client and Issued side by side (`gap-x-3 gap-y-4`); the From / To pair, the Number search with its Apply button, and "Clear filters" each span both columns;
+- from `md`: a wrapping flex row (`gap-x-3 gap-y-3`) of fixed-width fields: Client `w-48` (192px), Issued `w-36` (144px), the From / To fieldset `w-80` (320px, only while Issued reads Custom range), Number `w-56` (224px). The Apply button is `md:h-9` to match the 36px inputs; "Clear filters" shows only while a filter is set and sits on the control line (`md:mt-6`);
+- the Number input is mono, `maxLength` 20, placeholder "NL-0042"; the range error "From must be on or before To." sits under the date pair and marks both dates `aria-invalid`;
+- help text under a field reports a failed option load ("Couldn't load Clients." disables the Client select; "Couldn't load years." leaves Any time and Custom range) (Franklin, Phase 7b review (2026-10-20)). A disabled select keeps its border on hover, whatever its other state (Franklin, Phase 7b review (2026-10-20)).
 
 ### 9.8 Requests table
 

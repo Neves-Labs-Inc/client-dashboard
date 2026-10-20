@@ -6,7 +6,10 @@ import { createDb, type Tx } from "@/lib/db/db";
 import { clients } from "@/lib/db/schema";
 import { getAppEnv, getMigrateEnv } from "@/lib/env";
 import type { InvoiceDraft } from "@/lib/invoices/invoice-rules";
-import { createInvoices } from "@/lib/invoices/invoices";
+import {
+  type AdminInvoiceFilter,
+  createInvoices,
+} from "@/lib/invoices/invoices";
 import { insertProject } from "../../support/board";
 import { deleteClients, insertClients } from "../../support/clients";
 import { deleteInvoices, insertInvoice } from "../../support/invoices";
@@ -599,5 +602,347 @@ describe("Admin side", () => {
     expect(ids).not.toContain(dueTodayClient);
     expect(ids).not.toContain(paidLateClient);
     expect(ids).not.toContain(archivedClient);
+  });
+});
+
+// Other files seed Invoices in parallel, so the cross-Client reads are
+// checked on this file's own rows only.
+function pickOwn<T extends { id: string }>(rows: T[], ids: string[]): T[] {
+  return rows.filter((row) => ids.includes(row.id));
+}
+
+describe("listAdminInvoices", () => {
+  it("lists every Client's Invoices, archived and Void included, newest issue date then number first", async () => {
+    const activeClient = await seedClient();
+    const archivedClient = await seedClient();
+    const older = await seedInvoice({
+      clientId: activeClient,
+      issueDate: "2026-09-01",
+      dueDate: "2026-10-31",
+      lineItems: [{ amountCents: 1_000 }, { amountCents: 500 }],
+    });
+    const voided = await seedInvoice({
+      clientId: archivedClient,
+      issueDate: "2026-10-02",
+      dueDate: "2026-10-31",
+      status: "VOID",
+    });
+    const overdue = await seedInvoice({
+      clientId: archivedClient,
+      issueDate: "2026-10-01",
+      dueDate: YESTERDAY,
+    });
+    await archiveClient(archivedClient);
+
+    const rows = pickOwn(await invoices.listAdminInvoices({}), [
+      older,
+      voided,
+      overdue,
+    ]);
+
+    expect(rows.map((row) => [row.id, row.status])).toEqual([
+      [voided, "VOID"],
+      [overdue, "OVERDUE"],
+      [older, "OPEN"],
+    ]);
+    expect(rows[2]).toMatchObject({
+      issueDate: "2026-09-01",
+      dueDate: "2026-10-31",
+      totalCents: 1_500,
+      client: {
+        id: activeClient,
+        name: `Test Client ${activeClient}`,
+        isArchived: false,
+      },
+    });
+    expect(rows[0].client).toEqual({
+      id: archivedClient,
+      name: `Test Client ${archivedClient}`,
+      isArchived: true,
+    });
+  });
+
+  it("filters by status: Open includes Overdue, Overdue starts the day after the due date in New York", async () => {
+    const clientId = await seedClient();
+    const issueDate = "2026-10-01";
+    const dueToday = await seedInvoice({ clientId, issueDate, dueDate: TODAY });
+    const overdue = await seedInvoice({
+      clientId,
+      issueDate,
+      dueDate: YESTERDAY,
+    });
+    const paid = await seedInvoice({
+      clientId,
+      issueDate,
+      dueDate: YESTERDAY,
+      status: "PAID",
+    });
+    const voided = await seedInvoice({
+      clientId,
+      issueDate,
+      dueDate: YESTERDAY,
+      status: "VOID",
+    });
+
+    async function listIds(
+      status: "OPEN" | "OVERDUE" | "PAID" | "VOID",
+    ): Promise<string[]> {
+      const rows = await invoices.listAdminInvoices({ clientId, status });
+      return rows.map((row) => row.id).toSorted();
+    }
+
+    expect(await listIds("OPEN")).toEqual([dueToday, overdue].toSorted());
+    expect(await listIds("OVERDUE")).toEqual([overdue]);
+    expect(await listIds("PAID")).toEqual([paid]);
+    expect(await listIds("VOID")).toEqual([voided]);
+  });
+
+  it("filters by Client", async () => {
+    const clientId = await seedClient();
+    const otherClientId = await seedClient();
+    const own = await seedInvoice({ clientId });
+    await seedInvoice({ clientId: otherClientId });
+
+    const rows = await invoices.listAdminInvoices({ clientId });
+
+    expect(rows.map((row) => row.id)).toEqual([own]);
+  });
+
+  it("returns nothing for a non-UUID Client id instead of a DB error", async () => {
+    expect(await invoices.listAdminInvoices({ clientId: "nope" })).toEqual([]);
+  });
+
+  it("returns nothing for a malformed date bound or an unknown status instead of an error", async () => {
+    await seedInvoice({ clientId: await seedClient() });
+    // A forged status, as an untyped caller could pass it.
+    const unknownStatus = "DRAFT" as AdminInvoiceFilter["status"];
+
+    expect(
+      await invoices.listAdminInvoices({ issuedFrom: "2026-02-30" }),
+    ).toEqual([]);
+    expect(await invoices.listAdminInvoices({ issuedTo: "nope" })).toEqual([]);
+    expect(await invoices.listAdminInvoices({ status: unknownStatus })).toEqual(
+      [],
+    );
+  });
+
+  it("filters by issue date between inclusive bounds, either one optional", async () => {
+    const clientId = await seedClient();
+    const dueDate = "2026-10-31";
+    const before = await seedInvoice({
+      clientId,
+      issueDate: "2026-08-31",
+      dueDate,
+    });
+    const first = await seedInvoice({
+      clientId,
+      issueDate: "2026-09-01",
+      dueDate,
+    });
+    const last = await seedInvoice({
+      clientId,
+      issueDate: "2026-09-30",
+      dueDate,
+    });
+    const after = await seedInvoice({
+      clientId,
+      issueDate: "2026-10-01",
+      dueDate,
+    });
+
+    async function listIds(
+      range: Pick<AdminInvoiceFilter, "issuedFrom" | "issuedTo">,
+    ): Promise<string[]> {
+      const rows = await invoices.listAdminInvoices({ clientId, ...range });
+      return rows.map((row) => row.id);
+    }
+
+    expect(
+      await listIds({ issuedFrom: "2026-09-01", issuedTo: "2026-09-30" }),
+    ).toEqual([last, first]);
+    expect(await listIds({ issuedFrom: "2026-09-30" })).toEqual([after, last]);
+    expect(await listIds({ issuedTo: "2026-09-01" })).toEqual([first, before]);
+  });
+
+  it("searches numbers case-insensitively, with %, _ and \\ matching literally", async () => {
+    const clientId = await seedClient();
+    const issueDate = "1995-05-01";
+    const dueDate = "1995-05-31";
+    const target = await seedInvoice({
+      clientId,
+      number: "NL-0042-1995",
+      issueDate,
+      dueDate,
+    });
+    await seedInvoice({ clientId, number: "NL-0013-1995", issueDate, dueDate });
+
+    async function search(numberQuery: string): Promise<string[]> {
+      const rows = await invoices.listAdminInvoices({ clientId, numberQuery });
+      return rows.map((row) => row.id);
+    }
+
+    expect(await search("nl-0042")).toEqual([target]);
+    expect(await search("42")).toEqual([target]);
+    expect(await search("%")).toEqual([]);
+    expect(await search("NL-004_")).toEqual([]);
+    // Unescaped, LIKE would read "\\0" as a plain "0".
+    expect(await search("\\0042")).toEqual([]);
+    expect(await search("x".repeat(1_000))).toEqual([]);
+  });
+
+  it("ANDs the filters together", async () => {
+    const clientId = await seedClient();
+    const otherClientId = await seedClient();
+    const issueDate = "2026-09-15";
+    const match = await seedInvoice({
+      clientId,
+      issueDate,
+      dueDate: YESTERDAY,
+    });
+    await seedInvoice({ clientId, issueDate, dueDate: TODAY });
+    await seedInvoice({
+      clientId,
+      issueDate: "2026-08-15",
+      dueDate: YESTERDAY,
+    });
+    await seedInvoice({
+      clientId: otherClientId,
+      issueDate,
+      dueDate: YESTERDAY,
+    });
+
+    const rows = await invoices.listAdminInvoices({
+      clientId,
+      status: "OVERDUE",
+      issuedFrom: "2026-09-01",
+      issuedTo: "2026-09-30",
+      numberQuery: "-2026",
+    });
+
+    expect(rows.map((row) => row.id)).toEqual([match]);
+  });
+});
+
+describe("getAdminInvoiceById", () => {
+  it("reads any Client's Invoice with its Client and Line Items, archived and Void included", async () => {
+    let projectId = "";
+    const clientId = await seedClient(async (tx, id) => {
+      projectId = await insertProject(tx, { clientId: id, name: "Website" });
+    });
+    const invoiceId = await seedInvoice({
+      clientId,
+      projectId,
+      status: "VOID",
+      lineItems: [
+        { description: "Design", amountCents: 2_000 },
+        { description: "Credit", amountCents: -500 },
+      ],
+    });
+    await archiveClient(clientId);
+
+    expect(await invoices.getAdminInvoiceById(invoiceId)).toMatchObject({
+      id: invoiceId,
+      status: "VOID",
+      totalCents: 1_500,
+      project: { id: projectId, name: "Website" },
+      lineItems: [
+        { description: "Design", amountCents: 2_000 },
+        { description: "Credit", amountCents: -500 },
+      ],
+      client: {
+        id: clientId,
+        name: `Test Client ${clientId}`,
+        isArchived: true,
+      },
+    });
+  });
+
+  it("returns null for an unknown or non-UUID id", async () => {
+    expect(await invoices.getAdminInvoiceById(randomUUID())).toBeNull();
+    expect(await invoices.getAdminInvoiceById("nope")).toBeNull();
+  });
+});
+
+describe("countOverdueInvoices", () => {
+  it("counts active Clients' Overdue Invoices, not archived Clients', Paid, Void or not-yet-due ones", async () => {
+    // A clock in 1990: every other seed, in this file or another, is due
+    // later, Void or an archived Client's, so the global count is this
+    // test's alone.
+    const invoices1990 = createInvoices({
+      db,
+      now: () => new Date("1990-06-16T02:00:00Z"),
+    });
+    const activeClient = await seedClient();
+    const archivedClient = await seedClient();
+    const issueDate = "1990-05-01";
+    const dueYesterday = "1990-06-14";
+    await seedInvoice({
+      clientId: activeClient,
+      issueDate,
+      dueDate: dueYesterday,
+    });
+    await seedInvoice({
+      clientId: activeClient,
+      issueDate,
+      dueDate: dueYesterday,
+    });
+    // Today in New York, though UTC is already a day ahead.
+    await seedInvoice({
+      clientId: activeClient,
+      issueDate,
+      dueDate: "1990-06-15",
+    });
+    await seedInvoice({
+      clientId: activeClient,
+      issueDate,
+      dueDate: dueYesterday,
+      status: "PAID",
+    });
+    await seedInvoice({
+      clientId: activeClient,
+      issueDate,
+      dueDate: dueYesterday,
+      status: "VOID",
+    });
+    await seedInvoice({
+      clientId: archivedClient,
+      issueDate,
+      dueDate: dueYesterday,
+    });
+    await archiveClient(archivedClient);
+
+    expect(await invoices1990.countOverdueInvoices()).toBe(2);
+  });
+});
+
+describe("listIssueYears", () => {
+  it("lists each issue year once, newest first, Void and archived Clients' included", async () => {
+    const activeClient = await seedClient();
+    const archivedClient = await seedClient();
+    await seedInvoice({
+      clientId: activeClient,
+      issueDate: "1987-03-01",
+      dueDate: "1987-03-31",
+      status: "VOID",
+    });
+    await seedInvoice({
+      clientId: archivedClient,
+      issueDate: "1988-03-01",
+      dueDate: "1988-03-31",
+    });
+    await seedInvoice({
+      clientId: archivedClient,
+      issueDate: "1988-12-31",
+      dueDate: "1989-01-30",
+    });
+    await archiveClient(archivedClient);
+
+    const years = await invoices.listIssueYears();
+
+    expect(years.filter((year) => year === 1987 || year === 1988)).toEqual([
+      1988, 1987,
+    ]);
+    expect(years).toEqual(years.toSorted((a, b) => b - a));
+    expect(new Set(years).size).toBe(years.length);
   });
 });

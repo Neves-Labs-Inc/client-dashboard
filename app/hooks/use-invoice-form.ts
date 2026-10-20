@@ -4,6 +4,7 @@ import {
   type CreateInvoiceOutcome,
   getCreateBanner,
   INVOICE_FIELD,
+  INVOICES_COPY,
 } from "@/lib/admin-invoices";
 import {
   type FieldErrors,
@@ -18,6 +19,8 @@ import {
 export type InvoiceLine = { key: number; description: string; amount: string };
 
 export type InvoiceFormValues = {
+  // "" for none chosen; always "" with a fixed Client.
+  clientId: string;
   issueDate: string;
   dueDate: string;
   // "" for no specific Project.
@@ -26,17 +29,28 @@ export type InvoiceFormValues = {
   lines: InvoiceLine[];
 };
 
-type TopField = "issueDate" | "dueDate" | "projectId" | "memo";
+type TopField = "clientId" | "issueDate" | "dueDate" | "projectId" | "memo";
 type LineField = "description" | "amount";
 type ChangeEvent = React.ChangeEvent<
   HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement
 >;
 
+// The global drawer's Client select. Without it, the Client is fixed by
+// the route the form posts to.
+type ClientChoice = {
+  // The active Clients the select offers.
+  clientIds: readonly string[];
+  // "" for none.
+  initialClientId: string;
+};
+
 type InvoiceFormOptions = {
   isOpen: boolean;
   // The New York date, from the loader.
   today: string;
-  projectIds: readonly string[];
+  // The chosen Client's Projects ("" with a fixed Client).
+  getProjectIds: (clientId: string) => readonly string[];
+  clientChoice?: ClientChoice;
   // The route the form posts to.
   action: string;
   onCreated: (invoiceId: string, number: string) => void;
@@ -50,7 +64,8 @@ export type InvoiceForm = {
   isDirty: boolean;
   // Submitting, then revalidating the tab behind the drawer.
   isPending: boolean;
-  // An archived or gone Client: the form can't be submitted again.
+  // An archived or gone Client: the form can't be submitted again until
+  // another Client is chosen.
   isLocked: boolean;
   // Invalid amounts count 0.
   totalCents: number;
@@ -70,8 +85,12 @@ export type InvoiceForm = {
 
 const LINE_KEY_PATTERN = /^lineItems\.(\d+)\.(.+)$/;
 
-function createInitialValues(today: string): InvoiceFormValues {
+function createInitialValues(
+  today: string,
+  clientId: string,
+): InvoiceFormValues {
   return {
+    clientId,
     issueDate: today,
     dueDate: getDefaultDueDate(today),
     projectId: "",
@@ -93,8 +112,12 @@ function toDraft(values: InvoiceFormValues): InvoiceDraft {
   };
 }
 
-function toFormData(values: InvoiceFormValues): FormData {
+function toFormData(
+  values: InvoiceFormValues,
+  hasClientChoice: boolean,
+): FormData {
   const form = new FormData();
+  if (hasClientChoice) form.set(INVOICE_FIELD.clientId, values.clientId);
   form.set(INVOICE_FIELD.issueDate, values.issueDate);
   form.set(INVOICE_FIELD.dueDate, values.dueDate);
   form.set(INVOICE_FIELD.projectId, values.projectId);
@@ -128,6 +151,7 @@ function isSameAsInitial(
     );
   return (
     isSameLines &&
+    values.clientId === initial.clientId &&
     values.issueDate === initial.issueDate &&
     (!isDueTouched || values.dueDate === initial.dueDate) &&
     values.projectId === initial.projectId &&
@@ -155,6 +179,12 @@ function shiftErrors(errors: FieldErrors, removed: number): FieldErrors {
   );
 }
 
+function omitError(errors: FieldErrors, key: string): FieldErrors {
+  return Object.fromEntries(
+    Object.entries(errors).filter(([errorKey]) => errorKey !== key),
+  );
+}
+
 function pickErrors(errors: FieldErrors, keys: readonly string[]): FieldErrors {
   return Object.fromEntries(
     keys.flatMap((key) =>
@@ -168,16 +198,21 @@ function pickErrors(errors: FieldErrors, keys: readonly string[]): FieldErrors {
 // date following the issue date until edited, the Line Items repeater, the
 // post and what follows its outcome. Starts fresh each time `isOpen` turns
 // true. An outcome is handled once the fetcher is idle, so a success closes
-// the drawer onto the revalidated tab.
+// the drawer onto the revalidated tab. With `clientChoice`, the Client is a
+// required field too, and the Project follows it.
 export function useInvoiceForm({
   isOpen,
   today,
-  projectIds,
+  getProjectIds,
+  clientChoice,
   action,
   onCreated,
 }: InvoiceFormOptions): InvoiceForm {
   const fetcher = useFetcher<CreateInvoiceOutcome>();
-  const initial = createInitialValues(today);
+  const initial = createInitialValues(
+    today,
+    clientChoice?.initialClientId ?? "",
+  );
   const [values, setValues] = useState(initial);
   const [isDueTouched, setIsDueTouched] = useState(false);
   const [edited, setEdited] = useState<ReadonlySet<string>>(new Set());
@@ -195,8 +230,12 @@ export function useInvoiceForm({
   const focusFirstInvalidRef = useRef((errors: FieldErrors): void => {
     const targets =
       formRef.current?.querySelectorAll<HTMLElement>("[data-field]");
+    // A disabled field (the Client select with no Clients) can't take
+    // focus: the next invalid one does.
     const first = Array.from(targets ?? []).find(
-      (target) => errors[target.dataset.field ?? ""] !== undefined,
+      (target) =>
+        errors[target.dataset.field ?? ""] !== undefined &&
+        !target.matches(":disabled"),
     );
     first?.focus();
   });
@@ -247,8 +286,22 @@ export function useInvoiceForm({
   }, [fetcher.data, fetcher.state]);
 
   function getErrors(next: InvoiceFormValues): FieldErrors {
-    const validation = validateInvoiceDraft(toDraft(next), projectIds, today);
-    return validation.isValid ? {} : validation.fieldErrors;
+    const isClientMissing =
+      clientChoice !== undefined &&
+      !clientChoice.clientIds.includes(next.clientId);
+    const validation = validateInvoiceDraft(
+      toDraft(next),
+      getProjectIds(next.clientId),
+      today,
+    );
+    let errors = validation.isValid ? {} : validation.fieldErrors;
+    if (isClientMissing) {
+      errors = {
+        [INVOICE_FIELD.clientId]: INVOICES_COPY.clientRequired,
+        ...errors,
+      };
+    }
+    return errors;
   }
 
   // A shown error re-checks live, so it clears once its value is valid.
@@ -267,9 +320,25 @@ export function useInvoiceForm({
     setEdited((previous) => new Set(previous).add(key));
   }
 
+  // Another Client's Projects differ: the Project resets, its error with it,
+  // and a refusal of the previous Client no longer applies.
+  function handleClientChange(clientId: string): void {
+    markEdited("clientId");
+    setIsLocked(false);
+    update(
+      { ...values, clientId, projectId: "" },
+      omitError(fieldErrors, "projectId"),
+    );
+  }
+
   function handleChange(field: TopField) {
     return (event: ChangeEvent): void => {
       const value = event.target.value;
+      if (field === "clientId") {
+        handleClientChange(value);
+        return;
+      }
+
       let next = { ...values, [field]: value };
       if (field === "issueDate" && !isDueTouched) {
         next = { ...next, dueDate: getDefaultDueDate(value) };
@@ -344,7 +413,10 @@ export function useInvoiceForm({
       return;
     }
     setBanner(null);
-    void fetcher.submit(toFormData(values), { method: "post", action });
+    void fetcher.submit(toFormData(values, clientChoice !== undefined), {
+      method: "post",
+      action,
+    });
   }
 
   return {

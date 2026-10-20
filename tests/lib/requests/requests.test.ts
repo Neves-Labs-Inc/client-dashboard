@@ -635,6 +635,57 @@ describe("listProjectOptions", () => {
   });
 });
 
+describe("listProjectOptionsByClient", () => {
+  it("lists each active Client's Projects, active A–Z then Past A–Z", async () => {
+    const firstId = await seedClient(async (tx, id) => {
+      await insertProject(tx, { clientId: id, name: "zeta" });
+      await insertProject(tx, {
+        clientId: id,
+        name: "Closed",
+        closedOnGithub: true,
+      });
+      await insertProject(tx, { clientId: id, name: "Alpha" });
+    });
+    const secondId = await seedClient(async (tx, id) => {
+      const completeId = await insertProject(tx, {
+        clientId: id,
+        name: "Beta",
+      });
+      await insertStatusUpdate(tx, {
+        clientId: id,
+        projectId: completeId,
+        health: "COMPLETE",
+      });
+      await insertProject(tx, { clientId: id, name: "Gamma" });
+    });
+
+    const byClient = await requests.listProjectOptionsByClient();
+
+    const namesOf = (clientId: string) =>
+      byClient[clientId].map(({ name, isPast }) => [name, isPast]);
+    expect(namesOf(firstId)).toEqual([
+      ["Alpha", false],
+      ["zeta", false],
+      ["Closed", true],
+    ]);
+    expect(namesOf(secondId)).toEqual([
+      ["Gamma", false],
+      ["Beta", true],
+    ]);
+  });
+
+  it("leaves archived Clients out", async () => {
+    const clientId = await seedClient(async (tx, id) => {
+      await insertProject(tx, { clientId: id, name: "Alpha" });
+    });
+    await archiveClient(clientId);
+
+    const byClient = await requests.listProjectOptionsByClient();
+
+    expect(byClient[clientId]).toBeUndefined();
+  });
+});
+
 describe("triageRequest", () => {
   async function seedLinkable(): Promise<{
     clientId: string;

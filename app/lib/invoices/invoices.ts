@@ -1,6 +1,27 @@
-import { and, asc, desc, eq, inArray, isNull, lt, ne, sql } from "drizzle-orm";
+import {
+  and,
+  asc,
+  count,
+  desc,
+  eq,
+  gte,
+  ilike,
+  inArray,
+  isNull,
+  lt,
+  lte,
+  ne,
+  type SQL,
+  sql,
+} from "drizzle-orm";
 import type { Db, Tx } from "@/lib/db/db";
-import { clients, invoices, lineItems, projects } from "@/lib/db/schema";
+import {
+  clients,
+  invoices,
+  lineItems,
+  organization,
+  projects,
+} from "@/lib/db/schema";
 import {
   type DisplayStatus,
   type FieldErrors,
@@ -9,7 +30,9 @@ import {
   type InvoiceDraft,
   type InvoiceStatus,
   type IsoDate,
+  isIsoDate,
   isOverdue,
+  NUMBER_QUERY_MAX,
   validateInvoiceDraft,
   validatePaidDate,
 } from "@/lib/invoices/invoice-rules";
@@ -37,6 +60,28 @@ export type InvoiceDetail = InvoiceRow & {
   project: { id: string; name: string } | null;
   // By position.
   lineItems: { id: string; description: string; amountCents: number }[];
+};
+
+export type InvoiceClient = { id: string; name: string; isArchived: boolean };
+
+export type AdminInvoiceRow = InvoiceRow & { client: InvoiceClient };
+
+export type AdminInvoiceDetail = InvoiceDetail & { client: InvoiceClient };
+
+// The global list's Status filter. OPEN includes Overdue.
+export type InvoiceListStatus = "OPEN" | "OVERDUE" | "PAID" | "VOID";
+
+// Unset fields don't filter; set ones AND together.
+export type AdminInvoiceFilter = {
+  // A UUID.
+  clientId?: string;
+  status?: InvoiceListStatus;
+  // Inclusive bounds on the issue date.
+  issuedFrom?: IsoDate;
+  issuedTo?: IsoDate;
+  // Trimmed, at most NUMBER_QUERY_MAX characters: a case-insensitive
+  // "contains" match on the number.
+  numberQuery?: string;
 };
 
 export type InvoiceSummary = {
@@ -100,6 +145,18 @@ export type Invoices = {
   ): Promise<Result<null, VoidError>>;
   // Active Clients with at least one Overdue Invoice.
   listOverdueClientIds(): Promise<string[]>;
+  // Every Client's Invoices, archived and Void included, filtered. Same
+  // order as listInvoices. A malformed filter field (a non-UUID Client, an
+  // unknown status, a date bound that isn't a real date) gives [].
+  listAdminInvoices(filter: AdminInvoiceFilter): Promise<AdminInvoiceRow[]>;
+  // Any Client's Invoice, archived and Void included. Null for an unknown
+  // or non-UUID id.
+  getAdminInvoiceById(invoiceId: string): Promise<AdminInvoiceDetail | null>;
+  // Overdue Invoices of active Clients, as listOverdueClientIds.
+  countOverdueInvoices(): Promise<number>;
+  // The years with at least one Invoice, archived and Void included, newest
+  // first.
+  listIssueYears(): Promise<number[]>;
 };
 
 type InvoicesDeps = { db: Db; now?: () => Date };
@@ -167,6 +224,29 @@ const NEWEST_FIRST = [desc(invoices.issueDate), desc(invoices.number)];
 
 const NOT_VOID = ne(invoices.status, "VOID");
 
+const ISSUE_YEAR = sql<number>`extract(year from ${invoices.issueDate})::int`;
+
+// An active Client's Open Invoice past its due date.
+function isActiveOverdue(today: IsoDate): SQL | undefined {
+  return and(
+    isNull(clients.archivedAt),
+    eq(invoices.status, "OPEN"),
+    lt(invoices.dueDate, today),
+  );
+}
+
+const CLIENT_COLUMNS = {
+  clientId: clients.id,
+  clientName: organization.name,
+  archivedAt: clients.archivedAt,
+};
+
+type ClientFields = {
+  clientId: string;
+  clientName: string;
+  archivedAt: Date | null;
+};
+
 function isUuid(id: string): boolean {
   return UUID_PATTERN.test(id);
 }
@@ -196,6 +276,68 @@ function toInvoiceRow(row: InvoiceFields, today: IsoDate): InvoiceRow {
     totalCents: row.totalCents,
     status: getDisplayStatus(row.status, row.dueDate, today),
   };
+}
+
+function toInvoiceClient(row: ClientFields): InvoiceClient {
+  return {
+    id: row.clientId,
+    name: row.clientName,
+    isArchived: row.archivedAt !== null,
+  };
+}
+
+// What LIKE treats as wildcards or escapes, so a search matches them
+// literally.
+const LIKE_SPECIAL = /[\\%_]/g;
+
+function toContainsPattern(text: string): string {
+  return `%${text.replaceAll(LIKE_SPECIAL, "\\$&")}%`;
+}
+
+const LIST_STATUSES: readonly string[] = [
+  "OPEN",
+  "OVERDUE",
+  "PAID",
+  "VOID",
+] satisfies InvoiceListStatus[];
+
+// Each set field is one the conditions can use: a UUID Client, a known
+// status, real dates. The parser already guarantees it; this keeps an
+// unchecked caller's value from becoming a DB error or a TypeError.
+function isWellFormedFilter(filter: AdminInvoiceFilter): boolean {
+  const { clientId, status, issuedFrom, issuedTo } = filter;
+  return (
+    (clientId === undefined || isUuid(clientId)) &&
+    (status === undefined || LIST_STATUSES.includes(status)) &&
+    (issuedFrom === undefined || isIsoDate(issuedFrom)) &&
+    (issuedTo === undefined || isIsoDate(issuedTo))
+  );
+}
+
+// The filter as WHERE conditions; unset fields add none.
+function getFilterConditions(
+  filter: AdminInvoiceFilter,
+  today: IsoDate,
+): SQL[] {
+  const { clientId, status, issuedFrom, issuedTo } = filter;
+  const numberQuery = Array.from(filter.numberQuery ?? "")
+    .slice(0, NUMBER_QUERY_MAX)
+    .join("");
+  const statusConditions: Record<InvoiceListStatus, SQL[]> = {
+    OPEN: [eq(invoices.status, "OPEN")],
+    OVERDUE: [eq(invoices.status, "OPEN"), lt(invoices.dueDate, today)],
+    PAID: [eq(invoices.status, "PAID")],
+    VOID: [eq(invoices.status, "VOID")],
+  };
+  return [
+    ...(clientId === undefined ? [] : [eq(invoices.clientId, clientId)]),
+    ...(status === undefined ? [] : statusConditions[status]),
+    ...(issuedFrom === undefined ? [] : [gte(invoices.issueDate, issuedFrom)]),
+    ...(issuedTo === undefined ? [] : [lte(invoices.issueDate, issuedTo)]),
+    ...(numberQuery === ""
+      ? []
+      : [ilike(invoices.number, toContainsPattern(numberQuery))]),
+  ];
 }
 
 // "NL-0042-2026".
@@ -655,15 +797,79 @@ export function createInvoices(deps: InvoicesDeps): Invoices {
         .selectDistinct({ clientId: invoices.clientId })
         .from(invoices)
         .innerJoin(clients, eq(clients.id, invoices.clientId))
-        .where(
-          and(
-            isNull(clients.archivedAt),
-            eq(invoices.status, "OPEN"),
-            lt(invoices.dueDate, today),
-          ),
-        ),
+        .where(isActiveOverdue(today)),
     );
     return rows.map((row) => row.clientId);
+  }
+
+  async function countOverdueInvoices(): Promise<number> {
+    const today = getTodayNow();
+    const [row] = await db.withSystem((tx) =>
+      tx
+        .select({ overdueCount: count() })
+        .from(invoices)
+        .innerJoin(clients, eq(clients.id, invoices.clientId))
+        .where(isActiveOverdue(today)),
+    );
+    return row.overdueCount;
+  }
+
+  async function listIssueYears(): Promise<number[]> {
+    const rows = await db.withSystem((tx) =>
+      tx
+        .selectDistinct({ year: ISSUE_YEAR })
+        .from(invoices)
+        .orderBy(desc(ISSUE_YEAR)),
+    );
+    return rows.map((row) => row.year);
+  }
+
+  async function listAdminInvoices(
+    filter: AdminInvoiceFilter,
+  ): Promise<AdminInvoiceRow[]> {
+    // Malformed rather than unmatched: nothing to list.
+    if (!isWellFormedFilter(filter)) return [];
+
+    const today = getTodayNow();
+    const rows = await db.withSystem((tx) =>
+      tx
+        .select({ ...ROW_COLUMNS, ...CLIENT_COLUMNS })
+        .from(invoices)
+        .innerJoin(clients, eq(clients.id, invoices.clientId))
+        .innerJoin(organization, eq(organization.id, clients.id))
+        .where(and(...getFilterConditions(filter, today)))
+        .orderBy(...NEWEST_FIRST),
+    );
+    return rows.map((row) => ({
+      ...toInvoiceRow(row, today),
+      client: toInvoiceClient(row),
+    }));
+  }
+
+  async function getAdminInvoiceById(
+    invoiceId: string,
+  ): Promise<AdminInvoiceDetail | null> {
+    if (!isUuid(invoiceId)) return null;
+
+    const today = getTodayNow();
+    return db.withSystem(async (tx) => {
+      const [client] = await tx
+        .select(CLIENT_COLUMNS)
+        .from(invoices)
+        .innerJoin(clients, eq(clients.id, invoices.clientId))
+        .innerJoin(organization, eq(organization.id, clients.id))
+        .where(eq(invoices.id, invoiceId));
+      if (client === undefined) return null;
+
+      const detail = await readDetail(
+        tx,
+        { clientId: client.clientId, invoiceId, includeVoid: true },
+        today,
+      );
+      return detail === null
+        ? null
+        : { ...detail, client: toInvoiceClient(client) };
+    });
   }
 
   return {
@@ -678,5 +884,9 @@ export function createInvoices(deps: InvoicesDeps): Invoices {
     revertPaid,
     voidInvoice,
     listOverdueClientIds,
+    listAdminInvoices,
+    getAdminInvoiceById,
+    countOverdueInvoices,
+    listIssueYears,
   };
 }

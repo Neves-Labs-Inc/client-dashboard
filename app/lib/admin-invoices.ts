@@ -9,6 +9,7 @@ import {
   LINE_ITEMS_MAX,
 } from "@/lib/invoices/invoice-rules";
 import type { InvoiceRow } from "@/lib/invoices/invoices";
+import { formatMoney } from "@/lib/money";
 import { withoutParam } from "@/lib/new-client";
 
 // Each Client's Invoices tab, the New invoice drawer on it, and the detail
@@ -19,6 +20,19 @@ export const CLIENT_INVOICES_ROUTE_PATTERN =
 export const CLIENT_INVOICE_ROUTE_PATTERN =
   "/admin/clients/:clientId/invoices/:invoiceId";
 
+// The global list of every Client's Invoices, and the detail it opens.
+export const INVOICES_PATH = "/admin/invoices";
+export const INVOICES_ROUTE_PATTERN = INVOICES_PATH;
+export const INVOICE_ROUTE_PATTERN = "/admin/invoices/:invoiceId";
+
+type ClientOption = { id: string; name: string };
+
+// The global list's Client filter: active Clients, then archived, each A–Z.
+export type InvoiceClientOptions = {
+  active: ClientOption[];
+  archived: ClientOption[];
+};
+
 // The drawer opens from `?new=invoice` on the tab, as the create-Client
 // drawer does from `?new=client`.
 export const NEW_INVOICE_PARAM = "new";
@@ -27,6 +41,8 @@ export const NEW_INVOICE_VALUE = "invoice";
 // The form's field names. Each Line Item posts one `description` and one
 // `amount`, in order.
 export const INVOICE_FIELD = {
+  // The global drawer's only: the tab's Client is in its URL.
+  clientId: "clientId",
   issueDate: "issueDate",
   dueDate: "dueDate",
   projectId: "projectId",
@@ -76,10 +92,19 @@ export const INVOICES_COPY = {
   archived: "This Client is archived; its Invoices are read-only.",
   clientNotFound: "This Client no longer exists.",
   discard: "Discard this invoice?",
+  client: "Client",
+  chooseClient: "Choose a client",
+  clientRequired: "Choose a client.",
+  noActiveClients: "No active Clients to invoice.",
+  clientsFailed: "Couldn't load Clients.",
 } as const;
 
 // The back link's marker: the tab focuses this Invoice's number link once.
 type FromInvoiceState = { fromInvoiceId: string };
+
+// The global list's marker on a row link: the detail's back link restores
+// this search ("?status=open", or "").
+type FromListState = { fromListSearch: string };
 
 const CREATED = 201;
 const NOT_FOUND = 404;
@@ -99,6 +124,25 @@ export function getClientInvoicePath(
   return `${getClientInvoicesPath(clientId)}/${invoiceId}`;
 }
 
+export function getInvoicePath(invoiceId: string): string {
+  return `${INVOICES_PATH}/${invoiceId}`;
+}
+
+// The global detail's way back: the list with the search it came from, or
+// plain on a direct visit. Anything but a search ("?…") is ignored, so the
+// link never leaves the list.
+export function getInvoicesBackPath(state: unknown): string {
+  const hasListSearch =
+    typeof state === "object" &&
+    state !== null &&
+    "fromListSearch" in state &&
+    typeof state.fromListSearch === "string" &&
+    state.fromListSearch.startsWith("?");
+  // Its shape is checked just above.
+  const search = hasListSearch ? (state as FromListState).fromListSearch : "";
+  return `${INVOICES_PATH}${search}`;
+}
+
 export function getIssuedToast(number: string): string {
   return `Invoice ${number} issued`;
 }
@@ -110,8 +154,18 @@ export function getOpenBalanceCents(rows: readonly InvoiceRow[]): number {
     .reduce((sum, row) => sum + row.totalCents, 0);
 }
 
+// The global list's panel meta: "1 invoice · open $0.00".
+export function getListMeta(rows: readonly InvoiceRow[]): string {
+  const count = rows.length === 1 ? "1 invoice" : `${rows.length} invoices`;
+  return `${count} · open ${formatMoney(getOpenBalanceCents(rows))}`;
+}
+
 export function toFromInvoiceState(invoiceId: string): FromInvoiceState {
   return { fromInvoiceId: invoiceId };
+}
+
+export function toFromListState(search: string): FromListState {
+  return { fromListSearch: search };
 }
 
 export function getFromInvoiceId(state: unknown): string | null {
