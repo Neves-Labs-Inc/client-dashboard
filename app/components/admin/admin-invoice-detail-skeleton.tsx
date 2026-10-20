@@ -5,6 +5,7 @@ import { cn } from "@/lib/utils";
 
 const FACT_ROW_COUNT = 4;
 const LINE_ROW_COUNT = 3;
+const ACTION_COUNT = 2;
 
 // A box with a text line's height, so blocks sit where the text will.
 function Line({
@@ -52,10 +53,21 @@ export default function AdminInvoiceDetailSkeleton(): React.ReactNode {
           <Line className="h-11 md:h-5 pointer-coarse:h-11">
             <Skeleton className="h-3 w-20" />
           </Line>
-          <Line className="gap-2">
-            <Skeleton className="h-3.5 w-28" />
-            <Skeleton className="h-[22px] w-16 rounded-[3px]" />
-          </Line>
+          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+            <Line className="gap-2">
+              <Skeleton className="h-3.5 w-28" />
+              <Skeleton className="h-[22px] w-16 rounded-[3px]" />
+            </Line>
+            {/* The status buttons, so the row doesn't push content down. */}
+            <div className="flex gap-2">
+              {Array.from({ length: ACTION_COUNT }, (_, index) => (
+                <Skeleton
+                  key={index}
+                  className="h-11 w-24 rounded-[3px] md:h-8 pointer-coarse:h-11"
+                />
+              ))}
+            </div>
+          </div>
         </div>
         <div className="grid gap-4 xl:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)] xl:grid-rows-[auto_1fr] xl:items-start">
           <PanelFrame

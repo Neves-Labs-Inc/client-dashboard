@@ -45,6 +45,7 @@ import {
   isInvoiceDrawerToggle,
 } from "@/lib/admin-invoices";
 import { describeError } from "@/lib/describe-error";
+import { invoices } from "@/lib/invoices/invoices.server";
 import { requests } from "@/lib/requests/requests.server";
 import type { Route } from "./+types/layout";
 
@@ -62,29 +63,37 @@ export async function loader({ request }: Route.LoaderArgs) {
   // The sidebar's sync-problem icons: none if they can't load.
   // New Requests by active Client: the Requests entry's total (and the
   // Clients' alert icons); none if they can't load.
-  const [clients, archivedClients, syncProblemClientIds, newRequestCounts] =
-    await Promise.all([
-      auth.listClients().catch((error: unknown) => {
-        console.error("admin: couldn't load the sidebar's Clients", error);
-        return null;
+  // Active Clients with an Overdue Invoice: the receipt icons and Home's
+  // "Overdue invoice" lines; none if they can't load.
+  const [
+    clients,
+    archivedClients,
+    syncProblemClientIds,
+    newRequestCounts,
+    overdueInvoiceClientIds,
+  ] = await Promise.all([
+    auth.listClients().catch((error: unknown) => {
+      console.error("admin: couldn't load the sidebar's Clients", error);
+      return null;
+    }),
+    auth.listArchivedClients().catch((error: unknown) => {
+      console.error("admin: couldn't load the archived Clients", error);
+      return null;
+    }),
+    boardSync.listSyncProblemClientIds().catch((error: unknown) => {
+      console.error("admin: couldn't load the sync-problem Clients", error);
+      return [];
+    }),
+    requests
+      .countNewByClient()
+      .catch((error: unknown): Record<string, number> => {
+        console.error(
+          `admin: couldn't load the New Request counts (${describeError(error)})`,
+        );
+        return {};
       }),
-      auth.listArchivedClients().catch((error: unknown) => {
-        console.error("admin: couldn't load the archived Clients", error);
-        return null;
-      }),
-      boardSync.listSyncProblemClientIds().catch((error: unknown) => {
-        console.error("admin: couldn't load the sync-problem Clients", error);
-        return [];
-      }),
-      requests
-        .countNewByClient()
-        .catch((error: unknown): Record<string, number> => {
-          console.error(
-            `admin: couldn't load the New Request counts (${describeError(error)})`,
-          );
-          return {};
-        }),
-    ]);
+    loadOverdueInvoiceClientIds(),
+  ]);
   return data(
     {
       email,
@@ -92,9 +101,21 @@ export async function loader({ request }: Route.LoaderArgs) {
       archivedClients,
       syncProblemClientIds,
       newRequestCounts,
+      overdueInvoiceClientIds,
     },
     { headers },
   );
+}
+
+async function loadOverdueInvoiceClientIds(): Promise<string[]> {
+  try {
+    return await invoices.listOverdueClientIds();
+  } catch (error) {
+    console.error(
+      `admin: couldn't load the Overdue Invoice Clients (${describeError(error)})`,
+    );
+    return [];
+  }
 }
 
 // A POST to /admin itself lands here. The guard answers first, then the
@@ -131,6 +152,7 @@ export default function AdminLayout({
       archivedClients={loaderData.archivedClients}
       syncProblemClientIds={loaderData.syncProblemClientIds}
       newRequestCounts={loaderData.newRequestCounts}
+      overdueInvoiceClientIds={loaderData.overdueInvoiceClientIds}
     >
       {content}
     </AdminShell>

@@ -11,6 +11,7 @@ import NavItem from "@/components/ui/nav-item";
 import { TooltipProvider } from "@/components/ui/tooltip";
 
 const SYNC: NavAlert = { kind: "sync-problem" };
+const OVERDUE: NavAlert = { kind: "overdue-invoice" };
 
 describe("sortAlerts", () => {
   it("puts New Requests before a sync problem", () => {
@@ -19,6 +20,20 @@ describe("sortAlerts", () => {
     expect(sorted.map((alert) => alert.kind)).toEqual([
       "new-requests",
       "sync-problem",
+    ]);
+  });
+
+  it("puts Overdue Invoices last, after New Requests and a sync problem", () => {
+    const sorted = sortAlerts([
+      OVERDUE,
+      SYNC,
+      { kind: "new-requests", count: 3 },
+    ]);
+
+    expect(sorted.map((alert) => alert.kind)).toEqual([
+      "new-requests",
+      "sync-problem",
+      "overdue-invoice",
     ]);
   });
 });
@@ -36,6 +51,12 @@ describe("getAlertLabels", () => {
       "Sync problem",
     ]);
   });
+
+  it("lists Overdue Invoices last", () => {
+    expect(
+      getAlertLabels([OVERDUE, SYNC, { kind: "new-requests", count: 3 }]),
+    ).toEqual(["3 New Requests", "Sync problem", "Overdue Invoices"]);
+  });
 });
 
 describe("getAlertsSpokenText", () => {
@@ -49,6 +70,12 @@ describe("getAlertsSpokenText", () => {
     expect(getAlertsSpokenText([{ kind: "new-requests", count: 1 }])).toBe(
       ", 1 New Request",
     );
+  });
+
+  it("keeps Overdue Invoices capitalised, last", () => {
+    expect(
+      getAlertsSpokenText([OVERDUE, { kind: "new-requests", count: 3 }, SYNC]),
+    ).toBe(", 3 New Requests, sync problem, Overdue Invoices");
   });
 });
 
@@ -75,5 +102,16 @@ describe("a sidebar nav item with New Requests", () => {
     const html = render([{ kind: "new-requests", count: 3 }]);
 
     expect(html).toMatch(/lucide-inbox[\s\S]*>3<\/span>/);
+  });
+
+  it("shows the receipt icon, with no count, after inbox and sync", () => {
+    const html = render([OVERDUE, SYNC, { kind: "new-requests", count: 3 }]);
+
+    expect(html).toMatch(
+      /lucide-inbox[\s\S]*lucide-refresh-cw-off[\s\S]*lucide-receipt/,
+    );
+    expect(html).toContain(
+      'aria-label="Acme Corp, 3 New Requests, sync problem, Overdue Invoices"',
+    );
   });
 });

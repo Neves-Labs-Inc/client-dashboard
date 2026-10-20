@@ -17,6 +17,8 @@ type AdminShellProps = {
   syncProblemClientIds: string[];
   // New Requests by active Client.
   newRequestCounts: Record<string, number>;
+  // Active Clients with an Overdue Invoice.
+  overdueInvoiceClientIds: string[];
   children: React.ReactNode;
 };
 
@@ -26,6 +28,7 @@ export default function AdminShell({
   archivedClients,
   syncProblemClientIds,
   newRequestCounts,
+  overdueInvoiceClientIds,
   children,
 }: AdminShellProps): React.ReactNode {
   return (
@@ -47,6 +50,7 @@ export default function AdminShell({
               archivedClients={archivedClients}
               syncProblemClientIds={syncProblemClientIds}
               newRequestCounts={newRequestCounts}
+              overdueInvoiceClientIds={overdueInvoiceClientIds}
             />
           </Sidebar>
         }

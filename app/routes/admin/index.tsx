@@ -258,6 +258,7 @@ export default function AdminHome({
       <ClientsPanel
         clients={loaderData.clients}
         syncProblemClientIds={layoutData?.syncProblemClientIds ?? []}
+        overdueInvoiceClientIds={layoutData?.overdueInvoiceClientIds ?? []}
       />
       <UnassignedBoardsPanel boards={loaderData.boards} />
       {layoutData && (
