@@ -1,10 +1,12 @@
 import { Link } from "react-router";
 import Panel from "@/components/ui/panel";
+import { ROW_LINK_HIT_AREA_CLASS } from "@/components/ui/touch-hit-area";
 import TaskStatusIcon, {
   TASK_STATUS_LABEL,
 } from "@/components/ui/task-status-icon";
 import { useClientPaths } from "@/hooks/use-client-paths";
 import type { LinkedTask } from "@/lib/requests/request-rules";
+import { cn } from "@/lib/utils";
 
 type LinkedTaskPanelProps = {
   task: LinkedTask;
@@ -24,7 +26,10 @@ export default function LinkedTaskPanel({
           <>
             <Link
               to={paths.getProjectPath(task.projectId)}
-              className="text-sm/5 break-words text-accent-fg hover:underline"
+              className={cn(
+                ROW_LINK_HIT_AREA_CLASS,
+                "text-sm/5 break-words text-accent-fg hover:underline",
+              )}
             >
               {task.title}
             </Link>

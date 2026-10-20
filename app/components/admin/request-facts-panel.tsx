@@ -5,13 +5,16 @@ import RequestKind from "@/components/requests/request-kind";
 import RequestStatus from "@/components/requests/request-status";
 import DateText from "@/components/ui/date-text";
 import Panel from "@/components/ui/panel";
+import { ROW_LINK_HIT_AREA_CLASS } from "@/components/ui/touch-hit-area";
 import { getClientRequestsPath, REQUESTS_COPY } from "@/lib/admin-requests";
 import { getBoardPath } from "@/lib/board-detail";
 import type { AdminRequestDetail } from "@/lib/requests/requests";
 import { cn } from "@/lib/utils";
 
-const LINK_CLASS =
-  "text-accent-fg underline-offset-2 transition-[color,text-decoration-color] duration-(--dur-instant) hover:underline";
+const LINK_CLASS = cn(
+  ROW_LINK_HIT_AREA_CLASS,
+  "text-accent-fg underline-offset-2 transition-[color,text-decoration-color] duration-(--dur-instant) hover:underline",
+);
 const MICRO_LABEL_CLASS =
   "mb-1.5 text-xs/4 font-semibold tracking-[0.06em] text-fg-2 uppercase";
 
