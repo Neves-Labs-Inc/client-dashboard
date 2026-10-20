@@ -27,19 +27,24 @@ function FieldSkeleton({
 }
 
 // The global Invoices page in blocks, on the real layout's grid and
-// widths: header, status tabs, filter bar (no range, no Clear filters),
-// then the panel.
+// widths: header and New invoice, status tabs, filter bar (no range, no
+// Clear filters), then the panel.
 export default function InvoicesListSkeleton(): React.ReactNode {
   return (
     <SkeletonGroup label="Invoices">
       <div className="flex flex-col gap-4">
-        <div>
-          <div className="flex h-4 items-center">
-            <Skeleton className="h-3 w-[20%]" />
+        {/* PageHeader's layout: "New invoice" under the h1 below md, at
+            the title row's end from md. */}
+        <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+          <div className="min-w-0 md:flex-1">
+            <div className="flex h-4 items-center">
+              <Skeleton className="h-3 w-[20%]" />
+            </div>
+            <div className="mt-1 flex h-6 items-center">
+              <Skeleton className="h-[18px] w-[30%]" />
+            </div>
           </div>
-          <div className="mt-1 flex h-6 items-center">
-            <Skeleton className="h-[18px] w-[30%]" />
-          </div>
+          <Skeleton className="h-11 w-32 shrink-0 rounded-[3px] md:h-8 pointer-coarse:h-11" />
         </div>
         {/* Border outside the row's height, as on TabNav's nav. */}
         <div className="flex border-b border-line">

@@ -23,6 +23,7 @@ export const INVOICE_FILTER_COPY = {
   allClients: "All clients",
   anyTime: "Any time",
   customRange: "Custom range",
+  yearsFailed: "Couldn't load years.",
   chooseClient: "Choose a client.",
   statusLabel: "Invoice status",
   filterAll: "All",

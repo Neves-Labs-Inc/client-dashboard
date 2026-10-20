@@ -22,19 +22,46 @@ const DIRTY_CONFIRM = {
 const LOCKED_CLASS =
   "cursor-not-allowed border-line bg-surface-2 text-fg-2 not-disabled:not-aria-busy:hover:border-line not-disabled:not-aria-busy:hover:bg-surface-2";
 
-type InvoiceDrawerProps = {
+type ClientOption = { id: string; name: string };
+
+// The global drawer's Client select, first field and required.
+export type InvoiceClientSelect = {
+  // Active Clients, A–Z; null when they couldn't load.
+  clients: ClientOption[] | null;
+  // "" for none.
+  initialClientId: string;
+  // Each Client's options, ordered as `projectOptions`; a Client without
+  // Projects may be absent. Null when they couldn't load.
+  projectOptionsByClient: Record<string, ProjectOption[]> | null;
+};
+
+// The Projects offered: the tab's fixed Client's, or the chosen Client's.
+type ProjectSource =
+  | {
+      // Active A–Z, then Past A–Z; null when they couldn't load.
+      projectOptions: ProjectOption[] | null;
+      clientSelect?: never;
+    }
+  | { projectOptions?: never; clientSelect: InvoiceClientSelect };
+
+type InvoiceDrawerProps = ProjectSource & {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   // The New York date: the default issue date.
   today: string;
-  // Active A–Z, then Past A–Z; null when they couldn't load.
-  projectOptions: ProjectOption[] | null;
   // The route the form posts to.
   action: string;
   onCreated: (invoiceId: string, number: string) => void;
   // Where focus goes when the drawer closes.
   getReturnFocusTarget?: () => HTMLElement | null;
 };
+
+// A failed load must never read as "no Clients".
+function getClientHelp(clients: ClientOption[] | null): string | undefined {
+  if (clients === null) return INVOICES_COPY.clientsFailed;
+
+  return clients.length === 0 ? INVOICES_COPY.noActiveClients : undefined;
+}
 
 // DESIGN §9.10: the Admin's New invoice drawer. The number is assigned on
 // the server.
@@ -43,21 +70,40 @@ export default function InvoiceDrawer({
   onOpenChange,
   today,
   projectOptions,
+  clientSelect,
   action,
   onCreated,
   getReturnFocusTarget,
 }: InvoiceDrawerProps): React.ReactNode {
   const formId = useId();
   const helpId = useId();
-  const options = projectOptions ?? [];
+  const isProjectsFailed =
+    clientSelect === undefined
+      ? projectOptions === null
+      : clientSelect.projectOptionsByClient === null;
+  // The Client's options, synchronously: all of them came with the page.
+  function getProjectOptions(clientId: string): ProjectOption[] {
+    if (clientSelect === undefined) return projectOptions ?? [];
+
+    return clientSelect.projectOptionsByClient?.[clientId] ?? [];
+  }
   const form = useInvoiceForm({
     isOpen: open,
     today,
-    projectIds: options.map((project) => project.id),
+    getProjectIds: (clientId) =>
+      getProjectOptions(clientId).map((project) => project.id),
+    clientChoice: clientSelect && {
+      clientIds: (clientSelect.clients ?? []).map((client) => client.id),
+      initialClientId: clientSelect.initialClientId,
+    },
     action,
     onCreated,
   });
   const { values, fieldErrors } = form;
+  const options = getProjectOptions(values.clientId);
+  const isClientMissing = clientSelect !== undefined && values.clientId === "";
+  const clients = clientSelect?.clients ?? null;
+  const hasClients = clients !== null && clients.length > 0;
   const activeProjects = options.filter((project) => !project.isPast);
   const pastProjects = options.filter((project) => project.isPast);
 
@@ -97,6 +143,35 @@ export default function InvoiceDrawer({
         aria-describedby={helpId}
         className="flex flex-col gap-4"
       >
+        {clientSelect && (
+          <Field
+            label={INVOICES_COPY.client}
+            help={getClientHelp(clients)}
+            error={fieldErrors.clientId}
+          >
+            {(control) => (
+              <Select
+                {...control}
+                data-field="clientId"
+                // Ahead of the first Line Item, the tab's first focus: the
+                // Client comes first here. Not when disabled (no Clients).
+                data-autofocus={hasClients || undefined}
+                name={INVOICE_FIELD.clientId}
+                value={values.clientId}
+                disabled={!hasClients}
+                onChange={form.handleChange("clientId")}
+                onBlur={form.handleBlur("clientId")}
+              >
+                <option value="">{INVOICES_COPY.chooseClient}</option>
+                {clients?.map((client) => (
+                  <option key={client.id} value={client.id}>
+                    {client.name}
+                  </option>
+                ))}
+              </Select>
+            )}
+          </Field>
+        )}
         <div className="grid grid-cols-2 gap-3">
           <Field label={INVOICES_COPY.issueDate} error={fieldErrors.issueDate}>
             {(control) => (
@@ -130,9 +205,7 @@ export default function InvoiceDrawer({
         <Field
           label={INVOICES_COPY.project}
           isOptional
-          help={
-            projectOptions === null ? INVOICES_COPY.projectsFailed : undefined
-          }
+          help={isProjectsFailed ? INVOICES_COPY.projectsFailed : undefined}
           error={fieldErrors.projectId}
         >
           {(control) => (
@@ -141,6 +214,7 @@ export default function InvoiceDrawer({
               data-field="projectId"
               name={INVOICE_FIELD.projectId}
               value={values.projectId}
+              disabled={isClientMissing}
               onChange={form.handleChange("projectId")}
               onBlur={form.handleBlur("projectId")}
             >

@@ -41,6 +41,8 @@ export const NEW_INVOICE_VALUE = "invoice";
 // The form's field names. Each Line Item posts one `description` and one
 // `amount`, in order.
 export const INVOICE_FIELD = {
+  // The global drawer's only: the tab's Client is in its URL.
+  clientId: "clientId",
   issueDate: "issueDate",
   dueDate: "dueDate",
   projectId: "projectId",
@@ -90,6 +92,11 @@ export const INVOICES_COPY = {
   archived: "This Client is archived; its Invoices are read-only.",
   clientNotFound: "This Client no longer exists.",
   discard: "Discard this invoice?",
+  client: "Client",
+  chooseClient: "Choose a client",
+  clientRequired: "Choose a client.",
+  noActiveClients: "No active Clients to invoice.",
+  clientsFailed: "Couldn't load Clients.",
 } as const;
 
 // The back link's marker: the tab focuses this Invoice's number link once.

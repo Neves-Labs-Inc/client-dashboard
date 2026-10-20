@@ -15,7 +15,8 @@ const CUSTOM_RANGE: IssuedChoice = "custom";
 
 type InvoiceIssuedFilterProps = {
   draft: InvoiceListForm;
-  years: number[];
+  // Null when they couldn't load: no year options, and the help says so.
+  years: number[] | null;
   rangeError: string | null;
   setDraft: (patch: Partial<InvoiceListForm>) => void;
   apply: (patch?: Partial<InvoiceListForm>) => void;
@@ -49,7 +50,10 @@ export default function InvoiceIssuedFilter({
   return (
     <>
       <div className="min-w-0 md:w-36">
-        <Field label={INVOICE_FILTER_COPY.issued}>
+        <Field
+          label={INVOICE_FILTER_COPY.issued}
+          help={years === null ? INVOICE_FILTER_COPY.yearsFailed : undefined}
+        >
           {(control) => (
             <Select
               {...control}
@@ -60,7 +64,7 @@ export default function InvoiceIssuedFilter({
               <option value={ANY_TIME_VALUE}>
                 {INVOICE_FILTER_COPY.anyTime}
               </option>
-              {years.map((year) => (
+              {years?.map((year) => (
                 <option key={year} value={String(year)}>
                   {year}
                 </option>

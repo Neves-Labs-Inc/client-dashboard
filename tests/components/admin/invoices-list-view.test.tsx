@@ -53,6 +53,8 @@ async function renderView(props: Partial<ViewProps> = {}): Promise<string> {
       form={NO_FILTER}
       rangeError={null}
       rows={[OPEN_ROW, VOID_ROW]}
+      projectOptionsByClient={{}}
+      today="2026-10-19"
       {...props}
     />
   );
@@ -76,6 +78,30 @@ function getHref(html: string, label: string): string | undefined {
 }
 
 describe("the global Invoices list", () => {
+  it("says the Clients failed to load, not that there are none, in the Client filter", async () => {
+    const html = await renderView({ clients: null });
+
+    expect(html).toContain("Couldn&#x27;t load Clients.");
+    const clientSelect = /<select[^>]*name="client"[^>]*>/.exec(html)?.[0];
+    expect(clientSelect).toContain('disabled=""');
+  });
+
+  it("says the years failed to load in the Issued filter, keeping Any time and Custom range", async () => {
+    const html = await renderView({ years: null });
+
+    expect(html).toContain("Couldn&#x27;t load years.");
+    const issuedSelect =
+      /<select[^>]*name="issued"[^>]*>[\s\S]*?<\/select>/.exec(html)?.[0];
+    expect(issuedSelect).not.toContain(`disabled=""`);
+    expect(getText(issuedSelect ?? "").trim()).toBe("Any time Custom range");
+  });
+
+  it("offers New invoice in the header", async () => {
+    const html = await renderView();
+
+    expect(getText(html)).toMatch(/Invoices\s*New invoice/);
+  });
+
   it("counts the rows shown and what is open in the panel meta", async () => {
     const html = await renderView();
 
@@ -222,6 +248,8 @@ describe("the global Invoices list during a same-page filter change", () => {
         form={NO_FILTER}
         rangeError={null}
         rows={[OPEN_ROW, VOID_ROW]}
+        projectOptionsByClient={{}}
+        today="2026-10-19"
       />
     );
     const router = createMemoryRouter(

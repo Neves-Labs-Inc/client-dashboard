@@ -13,7 +13,11 @@ import {
   type InvoiceListForm,
   type StatusChoice,
 } from "@/lib/admin-invoice-filter";
-import { INVOICES_PATH, type InvoiceClientOptions } from "@/lib/admin-invoices";
+import {
+  INVOICES_COPY,
+  INVOICES_PATH,
+  type InvoiceClientOptions,
+} from "@/lib/admin-invoices";
 import { NUMBER_QUERY_MAX } from "@/lib/invoices/invoice-rules";
 
 type InvoiceFilterBarProps = {
@@ -21,8 +25,10 @@ type InvoiceFilterBarProps = {
   form: InvoiceListForm;
   // The status tab shown: the applied one, or one still loading.
   status: StatusChoice;
-  clients: InvoiceClientOptions;
-  years: number[];
+  // Null when they couldn't load: the select says so, never "no Clients".
+  clients: InvoiceClientOptions | null;
+  // Null when they couldn't load.
+  years: number[] | null;
   rangeError: string | null;
 };
 
@@ -54,23 +60,27 @@ export default function InvoiceFilterBar({
     >
       <input type="hidden" name={INVOICE_FILTER_PARAM.status} value={status} />
       <div className="min-w-0 md:w-48">
-        <Field label={INVOICE_FILTER_COPY.client}>
+        <Field
+          label={INVOICE_FILTER_COPY.client}
+          help={clients === null ? INVOICES_COPY.clientsFailed : undefined}
+        >
           {(control) => (
             <Select
               {...control}
               name={INVOICE_FILTER_PARAM.client}
               value={draft.clientId ?? ""}
+              disabled={clients === null}
               onChange={(event) =>
                 apply({ clientId: event.target.value || null })
               }
             >
               <option value="">{INVOICE_FILTER_COPY.allClients}</option>
-              {clients.active.map((client) => (
+              {clients?.active.map((client) => (
                 <option key={client.id} value={client.id}>
                   {client.name}
                 </option>
               ))}
-              {clients.archived.length > 0 && (
+              {clients !== null && clients.archived.length > 0 && (
                 <optgroup label={INVOICE_FILTER_COPY.archivedGroup}>
                   {clients.archived.map((client) => (
                     <option key={client.id} value={client.id}>

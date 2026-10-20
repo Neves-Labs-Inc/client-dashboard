@@ -36,6 +36,8 @@ async function renderAt(url: string): Promise<void> {
     <InvoicesListView
       clients={{ active: [], archived: [] }}
       years={[]}
+      projectOptionsByClient={{}}
+      today="2026-10-19"
       form={{
         status: "open",
         clientId: null,
