@@ -47,6 +47,8 @@ export const MEMO_MAX = 2000;
 // $1,000,000.00, the largest amount one Line Item may carry either way.
 export const AMOUNT_MAX_CENTS = 100_000_000;
 const PAYMENT_TERM_DAYS = 30;
+// The longest number search the Admin's Invoice list runs.
+export const NUMBER_QUERY_MAX = 20;
 
 const AMOUNT_PATTERN = /^(-?)(\d+)(?:\.(\d{1,2}))?$/;
 const ISO_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
@@ -68,7 +70,7 @@ function toUtcDate(date: IsoDate): Date {
 
 // A real calendar date: "2026-02-30" rolls over, so it fails the round trip.
 // Year 0000 parses in JavaScript but Postgres has no year 0.
-function isIsoDate(text: string): boolean {
+export function isIsoDate(text: string): boolean {
   if (!ISO_DATE_PATTERN.test(text)) return false;
   if (text.startsWith(NO_YEAR)) return false;
 
