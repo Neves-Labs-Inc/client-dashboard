@@ -121,6 +121,21 @@ export function getInvoicePath(invoiceId: string): string {
   return `${INVOICES_PATH}/${invoiceId}`;
 }
 
+// The global detail's way back: the list with the search it came from, or
+// plain on a direct visit. Anything but a search ("?…") is ignored, so the
+// link never leaves the list.
+export function getInvoicesBackPath(state: unknown): string {
+  const hasListSearch =
+    typeof state === "object" &&
+    state !== null &&
+    "fromListSearch" in state &&
+    typeof state.fromListSearch === "string" &&
+    state.fromListSearch.startsWith("?");
+  // Its shape is checked just above.
+  const search = hasListSearch ? (state as FromListState).fromListSearch : "";
+  return `${INVOICES_PATH}${search}`;
+}
+
 export function getIssuedToast(number: string): string {
   return `Invoice ${number} issued`;
 }

@@ -1,5 +1,6 @@
 import { Fragment } from "react";
 import { Link } from "react-router";
+import { cn } from "@/lib/utils";
 
 type BreadcrumbItem = {
   label: string;
@@ -11,7 +12,8 @@ type BreadcrumbItem = {
 
 type PageHeaderProps = {
   breadcrumb: BreadcrumbItem[];
-  title: string;
+  // A node, so part of it can take another font (a mono Invoice number).
+  title: React.ReactNode;
   // Rendered inside the h1 after the title, so it's part of the heading's
   // accessible name ("Acme Archived").
   badge?: React.ReactNode;
@@ -19,6 +21,8 @@ type PageHeaderProps = {
   // Makes the h1 a programmatic focus target (tabIndex -1), for pages that
   // move focus to their heading on arrival.
   titleRef?: React.Ref<HTMLHeadingElement>;
+  // Merged into the h1's classes (e.g. a highlight fade after a change).
+  titleClassName?: string;
 };
 
 export default function PageHeader({
@@ -27,6 +31,7 @@ export default function PageHeader({
   badge,
   action,
   titleRef,
+  titleClassName,
 }: PageHeaderProps): React.ReactNode {
   const lastIndex = breadcrumb.length - 1;
   // The current page is the last crumb, unless that crumb links elsewhere.
@@ -76,7 +81,10 @@ export default function PageHeader({
         <h1
           ref={titleRef}
           tabIndex={titleRef ? -1 : undefined}
-          className="mt-1 text-lg/6 font-semibold break-words text-fg outline-hidden"
+          className={cn(
+            "mt-1 text-lg/6 font-semibold break-words text-fg outline-hidden",
+            titleClassName,
+          )}
         >
           {title}
           {badge && <> {badge}</>}

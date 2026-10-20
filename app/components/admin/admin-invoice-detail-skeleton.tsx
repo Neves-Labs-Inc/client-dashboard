@@ -7,6 +7,10 @@ const FACT_ROW_COUNT = 4;
 const LINE_ROW_COUNT = 3;
 const ACTION_COUNT = 2;
 
+type AdminInvoiceDetailSkeletonProps = {
+  route: "client" | "global";
+};
+
 // A box with a text line's height, so blocks sit where the text will.
 function Line({
   className = "h-5",
@@ -42,33 +46,79 @@ function PanelFrame({
   );
 }
 
+// The status buttons, so the header row doesn't push content down.
+function ActionBlocks(): React.ReactNode {
+  return (
+    <div className="flex gap-2">
+      {Array.from({ length: ACTION_COUNT }, (_, index) => (
+        <Skeleton
+          key={index}
+          className="h-11 w-24 rounded-[3px] md:h-8 pointer-coarse:h-11"
+        />
+      ))}
+    </div>
+  );
+}
+
+// The global detail's header: back link, then the PageHeader row
+// (breadcrumb and h1 with the badge; the triggers beside it from md).
+function GlobalHeaderSkeleton(): React.ReactNode {
+  return (
+    <>
+      <Line className="h-11 md:h-5 pointer-coarse:h-11">
+        <Skeleton className="h-3 w-20" />
+      </Line>
+      <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+        <div className="min-w-0 flex-1">
+          <Line className="h-4">
+            <Skeleton className="h-3 w-[30%]" />
+          </Line>
+          <Line className="mt-1 h-6 gap-2">
+            <Skeleton className="h-[18px] w-36" />
+            <Skeleton className="h-[22px] w-16 rounded-[3px]" />
+          </Line>
+        </div>
+        <ActionBlocks />
+      </div>
+    </>
+  );
+}
+
+// The Client tab's header: the workspace header, then the back link over
+// the h2 and the triggers.
+function ClientHeaderSkeleton(): React.ReactNode {
+  return (
+    <>
+      <WorkspaceHeaderSkeleton />
+      <div className="flex flex-col gap-1">
+        <Line className="h-11 md:h-5 pointer-coarse:h-11">
+          <Skeleton className="h-3 w-20" />
+        </Line>
+        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <Line className="gap-2">
+            <Skeleton className="h-3.5 w-28" />
+            <Skeleton className="h-[22px] w-16 rounded-[3px]" />
+          </Line>
+          <ActionBlocks />
+        </div>
+      </div>
+    </>
+  );
+}
+
 // The Invoice detail in blocks, line box for line box, so nothing shifts
 // when the page arrives.
-export default function AdminInvoiceDetailSkeleton(): React.ReactNode {
+export default function AdminInvoiceDetailSkeleton({
+  route,
+}: AdminInvoiceDetailSkeletonProps): React.ReactNode {
   return (
     <SkeletonGroup label="Invoice">
       <div className="flex flex-col gap-4">
-        <WorkspaceHeaderSkeleton />
-        <div className="flex flex-col gap-1">
-          <Line className="h-11 md:h-5 pointer-coarse:h-11">
-            <Skeleton className="h-3 w-20" />
-          </Line>
-          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-            <Line className="gap-2">
-              <Skeleton className="h-3.5 w-28" />
-              <Skeleton className="h-[22px] w-16 rounded-[3px]" />
-            </Line>
-            {/* The status buttons, so the row doesn't push content down. */}
-            <div className="flex gap-2">
-              {Array.from({ length: ACTION_COUNT }, (_, index) => (
-                <Skeleton
-                  key={index}
-                  className="h-11 w-24 rounded-[3px] md:h-8 pointer-coarse:h-11"
-                />
-              ))}
-            </div>
-          </div>
-        </div>
+        {route === "global" ? (
+          <GlobalHeaderSkeleton />
+        ) : (
+          <ClientHeaderSkeleton />
+        )}
         <div className="grid gap-4 xl:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)] xl:grid-rows-[auto_1fr] xl:items-start">
           <PanelFrame
             titleClassName="w-14"

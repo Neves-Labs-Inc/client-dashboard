@@ -127,6 +127,17 @@ export function getRefusalCopy(
     : "This Invoice is no longer Open.";
 }
 
+// The refusal banner, unless the page already says the same: the global
+// detail's archived note shows the archived copy once the page revalidates.
+export function getRefusalBanner(
+  refusal: string | null,
+  hasArchivedNote: boolean,
+): string | null {
+  if (hasArchivedNote && refusal === STATUS_COPY.archived) return null;
+
+  return refusal;
+}
+
 // The detail's clientAction. A network failure (or a crash) becomes the
 // confirm's alert instead of the route's error page; the guard's redirects
 // and a 404 still go through. Anything but a change keeps its 4xx/5xx

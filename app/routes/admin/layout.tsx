@@ -42,6 +42,7 @@ import {
 } from "@/lib/admin-requests";
 import {
   CLIENT_INVOICE_ROUTE_PATTERN,
+  INVOICE_ROUTE_PATTERN,
   CLIENT_INVOICES_ROUTE_PATTERN,
   INVOICES_ROUTE_PATTERN,
   isInvoiceDrawerToggle,
@@ -188,7 +189,8 @@ type LoadingTab =
   | "invoice"
   | "inbox"
   | "inbox-request"
-  | "global-invoices";
+  | "global-invoices"
+  | "global-invoice";
 
 const WORKSPACE_SKELETONS: Record<LoadingTab, React.ReactNode> = {
   team: <TeamSkeleton />,
@@ -197,10 +199,11 @@ const WORKSPACE_SKELETONS: Record<LoadingTab, React.ReactNode> = {
   requests: <ClientRequestsSkeleton />,
   request: <RequestTriageSkeleton route="client" />,
   invoices: <ClientInvoicesSkeleton />,
-  invoice: <AdminInvoiceDetailSkeleton />,
+  invoice: <AdminInvoiceDetailSkeleton route="client" />,
   inbox: <RequestsInboxSkeleton />,
   "inbox-request": <RequestTriageSkeleton route="inbox" />,
   "global-invoices": <InvoicesListSkeleton />,
+  "global-invoice": <AdminInvoiceDetailSkeleton route="global" />,
 };
 
 // Checked in order: the first pattern the target matches names its
@@ -215,6 +218,7 @@ const LOADING_TAB_PATTERNS: [string, LoadingTab][] = [
   [CLIENT_INVOICES_ROUTE_PATTERN, "invoices"],
   [INBOX_REQUEST_ROUTE_PATTERN, "inbox-request"],
   [INBOX_ROUTE_PATTERN, "inbox"],
+  [INVOICE_ROUTE_PATTERN, "global-invoice"],
   [INVOICES_ROUTE_PATTERN, "global-invoices"],
 ];
 
