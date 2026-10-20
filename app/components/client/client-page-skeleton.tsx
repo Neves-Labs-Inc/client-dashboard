@@ -1,4 +1,6 @@
 import OverviewSkeleton from "@/components/client/overview-skeleton";
+import InvoiceDetailSkeleton from "@/components/invoices/invoice-detail-skeleton";
+import InvoicesPageSkeleton from "@/components/invoices/invoices-page-skeleton";
 import ProjectViewSkeleton from "@/components/client/project-view-skeleton";
 import ProjectsPageSkeleton from "@/components/projects/projects-page-skeleton";
 import RequestDetailSkeleton from "@/components/requests/request-detail-skeleton";
@@ -15,6 +17,9 @@ const SKELETONS: Record<ClientPage, (isReadOnly: boolean) => React.ReactNode> =
     request: (isReadOnly) => (
       <RequestDetailSkeleton actionCount={isReadOnly ? 1 : 2} />
     ),
+    // Read-only everywhere, so the preview's are the same.
+    invoices: () => <InvoicesPageSkeleton />,
+    invoice: () => <InvoiceDetailSkeleton />,
   };
 
 // The skeleton a client page shows while a client-side navigation loads it

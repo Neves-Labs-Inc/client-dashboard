@@ -1,4 +1,10 @@
-import { FolderKanban, Inbox, LayoutDashboard, Users } from "lucide-react";
+import {
+  FolderKanban,
+  Inbox,
+  LayoutDashboard,
+  Receipt,
+  Users,
+} from "lucide-react";
 import ClientUserMenu from "@/components/client/client-user-menu";
 import AdminPreviewMenu from "@/components/preview/admin-preview-menu";
 import PreviewBanner from "@/components/preview/preview-banner";
@@ -28,6 +34,9 @@ type ClientShellProps = {
   activeProjectCount: number | null;
   // Null when the count couldn't load: the sidebar shows none.
   newRequestCount: number | null;
+  // Open and Overdue; null when the count couldn't load: the sidebar shows
+  // none.
+  openInvoiceCount: number | null;
   children: React.ReactNode;
 } & (
   | {
@@ -44,7 +53,13 @@ type ClientShellProps = {
 // the preview), the preview's links, banner and "Admin preview" menu in
 // place of the account menu. Everything inside links through its paths.
 export default function ClientShell(props: ClientShellProps): React.ReactNode {
-  const { clientName, activeProjectCount, newRequestCount, children } = props;
+  const {
+    clientName,
+    activeProjectCount,
+    newRequestCount,
+    openInvoiceCount,
+    children,
+  } = props;
   const { preview } = props;
   const paths =
     preview === undefined ? CLIENT_PATHS : getPreviewPaths(preview.clientId);
@@ -89,6 +104,15 @@ export default function ClientShell(props: ClientShellProps): React.ReactNode {
                   icon={FolderKanban}
                   count={activeProjectCount ?? undefined}
                   countLabel="active"
+                />
+              </li>
+              <li>
+                <NavItem
+                  to={paths.invoices}
+                  label="Invoices"
+                  icon={Receipt}
+                  count={openInvoiceCount ?? undefined}
+                  countLabel="open"
                 />
               </li>
               <li>
@@ -150,6 +174,12 @@ function MobileTabs({
         to={paths.projects}
         label="Projects"
         icon={FolderKanban}
+      />
+      <NavItem
+        variant="tab"
+        to={paths.invoices}
+        label="Invoices"
+        icon={Receipt}
       />
       <NavItem
         variant="tab"

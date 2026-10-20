@@ -85,6 +85,12 @@ vi.mock("@/lib/requests/requests.server", () => ({
   requests: { countNewByClient: () => countNewByClient() },
 }));
 
+const listOverdueClientIds = vi.fn<() => Promise<string[]>>();
+
+vi.mock("@/lib/invoices/invoices.server", () => ({
+  invoices: { listOverdueClientIds: () => listOverdueClientIds() },
+}));
+
 const CLIENT_ID = "0199d0a4-5b6c-7d8e-9f01-23456789abcd";
 const TEAM: Team = {
   clientId: CLIENT_ID,
@@ -177,6 +183,8 @@ beforeEach(() => {
   getAccess.mockReset();
   countNewByClient.mockReset();
   countNewByClient.mockResolvedValue({});
+  listOverdueClientIds.mockReset();
+  listOverdueClientIds.mockResolvedValue([]);
   listClients.mockReset();
   listClients.mockResolvedValue([]);
   createClient.mockReset();
@@ -398,6 +406,35 @@ describe("the layout's New Request counts", () => {
   });
 });
 
+describe("the layout's Overdue Invoice Clients", () => {
+  it("carries the ids the Invoices module names", async () => {
+    answerAs(ADMIN);
+    listOverdueClientIds.mockResolvedValue([CLIENT_ID]);
+
+    const result = (await adminLoader(argsFor("/admin"))) as unknown as {
+      data: { overdueInvoiceClientIds: string[] };
+    };
+
+    expect(result.data.overdueInvoiceClientIds).toEqual([CLIENT_ID]);
+  });
+
+  it("still loads, with no ids, when they can't", async () => {
+    answerAs(ADMIN);
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    listOverdueClientIds.mockRejectedValue(new Error("connection lost"));
+
+    const result = (await adminLoader(argsFor("/admin"))) as unknown as {
+      data: { clients: []; overdueInvoiceClientIds: string[] };
+    };
+
+    expect(result.data).toMatchObject({
+      clients: [],
+      overdueInvoiceClientIds: [],
+    });
+    expect(logged).toHaveBeenCalled();
+  });
+});
+
 describe("when the roster can't load", () => {
   beforeEach(() => {
     answerAs(ADMIN);
@@ -416,6 +453,7 @@ describe("when the roster can't load", () => {
       archivedClients: [],
       syncProblemClientIds: [],
       newRequestCounts: {},
+      overdueInvoiceClientIds: [],
     });
   });
 

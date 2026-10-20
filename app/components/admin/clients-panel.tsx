@@ -24,11 +24,14 @@ type ClientsPanelProps = {
   clients: Promise<ClientSummary[] | null>;
   // Active Clients with a sync-problem Project.
   syncProblemClientIds: string[];
+  // Active Clients with an Overdue Invoice.
+  overdueInvoiceClientIds: string[];
 };
 
 export default function ClientsPanel({
   clients,
   syncProblemClientIds,
+  overdueInvoiceClientIds,
 }: ClientsPanelProps): React.ReactNode {
   // Focused after a successful retry: the error's "Try again" goes away.
   const titleRef = useRef<HTMLHeadingElement>(null);
@@ -67,6 +70,9 @@ export default function ClientsPanel({
                       key={client.id}
                       client={client}
                       hasSyncProblem={syncProblemClientIds.includes(client.id)}
+                      hasOverdueInvoice={overdueInvoiceClientIds.includes(
+                        client.id,
+                      )}
                     />
                   ))}
                 </DataTable>

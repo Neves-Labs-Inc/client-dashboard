@@ -55,6 +55,7 @@ function previewShell(
       clientName="Acme"
       activeProjectCount={3}
       newRequestCount={2}
+      openInvoiceCount={4}
       preview={{ clientId: CLIENT_ID, isArchived }}
     >
       {children}
@@ -119,7 +120,7 @@ describe("the preview shell", () => {
     );
   });
 
-  it("links Overview, Projects and Requests under the preview, with no Team", async () => {
+  it("links Overview, Projects, Invoices and Requests under the preview, with no Team", async () => {
     const html = await render(previewShell(<p>page</p>), PREVIEW);
 
     expect(new Set(getHrefs(html))).toEqual(
@@ -127,13 +128,35 @@ describe("the preview shell", () => {
         "#main",
         PREVIEW,
         `${PREVIEW}/projects`,
+        `${PREVIEW}/invoices`,
         `${PREVIEW}/requests`,
         `/admin/clients/${CLIENT_ID}/projects`,
       ]),
     );
     expect(html).not.toContain(">Team<");
     expect(html).toContain('aria-label="Projects, 3 active"');
+    expect(html).toContain('aria-label="Invoices, 4 open"');
     expect(html).toContain('aria-label="Requests, 2 new"');
+  });
+
+  it("puts Invoices between Projects and Requests in the sidebar and the tabs", async () => {
+    const html = await render(previewShell(<p>page</p>), PREVIEW);
+    const navHrefs = getHrefs(html).filter((href) =>
+      [
+        `${PREVIEW}/projects`,
+        `${PREVIEW}/invoices`,
+        `${PREVIEW}/requests`,
+      ].includes(href),
+    );
+
+    expect(navHrefs).toEqual([
+      `${PREVIEW}/projects`,
+      `${PREVIEW}/invoices`,
+      `${PREVIEW}/requests`,
+      `${PREVIEW}/projects`,
+      `${PREVIEW}/invoices`,
+      `${PREVIEW}/requests`,
+    ]);
   });
 
   it("has the Admin preview menu, not a Client User's", async () => {
@@ -249,6 +272,7 @@ describe("the client shell", () => {
         role="owner"
         activeProjectCount={3}
         newRequestCount={2}
+        openInvoiceCount={0}
       >
         <ClientOverviewPage {...props} />
       </ClientShell>,
@@ -260,6 +284,7 @@ describe("the client shell", () => {
       expect.arrayContaining([
         "/overview",
         "/projects",
+        "/invoices",
         "/requests",
         "/team",
         "/projects/p1",
@@ -268,6 +293,8 @@ describe("the client shell", () => {
       ]),
     );
     expect(hrefs.some((href) => href.startsWith("/admin"))).toBe(false);
+    // No open Invoices: the nav shows no count.
+    expect(html).not.toContain('aria-label="Invoices,');
     expect(html).toContain("Account menu, Maya Chen");
     expect(html).not.toContain('aria-label="Admin preview"');
   });

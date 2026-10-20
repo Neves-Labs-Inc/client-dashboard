@@ -17,7 +17,10 @@ import type {
 import { createDb, type Tx } from "@/lib/db/db";
 import { db as appDb } from "@/lib/db/db.server";
 import { getAppEnv, getMigrateEnv } from "@/lib/env";
+import type { InvoiceRow, InvoiceSummary } from "@/lib/invoices/invoices";
 import type { RequestRow } from "@/lib/requests/requests";
+import { loader as invoiceLoader } from "@/routes/preview/invoice";
+import { loader as invoicesLoader } from "@/routes/preview/invoices";
 import { loader as layoutLoader } from "@/routes/preview/layout";
 import { loader as overviewLoader } from "@/routes/preview/overview";
 import { loader as projectLoader } from "@/routes/preview/project";
@@ -31,6 +34,7 @@ import {
   insertTask,
 } from "../support/board";
 import { deleteClients, insertClients } from "../support/clients";
+import { deleteInvoices, insertInvoice } from "../support/invoices";
 import { deleteRequestsAndUsers, insertRequest } from "../support/requests";
 
 // The session store and Better Auth's Client lookup are the boundary; the
@@ -63,6 +67,10 @@ let projectA = "";
 let projectB = "";
 let requestA = "";
 let requestB = "";
+// Client A's, newest issue date first; the Void one is never shown.
+let invoiceIdsA: string[] = [];
+let voidInvoiceA = "";
+let invoiceB = "";
 
 function teamFor(clientId: string): Team {
   return {
@@ -75,7 +83,12 @@ function teamFor(clientId: string): Team {
   };
 }
 
-type Params = { clientId: string; projectId?: string; requestId?: string };
+type Params = {
+  clientId: string;
+  projectId?: string;
+  requestId?: string;
+  invoiceId?: string;
+};
 
 function argsFor<Args>(params: Params): Args {
   const request = new Request(
@@ -158,6 +171,26 @@ beforeAll(async () => {
       clientB,
       "Beta",
     ));
+    const paid = await insertInvoice(tx, {
+      clientId: clientA,
+      issueDate: "2026-02-02",
+      dueDate: "2026-03-04",
+      status: "PAID",
+    });
+    const open = await insertInvoice(tx, {
+      clientId: clientA,
+      issueDate: "2026-03-02",
+      dueDate: "2026-04-01",
+    });
+    const voided = await insertInvoice(tx, {
+      clientId: clientA,
+      issueDate: "2026-04-02",
+      dueDate: "2026-05-02",
+      status: "VOID",
+    });
+    invoiceIdsA = [open.id, paid.id];
+    voidInvoiceA = voided.id;
+    invoiceB = (await insertInvoice(tx, { clientId: clientB })).id;
   });
 });
 
@@ -168,6 +201,7 @@ afterAll(async () => {
   await owner.connect();
   try {
     const ids = [clientA, clientB];
+    await deleteInvoices(owner, ids);
     await deleteRequestsAndUsers(owner, {
       clientIds: ids,
       userIds: submitterIds,
@@ -223,6 +257,25 @@ describe("the preview, on the real tenant path", () => {
     expect(requests?.map((request) => request.title)).toEqual(["Acme request"]);
   });
 
+  it("shows only the Client's Invoices and summary on its Overview, never a Void one", async () => {
+    const { data } = await settle(() =>
+      overviewLoader(argsFor({ clientId: clientA })),
+    );
+    const page = data as {
+      invoices: Promise<InvoiceRow[] | null>;
+      invoiceSummary: Promise<InvoiceSummary | null>;
+    };
+
+    expect((await page.invoices)?.map((invoice) => invoice.id)).toEqual(
+      invoiceIdsA,
+    );
+    expect(await page.invoiceSummary).toEqual({
+      openCount: 1,
+      openBalanceCents: 125_000,
+      overdueCount: 1,
+    });
+  });
+
   it("shows only the Client's Projects on its Projects list", async () => {
     const { data } = await settle(() =>
       projectsLoader(argsFor({ clientId: clientA })),
@@ -250,6 +303,8 @@ describe("the preview, on the real tenant path", () => {
       clientName: "Acme",
       activeProjectCount: 1,
       newRequestCount: 1,
+      // The Open one only: Paid and Void aren't open.
+      openInvoiceCount: 1,
     });
   });
 
@@ -275,6 +330,44 @@ describe("the preview, on the real tenant path", () => {
   it("answers 404 for another Client's Request", async () => {
     const { status } = await settle(() =>
       requestLoader(argsFor({ clientId: clientA, requestId: requestB })),
+    );
+
+    expect(status).toBe(NOT_FOUND);
+  });
+
+  it("lists only the Client's Invoices, newest first, never a Void one", async () => {
+    const { data } = await settle(() =>
+      invoicesLoader(argsFor({ clientId: clientA })),
+    );
+    const page = data as {
+      invoices: InvoiceRow[] | null;
+      openBalanceCents: number | null;
+    };
+
+    expect(page.invoices?.map((invoice) => invoice.id)).toEqual(invoiceIdsA);
+    // Its due date has passed.
+    expect(page.invoices?.[0].status).toBe("OVERDUE");
+    expect(page.openBalanceCents).toBe(125_000);
+  });
+
+  it("shows the Client's Invoice", async () => {
+    const [openId] = invoiceIdsA;
+    const { data } = await settle(() =>
+      invoiceLoader(argsFor({ clientId: clientA, invoiceId: openId })),
+    );
+
+    expect(data).toMatchObject({
+      clientName: "Acme",
+      detail: { id: openId, totalCents: 125_000 },
+    });
+  });
+
+  it.each([
+    ["a Void Invoice", () => voidInvoiceA],
+    ["another Client's Invoice", () => invoiceB],
+  ])("answers 404 for %s", async (_, getId) => {
+    const { status } = await settle(() =>
+      invoiceLoader(argsFor({ clientId: clientA, invoiceId: getId() })),
     );
 
     expect(status).toBe(NOT_FOUND);

@@ -7,7 +7,9 @@ import {
   type ShouldRevalidateFunctionArgs,
 } from "react-router";
 import AdminShell from "@/components/admin/admin-shell";
+import AdminInvoiceDetailSkeleton from "@/components/admin/admin-invoice-detail-skeleton";
 import BoardDetailSkeleton from "@/components/admin/board-detail-skeleton";
+import ClientInvoicesSkeleton from "@/components/admin/client-invoices-skeleton";
 import ClientRequestsSkeleton from "@/components/admin/client-requests-skeleton";
 import RequestTriageSkeleton from "@/components/admin/request-triage-skeleton";
 import RequestsInboxSkeleton from "@/components/admin/requests-inbox-skeleton";
@@ -37,7 +39,13 @@ import {
   INBOX_REQUEST_ROUTE_PATTERN,
   INBOX_ROUTE_PATTERN,
 } from "@/lib/admin-requests";
+import {
+  CLIENT_INVOICE_ROUTE_PATTERN,
+  CLIENT_INVOICES_ROUTE_PATTERN,
+  isInvoiceDrawerToggle,
+} from "@/lib/admin-invoices";
 import { describeError } from "@/lib/describe-error";
+import { invoices } from "@/lib/invoices/invoices.server";
 import { requests } from "@/lib/requests/requests.server";
 import type { Route } from "./+types/layout";
 
@@ -55,29 +63,37 @@ export async function loader({ request }: Route.LoaderArgs) {
   // The sidebar's sync-problem icons: none if they can't load.
   // New Requests by active Client: the Requests entry's total (and the
   // Clients' alert icons); none if they can't load.
-  const [clients, archivedClients, syncProblemClientIds, newRequestCounts] =
-    await Promise.all([
-      auth.listClients().catch((error: unknown) => {
-        console.error("admin: couldn't load the sidebar's Clients", error);
-        return null;
+  // Active Clients with an Overdue Invoice: the receipt icons and Home's
+  // "Overdue invoice" lines; none if they can't load.
+  const [
+    clients,
+    archivedClients,
+    syncProblemClientIds,
+    newRequestCounts,
+    overdueInvoiceClientIds,
+  ] = await Promise.all([
+    auth.listClients().catch((error: unknown) => {
+      console.error("admin: couldn't load the sidebar's Clients", error);
+      return null;
+    }),
+    auth.listArchivedClients().catch((error: unknown) => {
+      console.error("admin: couldn't load the archived Clients", error);
+      return null;
+    }),
+    boardSync.listSyncProblemClientIds().catch((error: unknown) => {
+      console.error("admin: couldn't load the sync-problem Clients", error);
+      return [];
+    }),
+    requests
+      .countNewByClient()
+      .catch((error: unknown): Record<string, number> => {
+        console.error(
+          `admin: couldn't load the New Request counts (${describeError(error)})`,
+        );
+        return {};
       }),
-      auth.listArchivedClients().catch((error: unknown) => {
-        console.error("admin: couldn't load the archived Clients", error);
-        return null;
-      }),
-      boardSync.listSyncProblemClientIds().catch((error: unknown) => {
-        console.error("admin: couldn't load the sync-problem Clients", error);
-        return [];
-      }),
-      requests
-        .countNewByClient()
-        .catch((error: unknown): Record<string, number> => {
-          console.error(
-            `admin: couldn't load the New Request counts (${describeError(error)})`,
-          );
-          return {};
-        }),
-    ]);
+    loadOverdueInvoiceClientIds(),
+  ]);
   return data(
     {
       email,
@@ -85,9 +101,21 @@ export async function loader({ request }: Route.LoaderArgs) {
       archivedClients,
       syncProblemClientIds,
       newRequestCounts,
+      overdueInvoiceClientIds,
     },
     { headers },
   );
+}
+
+async function loadOverdueInvoiceClientIds(): Promise<string[]> {
+  try {
+    return await invoices.listOverdueClientIds();
+  } catch (error) {
+    console.error(
+      `admin: couldn't load the Overdue Invoice Clients (${describeError(error)})`,
+    );
+    return [];
+  }
 }
 
 // A POST to /admin itself lands here. The guard answers first, then the
@@ -105,6 +133,7 @@ export function shouldRevalidate(args: ShouldRevalidateFunctionArgs): boolean {
     !isNewClientDrawerToggle(args) &&
     !isLinkDrawerToggle(args) &&
     !isMapDrawerToggle(args) &&
+    !isInvoiceDrawerToggle(args) &&
     !isInviteFlagRemoval(args)
   );
 }
@@ -123,6 +152,7 @@ export default function AdminLayout({
       archivedClients={loaderData.archivedClients}
       syncProblemClientIds={loaderData.syncProblemClientIds}
       newRequestCounts={loaderData.newRequestCounts}
+      overdueInvoiceClientIds={loaderData.overdueInvoiceClientIds}
     >
       {content}
     </AdminShell>
@@ -135,6 +165,8 @@ type LoadingTab =
   | "board"
   | "requests"
   | "request"
+  | "invoices"
+  | "invoice"
   | "inbox"
   | "inbox-request";
 
@@ -144,6 +176,8 @@ const WORKSPACE_SKELETONS: Record<LoadingTab, React.ReactNode> = {
   board: <BoardDetailSkeleton />,
   requests: <ClientRequestsSkeleton />,
   request: <RequestTriageSkeleton route="client" />,
+  invoices: <ClientInvoicesSkeleton />,
+  invoice: <AdminInvoiceDetailSkeleton />,
   inbox: <RequestsInboxSkeleton />,
   "inbox-request": <RequestTriageSkeleton route="inbox" />,
 };
@@ -156,6 +190,8 @@ const LOADING_TAB_PATTERNS: [string, LoadingTab][] = [
   [PROJECTS_ROUTE_PATTERN, "projects"],
   [CLIENT_REQUEST_ROUTE_PATTERN, "request"],
   [CLIENT_REQUESTS_ROUTE_PATTERN, "requests"],
+  [CLIENT_INVOICE_ROUTE_PATTERN, "invoice"],
+  [CLIENT_INVOICES_ROUTE_PATTERN, "invoices"],
   [INBOX_REQUEST_ROUTE_PATTERN, "inbox-request"],
   [INBOX_ROUTE_PATTERN, "inbox"],
 ];

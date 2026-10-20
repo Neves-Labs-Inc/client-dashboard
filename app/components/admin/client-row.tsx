@@ -1,4 +1,4 @@
-import { Clock, RefreshCwOff } from "lucide-react";
+import { Clock, Receipt, RefreshCwOff } from "lucide-react";
 import { Link } from "react-router";
 import { CELL_CLASS, ROW_GRID_CLASS } from "@/components/admin/clients-grid";
 import DataTableCell from "@/components/ui/data-table-cell";
@@ -23,11 +23,13 @@ function OwnerText({ owner }: Pick<ClientSummary, "owner">): React.ReactNode {
 type ClientRowProps = {
   client: ClientSummary;
   hasSyncProblem: boolean;
+  hasOverdueInvoice: boolean;
 };
 
 export default function ClientRow({
   client,
   hasSyncProblem,
+  hasOverdueInvoice,
 }: ClientRowProps): React.ReactNode {
   const usersWord = client.userCount === 1 ? "user" : "users";
 
@@ -50,6 +52,16 @@ export default function ClientRow({
               className="shrink-0 text-fg-2"
             />
             Sync problem
+          </p>
+        )}
+        {hasOverdueInvoice && (
+          <p className="mt-0.5 flex items-center gap-1.5 text-[13px]/5 text-fg-2">
+            <Receipt
+              size={16}
+              aria-hidden="true"
+              className="shrink-0 text-fg-2"
+            />
+            Overdue invoice
           </p>
         )}
       </DataTableCell>

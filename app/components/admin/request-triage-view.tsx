@@ -1,6 +1,5 @@
 import { Archive, Lock } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
-import { useLocation } from "react-router";
+import { useCallback, useRef } from "react";
 import ClientWorkspaceHeader, {
   CLIENTS_CRUMB,
   type ClientWorkspace,
@@ -16,6 +15,7 @@ import PageHeader from "@/components/ui/page-header";
 import Panel from "@/components/ui/panel";
 import PanelError from "@/components/ui/panel-error";
 import { useArchiveClient } from "@/hooks/use-archive-client";
+import { useArrivalFocus } from "@/hooks/use-arrival-focus";
 import { useRequestTriageForm } from "@/hooks/use-request-triage-form";
 import { useRowHighlight } from "@/hooks/use-row-highlight";
 import {
@@ -172,19 +172,6 @@ function ClientTriage({
       )}
     </>
   );
-}
-
-// Arriving from a list, the clicked link is gone: start at the title.
-// Read once: later revalidations mustn't move focus again.
-function useArrivalFocus(
-  titleRef: React.RefObject<HTMLHeadingElement | null>,
-): void {
-  const location = useLocation();
-  const [isInAppArrival] = useState(() => location.key !== "default");
-
-  useEffect(() => {
-    if (isInAppArrival) titleRef.current?.focus();
-  }, [isInAppArrival, titleRef]);
 }
 
 function TriageBody({

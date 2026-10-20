@@ -24,20 +24,30 @@ type AdminSidebarNavProps = {
   syncProblemClientIds: string[];
   // New Requests by active Client; empty when they failed to load.
   newRequestCounts: Record<string, number>;
+  // Active Clients with an Overdue Invoice.
+  overdueInvoiceClientIds: string[];
 };
+
+// The ids each alert is read from.
+type ClientAlertSources = Pick<
+  AdminSidebarNavProps,
+  "newRequestCounts" | "syncProblemClientIds" | "overdueInvoiceClientIds"
+>;
 
 function getClientAlerts(
   clientId: string,
-  newRequestCounts: Record<string, number>,
-  syncProblemClientIds: string[],
+  sources: ClientAlertSources,
 ): NavAlert[] {
   const alerts: NavAlert[] = [];
-  const newRequestCount = newRequestCounts[clientId] ?? 0;
+  const newRequestCount = sources.newRequestCounts[clientId] ?? 0;
   if (newRequestCount > 0) {
     alerts.push({ kind: "new-requests", count: newRequestCount });
   }
-  if (syncProblemClientIds.includes(clientId)) {
+  if (sources.syncProblemClientIds.includes(clientId)) {
     alerts.push({ kind: "sync-problem" });
+  }
+  if (sources.overdueInvoiceClientIds.includes(clientId)) {
+    alerts.push({ kind: "overdue-invoice" });
   }
   return alerts;
 }
@@ -48,6 +58,7 @@ export default function AdminSidebarNav({
   archivedClients,
   syncProblemClientIds,
   newRequestCounts,
+  overdueInvoiceClientIds,
 }: AdminSidebarNavProps): React.ReactNode {
   const { pathname, state } = useLocation();
   // Arriving from a create: that Client's entry gets the highlight fade.
@@ -93,11 +104,11 @@ export default function AdminSidebarNav({
               label={client.name}
               active={pathname.startsWith(`/admin/clients/${client.id}/`)}
               isHighlighted={client.id === createdClientId}
-              alerts={getClientAlerts(
-                client.id,
+              alerts={getClientAlerts(client.id, {
                 newRequestCounts,
                 syncProblemClientIds,
-              )}
+                overdueInvoiceClientIds,
+              })}
             />
           </li>
         ))}

@@ -1,18 +1,25 @@
-import { Inbox, RefreshCwOff, type LucideIcon } from "lucide-react";
+import { Inbox, Receipt, RefreshCwOff, type LucideIcon } from "lucide-react";
 
-// What a Client row can flag. Phase 7 adds { kind: "overdue-invoice" }.
+// What a Client row can flag.
 export type NavAlert =
-  { kind: "new-requests"; count: number } | { kind: "sync-problem" };
+  | { kind: "new-requests"; count: number }
+  | { kind: "sync-problem" }
+  | { kind: "overdue-invoice" };
 
 type AlertKind = NavAlert["kind"];
 
 const ALERT_ICONS: Record<AlertKind, LucideIcon> = {
   "new-requests": Inbox,
   "sync-problem": RefreshCwOff,
+  "overdue-invoice": Receipt,
 };
 
 // DESIGN §6.3 order: inbox, sync, receipt.
-const ALERT_ORDER: AlertKind[] = ["new-requests", "sync-problem"];
+const ALERT_ORDER: AlertKind[] = [
+  "new-requests",
+  "sync-problem",
+  "overdue-invoice",
+];
 
 export function sortAlerts(alerts: NavAlert[]): NavAlert[] {
   return [...alerts].sort(
@@ -22,13 +29,15 @@ export function sortAlerts(alerts: NavAlert[]): NavAlert[] {
 
 function getLabel(alert: NavAlert): string {
   if (alert.kind === "sync-problem") return "Sync problem";
+  if (alert.kind === "overdue-invoice") return "Overdue Invoices";
 
   return alert.count === 1
     ? `${alert.count} New Request`
     : `${alert.count} New Requests`;
 }
 
-// "New Request" is a domain term, so only the sync problem is lowercased.
+// "New Request" and "Overdue Invoices" are domain terms, so only the sync
+// problem is lowercased.
 function getSpokenLabel(alert: NavAlert): string {
   return alert.kind === "sync-problem" ? "sync problem" : getLabel(alert);
 }
@@ -56,7 +65,7 @@ export default function NavAlertIcons({
         const icon = (
           <Icon size={16} aria-hidden="true" className="shrink-0 text-fg-2" />
         );
-        if (alert.kind === "sync-problem") {
+        if (alert.kind !== "new-requests") {
           return <span key={alert.kind}>{icon}</span>;
         }
         return (

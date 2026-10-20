@@ -6,10 +6,26 @@ import type {
   ProjectView,
 } from "@/lib/client-projects/client-projects";
 import type {
+  InvoiceDetail,
+  InvoiceRow,
+  Invoices,
+} from "@/lib/invoices/invoices";
+import type {
   RequestDetail,
   Requests,
   RequestRow,
 } from "@/lib/requests/requests";
+import {
+  action as invoiceAction,
+  headers as invoiceHeaders,
+  loader as invoiceLoader,
+  meta as invoiceMeta,
+} from "@/routes/preview/invoice";
+import {
+  action as invoicesAction,
+  headers as invoicesHeaders,
+  loader as invoicesLoader,
+} from "@/routes/preview/invoices";
 import {
   action as layoutAction,
   headers as layoutHeaders,
@@ -99,10 +115,25 @@ vi.mock("@/lib/requests/requests.server", () => ({
   },
 }));
 
+const listInvoices = vi.fn<Invoices["listInvoices"]>();
+const getInvoice = vi.fn<Invoices["getInvoice"]>();
+const getInvoiceSummary = vi.fn<Invoices["getInvoiceSummary"]>();
+
+vi.mock("@/lib/invoices/invoices.server", () => ({
+  invoices: {
+    listInvoices: (...args: Parameters<Invoices["listInvoices"]>) =>
+      listInvoices(...args),
+    getInvoice: (...args: Parameters<Invoices["getInvoice"]>) =>
+      getInvoice(...args),
+    getInvoiceSummary: (clientId: string) => getInvoiceSummary(clientId),
+  },
+}));
+
 const PORTAL_ORIGIN = "http://localhost:5173";
 const CLIENT_ID = "0199d0a4-5b6c-7d8e-9f01-23456789abcd";
 const PROJECT_ID = "0199d0a4-5b6c-7d8e-9f01-2345678900aa";
 const REQUEST_ID = "0199d0a4-5b6c-7d8e-9f01-2345678900bb";
+const INVOICE_ID = "0199d0a4-5b6c-7d8e-9f01-2345678900cc";
 const PREVIEW_PATH = `/admin/clients/${CLIENT_ID}/preview`;
 const NOT_FOUND = 404;
 const METHOD_NOT_ALLOWED = 405;
@@ -159,7 +190,12 @@ const REQUEST_ROW: RequestRow = {
   createdAt: new Date("2026-10-07"),
 };
 
-type Params = { clientId: string; projectId?: string; requestId?: string };
+type Params = {
+  clientId: string;
+  projectId?: string;
+  requestId?: string;
+  invoiceId?: string;
+};
 
 function argsFor<Args>(path: string, params: Params, method = "GET"): Args {
   const request = new Request(`${PORTAL_ORIGIN}${path}`, {
@@ -202,6 +238,25 @@ async function settle(run: () => Promise<unknown>): Promise<Settled> {
 const PARAMS: Params = { clientId: CLIENT_ID };
 const PROJECT_PARAMS: Params = { clientId: CLIENT_ID, projectId: PROJECT_ID };
 const REQUEST_PARAMS: Params = { clientId: CLIENT_ID, requestId: REQUEST_ID };
+const INVOICE_PARAMS: Params = { clientId: CLIENT_ID, invoiceId: INVOICE_ID };
+
+const INVOICE_ROW: InvoiceRow = {
+  id: INVOICE_ID,
+  number: "NL-0007-2026",
+  issueDate: "2026-09-01",
+  dueDate: "2026-10-01",
+  totalCents: 125_000,
+  status: "OVERDUE",
+};
+
+const INVOICE_DETAIL: InvoiceDetail = {
+  ...INVOICE_ROW,
+  memo: null,
+  paidDate: null,
+  statusChangedAt: new Date("2026-09-01T15:00:00Z"),
+  project: null,
+  lineItems: [{ id: "l1", description: "Design", amountCents: 125_000 }],
+};
 
 const REQUEST_DETAIL: RequestDetail = {
   ...REQUEST_ROW,
@@ -238,6 +293,15 @@ const LOADERS: Record<string, (params: Params) => Promise<unknown>> = {
         ...params,
       }),
     ),
+  "preview Invoices": (params) =>
+    invoicesLoader(argsFor(`${PREVIEW_PATH}/invoices`, params)),
+  "preview Invoice detail": (params) =>
+    invoiceLoader(
+      argsFor(`${PREVIEW_PATH}/invoices/${INVOICE_ID}`, {
+        invoiceId: INVOICE_ID,
+        ...params,
+      }),
+    ),
 };
 
 const ACTIONS: Record<string, () => Promise<unknown>> = {
@@ -256,6 +320,12 @@ const ACTIONS: Record<string, () => Promise<unknown>> = {
     projectAction(
       argsFor(`${PREVIEW_PATH}/projects/${PROJECT_ID}`, PROJECT_PARAMS, "POST"),
     ),
+  "preview Invoices": () =>
+    invoicesAction(argsFor(`${PREVIEW_PATH}/invoices`, PARAMS, "POST")),
+  "preview Invoice detail": () =>
+    invoiceAction(
+      argsFor(`${PREVIEW_PATH}/invoices/${INVOICE_ID}`, INVOICE_PARAMS, "POST"),
+    ),
 };
 
 function expectNoReadModelCalls(): void {
@@ -269,6 +339,9 @@ function expectNoReadModelCalls(): void {
   expect(submitRequest).not.toHaveBeenCalled();
   expect(editRequest).not.toHaveBeenCalled();
   expect(withdrawRequest).not.toHaveBeenCalled();
+  expect(listInvoices).not.toHaveBeenCalled();
+  expect(getInvoice).not.toHaveBeenCalled();
+  expect(getInvoiceSummary).not.toHaveBeenCalled();
 }
 
 beforeEach(() => {
@@ -292,6 +365,16 @@ beforeEach(() => {
   submitRequest.mockReset();
   editRequest.mockReset();
   withdrawRequest.mockReset();
+  listInvoices.mockReset();
+  listInvoices.mockResolvedValue([INVOICE_ROW]);
+  getInvoice.mockReset();
+  getInvoice.mockResolvedValue(INVOICE_DETAIL);
+  getInvoiceSummary.mockReset();
+  getInvoiceSummary.mockResolvedValue({
+    openCount: 4,
+    openBalanceCents: 425_000,
+    overdueCount: 1,
+  });
 });
 
 describe("the preview guard", () => {
@@ -372,10 +455,27 @@ describe("the preview layout", () => {
       isArchived: false,
       activeProjectCount: 3,
       newRequestCount: 2,
+      openInvoiceCount: 4,
     });
     expect(getTeam).toHaveBeenCalledWith(CLIENT_ID);
     expect(countActiveProjects.mock.calls).toEqual([[CLIENT_ID]]);
     expect(countNewRequests.mock.calls).toEqual([[CLIENT_ID]]);
+    expect(getInvoiceSummary.mock.calls).toEqual([[CLIENT_ID]]);
+  });
+
+  it("still renders the shell, without the open Invoice count, when it fails", async () => {
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+    getInvoiceSummary.mockRejectedValue(new Error("connection lost"));
+
+    const { data } = await settle(() => LOADERS["preview layout"](PARAMS));
+
+    expect(data).toMatchObject({
+      activeProjectCount: 3,
+      newRequestCount: 2,
+      openInvoiceCount: null,
+    });
+    expect(errorLog).toHaveBeenCalled();
+    errorLog.mockRestore();
   });
 
   it("flags an archived Client", async () => {
@@ -429,6 +529,27 @@ describe("the preview Overview", () => {
       (data as { requests: Promise<unknown> }).requests,
     ).resolves.toBeNull();
     expect(errorLog).toHaveBeenCalled();
+    errorLog.mockRestore();
+  });
+});
+
+describe("the preview Overview's Invoices", () => {
+  it("resolves failed Invoices and summary to null, leaving the Projects", async () => {
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+    listInvoices.mockRejectedValue(new Error("connection lost"));
+    getInvoiceSummary.mockRejectedValue(new Error("connection lost"));
+
+    const { data } = await settle(() => LOADERS["preview Overview"](PARAMS));
+
+    const page = data as {
+      invoices: Promise<unknown>;
+      invoiceSummary: Promise<unknown>;
+      projects: Promise<unknown>;
+    };
+    await expect(page.invoices).resolves.toBeNull();
+    await expect(page.invoiceSummary).resolves.toBeNull();
+    await expect(page.projects).resolves.toEqual([SUMMARY]);
+    expect(errorLog).toHaveBeenCalledTimes(2);
     errorLog.mockRestore();
   });
 });
@@ -518,6 +639,70 @@ describe("the preview Request detail", () => {
   });
 });
 
+describe("the preview Invoices", () => {
+  it("reads the URL's Client's Invoices and open balance", async () => {
+    const { data } = await settle(() => LOADERS["preview Invoices"](PARAMS));
+
+    expect(data).toEqual({
+      clientName: "Acme",
+      invoices: [INVOICE_ROW],
+      openBalanceCents: 425_000,
+    });
+    expect(listInvoices.mock.calls).toEqual([[CLIENT_ID]]);
+    expect(getInvoiceSummary.mock.calls).toEqual([[CLIENT_ID]]);
+  });
+
+  it("gives the panel null, not a throw, when the list fails", async () => {
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+    listInvoices.mockRejectedValue(new Error("connection lost"));
+
+    const { data } = await settle(() => LOADERS["preview Invoices"](PARAMS));
+
+    expect(data).toMatchObject({ invoices: null, openBalanceCents: 425_000 });
+    expect(errorLog).toHaveBeenCalled();
+    errorLog.mockRestore();
+  });
+
+  it("keeps the list, without the open balance, when the summary fails", async () => {
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+    getInvoiceSummary.mockRejectedValue(new Error("connection lost"));
+
+    const { data } = await settle(() => LOADERS["preview Invoices"](PARAMS));
+
+    expect(data).toMatchObject({
+      invoices: [INVOICE_ROW],
+      openBalanceCents: null,
+    });
+    expect(errorLog).toHaveBeenCalled();
+    errorLog.mockRestore();
+  });
+});
+
+describe("the preview Invoice detail", () => {
+  it("reads the Invoice for the URL's Client", async () => {
+    const { data } = await settle(() =>
+      LOADERS["preview Invoice detail"](INVOICE_PARAMS),
+    );
+
+    // The Admin's last status change never reaches the Client.
+    const { statusChangedAt, ...shown } = INVOICE_DETAIL;
+    expect(statusChangedAt).toBeInstanceOf(Date);
+    expect(data).toEqual({ clientName: "Acme", detail: shown });
+    expect(getInvoice.mock.calls).toEqual([[CLIENT_ID, INVOICE_ID]]);
+  });
+
+  it("answers 404 for an Invoice the Client can't see", async () => {
+    getInvoice.mockResolvedValue(null);
+
+    const { status, headers } = await settle(() =>
+      LOADERS["preview Invoice detail"](INVOICE_PARAMS),
+    );
+
+    expect(status).toBe(NOT_FOUND);
+    expect(headers.getSetCookie()).toEqual([RENEWED_COOKIE]);
+  });
+});
+
 describe("the preview not-found titles", () => {
   // The shape React Router gives a thrown data(…, { status }).
   const notFound = {
@@ -539,6 +724,7 @@ describe("the preview not-found titles", () => {
   const cases = [
     ["Request", requestMeta, "Request not found"],
     ["Project", projectMeta, "Project not found"],
+    ["Invoice", invoiceMeta, "Invoice not found"],
   ] as const;
 
   for (const [what, meta, label] of cases) {
@@ -568,6 +754,8 @@ describe("the preview responses", () => {
     "preview Project view": projectHeaders,
     "preview Requests": requestsHeaders,
     "preview Request detail": requestHeaders,
+    "preview Invoices": invoicesHeaders,
+    "preview Invoice detail": invoiceHeaders,
   };
 
   for (const [page, getHeaders] of Object.entries(routeHeaders)) {

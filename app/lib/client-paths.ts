@@ -2,6 +2,7 @@ import { REQUESTS_PATH } from "@/lib/request-drawer";
 
 const OVERVIEW_PATH = "/overview";
 const PROJECTS_SEGMENT = "/projects";
+const INVOICES_SEGMENT = "/invoices";
 
 // Where the client pages live: the client area's own routes, or the Admin
 // preview's read-only copy of them under one Client. Components link through
@@ -10,23 +11,34 @@ export type ClientPaths = {
   overview: string;
   projects: string;
   requests: string;
+  invoices: string;
   getProjectPath: (projectId: string) => string;
   getRequestPath: (requestId: string) => string;
+  getInvoicePath: (invoiceId: string) => string;
 };
 
 // The client pages both areas have, for picking a page's skeleton.
 export type ClientPage =
-  "overview" | "projects" | "project" | "requests" | "request";
+  | "overview"
+  | "projects"
+  | "project"
+  | "requests"
+  | "request"
+  | "invoices"
+  | "invoice";
 
 function buildClientPaths(basePath: string, overview: string): ClientPaths {
   const projects = `${basePath}${PROJECTS_SEGMENT}`;
   const requests = `${basePath}${REQUESTS_PATH}`;
+  const invoices = `${basePath}${INVOICES_SEGMENT}`;
   return {
     overview,
     projects,
     requests,
+    invoices,
     getProjectPath: (projectId) => `${projects}/${projectId}`,
     getRequestPath: (requestId) => `${requests}/${requestId}`,
+    getInvoicePath: (invoiceId) => `${invoices}/${invoiceId}`,
   };
 }
 
@@ -55,10 +67,14 @@ export function getClientPage(
     page = "projects";
   } else if (pathname === paths.requests) {
     page = "requests";
+  } else if (pathname === paths.invoices) {
+    page = "invoices";
   } else if (isChildOf(pathname, paths.projects)) {
     page = "project";
   } else if (isChildOf(pathname, paths.requests)) {
     page = "request";
+  } else if (isChildOf(pathname, paths.invoices)) {
+    page = "invoice";
   }
   return page;
 }

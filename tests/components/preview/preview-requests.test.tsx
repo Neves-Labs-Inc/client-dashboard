@@ -56,6 +56,7 @@ async function render(element: React.ReactNode, path: string): Promise<string> {
             clientName="Acme"
             activeProjectCount={1}
             newRequestCount={2}
+            openInvoiceCount={null}
             preview={{ clientId: CLIENT_ID, isArchived: false }}
           >
             {element}

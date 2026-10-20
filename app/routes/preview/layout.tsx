@@ -12,6 +12,7 @@ import { useNavigatingToPath } from "@/hooks/use-navigating-to-path";
 import { getClientPage, getPreviewPaths } from "@/lib/client-paths";
 import { clientProjects } from "@/lib/client-projects/client-projects.server";
 import { describeError } from "@/lib/describe-error";
+import { invoices } from "@/lib/invoices/invoices.server";
 import { getNoStoreHeaders } from "@/lib/no-store-headers";
 import {
   refusePreviewAction,
@@ -41,15 +42,25 @@ export async function loader({ request, params }: Route.LoaderArgs) {
     params.clientId,
   );
   const { clientId } = client;
-  const [activeProjectCount, newRequestCount] = await Promise.all([
-    loadNavCount("the active Projects", clientId, () =>
-      clientProjects.countActiveProjects(clientId),
-    ),
-    loadNavCount("the New Requests", clientId, () =>
-      requests.countNewRequests(clientId),
-    ),
-  ]);
-  return data({ ...client, activeProjectCount, newRequestCount }, { headers });
+  const [activeProjectCount, newRequestCount, openInvoiceCount] =
+    await Promise.all([
+      loadNavCount("the active Projects", clientId, () =>
+        clientProjects.countActiveProjects(clientId),
+      ),
+      loadNavCount("the New Requests", clientId, () =>
+        requests.countNewRequests(clientId),
+      ),
+      // Open and Overdue alike.
+      loadNavCount("the open Invoices", clientId, () =>
+        invoices
+          .getInvoiceSummary(clientId)
+          .then((summary) => summary.openCount),
+      ),
+    ]);
+  return data(
+    { ...client, activeProjectCount, newRequestCount, openInvoiceCount },
+    { headers },
+  );
 }
 
 // The preview never writes.
@@ -103,6 +114,7 @@ export default function PreviewLayout({
       clientName={clientName}
       activeProjectCount={loaderData.activeProjectCount}
       newRequestCount={loaderData.newRequestCount}
+      openInvoiceCount={loaderData.openInvoiceCount}
       preview={{ clientId, isArchived }}
     >
       {getClientPageSkeleton(page, true) ?? <Outlet />}
