@@ -239,7 +239,10 @@ describe("the global Invoices filters", () => {
 
 describe("the global Invoices list during a same-page filter change", () => {
   // The list is shown, then a filter navigation's loader hangs.
-  async function renderSwitching(target: string): Promise<string> {
+  async function renderSwitching(
+    target: string,
+    start = "/admin/invoices",
+  ): Promise<string> {
     let loads = 0;
     const element = (
       <InvoicesListView
@@ -260,7 +263,7 @@ describe("the global Invoices list during a same-page filter change", () => {
           loader: () => (loads++ === 0 ? null : new Promise(() => {})),
         },
       ],
-      { initialEntries: ["/admin/invoices"] },
+      { initialEntries: [start] },
     );
     await vi.waitFor(() => expect(router.state.initialized).toBe(true));
     void router.navigate(target);
@@ -282,6 +285,30 @@ describe("the global Invoices list during a same-page filter change", () => {
     expect(html).toMatch(/Loading (<!-- -->)?Invoices/);
     expect(html).not.toContain("NL-0042-2026");
     expect(html).not.toContain("open $");
+  });
+
+  it.each([
+    [
+      "opening on the unfiltered list",
+      "/admin/invoices?new=invoice",
+      undefined,
+    ],
+    [
+      "opening on a filtered list",
+      "/admin/invoices?status=paid&new=invoice",
+      "/admin/invoices?status=paid",
+    ],
+    [
+      "closing the drawer",
+      "/admin/invoices?status=paid",
+      "/admin/invoices?status=paid&new=invoice",
+    ],
+  ])("keeps rows and meta when %s", async (_name, target, start) => {
+    const html = await renderSwitching(target, start);
+
+    expect(html).not.toMatch(/Loading (<!-- -->)?Invoices/);
+    expect(html).toContain("NL-0042-2026");
+    expect(html).toContain("open $");
   });
 
   it("keeps the filter bar on the loading tab's status", async () => {

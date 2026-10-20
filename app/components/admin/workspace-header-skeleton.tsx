@@ -1,15 +1,23 @@
 import Skeleton from "@/components/ui/skeleton";
 
-// ClientWorkspaceHeader in blocks: breadcrumb, h1, then the tabs.
+// ClientWorkspaceHeader in blocks: breadcrumb, h1, the action row below md, then the tabs.
 export default function WorkspaceHeaderSkeleton(): React.ReactNode {
   return (
     <>
-      <div>
-        <div className="flex h-4 items-center">
-          <Skeleton className="h-3 w-[30%]" />
+      {/* Mirrors PageHeader's column below md; the row is hidden from md up, so it adds no gap there. */}
+      <div className="flex flex-col gap-3">
+        <div>
+          <div className="flex h-4 items-center">
+            <Skeleton className="h-3 w-[30%]" />
+          </div>
+          <div className="mt-1 flex h-6 items-center">
+            <Skeleton className="h-[18px] w-[40%]" />
+          </div>
         </div>
-        <div className="mt-1 flex h-6 items-center">
-          <Skeleton className="h-[18px] w-[40%]" />
+        {/* Preview + Archive client, both h-11 below md. */}
+        <div className="flex gap-2 md:hidden">
+          <Skeleton className="h-11 w-26" />
+          <Skeleton className="h-11 w-35" />
         </div>
       </div>
       {/* Border outside the row's height, as on TabNav's nav. */}

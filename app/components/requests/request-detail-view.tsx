@@ -13,6 +13,7 @@ import DateText from "@/components/ui/date-text";
 import FormError from "@/components/ui/form-error";
 import PageHeader from "@/components/ui/page-header";
 import Panel from "@/components/ui/panel";
+import { ROW_LINK_HIT_AREA_CLASS } from "@/components/ui/touch-hit-area";
 import { useClientPaths } from "@/hooks/use-client-paths";
 import type { RequestFormValues } from "@/hooks/use-request-form";
 import { useRowHighlight } from "@/hooks/use-row-highlight";
@@ -211,7 +212,10 @@ export default function RequestDetailView({
               ) : (
                 <Link
                   to={paths.getProjectPath(detail.project.id)}
-                  className="text-accent-fg hover:underline"
+                  className={cn(
+                    ROW_LINK_HIT_AREA_CLASS,
+                    "text-accent-fg hover:underline",
+                  )}
                 >
                   {detail.project.name}
                 </Link>

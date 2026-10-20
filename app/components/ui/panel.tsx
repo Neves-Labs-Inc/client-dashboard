@@ -1,5 +1,6 @@
 import { useId } from "react";
 import { Link } from "react-router";
+import { TOUCH_HIT_AREA_CLASS } from "@/components/ui/touch-hit-area";
 import { cn } from "@/lib/utils";
 
 type PanelProps = {
@@ -44,7 +45,15 @@ export default function Panel({
           className="text-xs/4 font-semibold tracking-[0.06em] text-fg-2 uppercase outline-hidden"
         >
           {titleHref ? (
-            <Link to={titleHref} className="hover:text-fg">
+            <Link
+              to={titleHref}
+              className={cn(
+                TOUCH_HIT_AREA_CLASS,
+                // inline-block: the hit area spans the 16px line box, not the 15px font box.
+                "inline-block",
+                "after:-inset-x-1 after:-top-4 after:-bottom-3 hover:text-fg",
+              )}
+            >
               {title}
             </Link>
           ) : (
