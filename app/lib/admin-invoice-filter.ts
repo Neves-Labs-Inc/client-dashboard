@@ -24,6 +24,22 @@ export const INVOICE_FILTER_COPY = {
   anyTime: "Any time",
   customRange: "Custom range",
   chooseClient: "Choose a client.",
+  statusLabel: "Invoice status",
+  filterAll: "All",
+  filterOpen: "Open",
+  filterOverdue: "Overdue",
+  filterPaid: "Paid",
+  filterVoid: "Void",
+  filtersLabel: "Filter Invoices",
+  client: "Client",
+  archivedGroup: "Archived",
+  issued: "Issued",
+  from: "From",
+  to: "To",
+  rangeLabel: "Issued range",
+  number: "Number",
+  numberPlaceholder: "NL-0042",
+  apply: "Apply",
 } as const;
 
 export type StatusChoice = "all" | "open" | "overdue" | "paid" | "void";
@@ -190,4 +206,44 @@ export function toInvoiceListSearch(form: InvoiceListForm): string {
     entries.filter(([, value]) => value !== ""),
   ).toString();
   return search === "" ? "" : `?${search}`;
+}
+
+// True when any filter narrows the list: Clear filters shows, and an empty
+// list says nothing matches. A custom range counts even with no dates.
+export function hasInvoiceListFilter(form: InvoiceListForm): boolean {
+  return (
+    form.status !== ALL_STATUSES ||
+    form.clientId !== null ||
+    form.issued !== ANY_TIME ||
+    form.q !== ""
+  );
+}
+
+// The search a filter-bar change applies: the draft with the change, on the
+// status tab shown (it may still be loading).
+export function getFilterBarSearch(
+  draft: InvoiceListForm,
+  patch: Partial<InvoiceListForm>,
+  status: StatusChoice,
+): string {
+  return toInvoiceListSearch({ ...draft, ...patch, status });
+}
+
+// The filter bar's controls, and the applied search they were seeded from.
+export type InvoiceDraftState = {
+  draft: InvoiceListForm;
+  seededSearch: string;
+};
+
+// Re-seeds the controls when the applied filter changes (a tab,
+// back/forward, Clear filters); the same state otherwise, keeping what was
+// typed.
+export function syncInvoiceDraft(
+  state: InvoiceDraftState,
+  applied: InvoiceListForm,
+): InvoiceDraftState {
+  const appliedSearch = toInvoiceListSearch(applied);
+  if (state.seededSearch === appliedSearch) return state;
+
+  return { draft: applied, seededSearch: appliedSearch };
 }

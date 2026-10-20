@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  getFilterBarSearch,
   INVOICE_FILTER_COPY,
   type InvoiceListForm,
   parseInvoiceListFilter,
+  syncInvoiceDraft,
   toInvoiceListSearch,
 } from "@/lib/admin-invoice-filter";
 
@@ -223,5 +225,76 @@ describe("toInvoiceListSearch", () => {
     for (const form of forms) {
       expect(parse(toInvoiceListSearch(form)).form).toEqual(form);
     }
+  });
+});
+
+describe("getFilterBarSearch", () => {
+  const DRAFT: InvoiceListForm = {
+    status: "all",
+    clientId: null,
+    issued: "custom",
+    from: "2026-01-01",
+    to: "2026-03-31",
+    q: "42",
+  };
+
+  it("drops the typed dates when a year is picked, keeping the typed number", () => {
+    expect(getFilterBarSearch(DRAFT, { issued: "2025" }, "all")).toBe(
+      "?issued=2025&q=42",
+    );
+  });
+
+  it("keeps the dates for a custom range", () => {
+    expect(getFilterBarSearch(DRAFT, {}, "all")).toBe(
+      "?issued=custom&from=2026-01-01&to=2026-03-31&q=42",
+    );
+  });
+
+  it("applies on the given status tab, not the draft's", () => {
+    expect(
+      getFilterBarSearch(
+        { ...DRAFT, status: "all" },
+        { clientId: CLIENT_ID, issued: "any" },
+        "overdue",
+      ),
+    ).toBe(`?status=overdue&client=${CLIENT_ID}&q=42`);
+  });
+
+  it("is empty when the change clears the last filter", () => {
+    expect(
+      getFilterBarSearch(
+        { ...DRAFT, issued: "any", q: "" },
+        { clientId: null },
+        "all",
+      ),
+    ).toBe("");
+  });
+});
+
+describe("syncInvoiceDraft", () => {
+  const APPLIED: InvoiceListForm = {
+    status: "open",
+    clientId: null,
+    issued: "any",
+    from: "",
+    to: "",
+    q: "",
+  };
+  const TYPED = { ...APPLIED, q: "00" };
+
+  it("keeps what was typed while the applied filter stays the same", () => {
+    const state = { draft: TYPED, seededSearch: "?status=open" };
+
+    expect(syncInvoiceDraft(state, APPLIED)).toBe(state);
+  });
+
+  it("re-seeds the controls from a new applied filter (a tab, Clear filters)", () => {
+    const state = { draft: TYPED, seededSearch: "?status=open" };
+    const cleared = { ...APPLIED, status: "all" as const };
+
+    expect(syncInvoiceDraft(state, cleared)).toEqual({
+      draft: cleared,
+      seededSearch: "",
+    });
   });
 });

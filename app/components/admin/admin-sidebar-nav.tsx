@@ -1,8 +1,9 @@
-import { House, Inbox, Plus } from "lucide-react";
+import { House, Inbox, Plus, Receipt } from "lucide-react";
 import { Link, useLocation } from "react-router";
 import ArchivedClientsDisclosure from "@/components/admin/archived-clients-disclosure";
 import type { NavAlert } from "@/components/ui/nav-alert-icons";
 import NavItem from "@/components/ui/nav-item";
+import { INVOICES_COPY, INVOICES_PATH } from "@/lib/admin-invoices";
 import { INBOX_PATH, REQUESTS_COPY } from "@/lib/admin-requests";
 import type { ArchivedClient, ClientSummary } from "@/lib/auth/auth";
 import {
@@ -26,6 +27,8 @@ type AdminSidebarNavProps = {
   newRequestCounts: Record<string, number>;
   // Active Clients with an Overdue Invoice.
   overdueInvoiceClientIds: string[];
+  // Overdue Invoices of active Clients; 0 when it couldn't load.
+  overdueInvoiceCount: number;
 };
 
 // The ids each alert is read from.
@@ -59,6 +62,7 @@ export default function AdminSidebarNav({
   syncProblemClientIds,
   newRequestCounts,
   overdueInvoiceClientIds,
+  overdueInvoiceCount,
 }: AdminSidebarNavProps): React.ReactNode {
   const { pathname, state } = useLocation();
   // Arriving from a create: that Client's entry gets the highlight fade.
@@ -82,6 +86,16 @@ export default function AdminSidebarNav({
             icon={Inbox}
             count={newRequestTotal}
             countLabel="new"
+          />
+        </li>
+        <li>
+          {/* Not `end`: it stays current on an Invoice's detail. */}
+          <NavItem
+            to={INVOICES_PATH}
+            label={INVOICES_COPY.invoices}
+            icon={Receipt}
+            count={overdueInvoiceCount}
+            countLabel="overdue"
           />
         </li>
       </ul>

@@ -1,9 +1,4 @@
-import {
-  COLUMNS,
-  COMPACT_COLUMNS,
-  COMPACT_TABLE_GRID_CLASS,
-  TABLE_GRID_CLASS,
-} from "@/components/invoices/invoice-grid";
+import { getInvoiceGrid } from "@/components/invoices/invoice-grid";
 import InvoiceRowSkeleton from "@/components/invoices/invoice-row-skeleton";
 import Skeleton from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
@@ -15,17 +10,19 @@ const SKELETON_ROW_COUNT = 5;
 // a SkeletonGroup.
 export default function InvoiceTableSkeleton({
   isCompact = false,
+  hasClient = false,
 }: {
   isCompact?: boolean;
+  hasClient?: boolean;
 }): React.ReactNode {
-  const columns = isCompact ? COMPACT_COLUMNS : COLUMNS;
+  const { columns, tableGridClass } = getInvoiceGrid({ isCompact, hasClient });
 
   return (
     <div>
       <div
         className={cn(
           "hidden gap-3 bg-surface-2 px-3 py-1.5 md:grid",
-          isCompact ? COMPACT_TABLE_GRID_CLASS : TABLE_GRID_CLASS,
+          tableGridClass,
         )}
       >
         {columns.map((column) => (
@@ -45,7 +42,11 @@ export default function InvoiceTableSkeleton({
           table's does. */}
       <div>
         {Array.from({ length: SKELETON_ROW_COUNT }, (_, index) => (
-          <InvoiceRowSkeleton key={index} isCompact={isCompact} />
+          <InvoiceRowSkeleton
+            key={index}
+            isCompact={isCompact}
+            hasClient={hasClient}
+          />
         ))}
       </div>
     </div>

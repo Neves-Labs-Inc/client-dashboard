@@ -1,10 +1,9 @@
 import { useEffect, useRef } from "react";
 import { Link } from "react-router";
+import ArchivedBadge from "@/components/admin/archived-badge";
 import {
-  CELL_CLASS,
-  COMPACT_CELL_CLASS,
-  COMPACT_ROW_GRID_CLASS,
-  ROW_GRID_CLASS,
+  CLIENT_CELL_CLASS,
+  getInvoiceGrid,
 } from "@/components/invoices/invoice-grid";
 import DataTableCell from "@/components/ui/data-table-cell";
 import DataTableRow from "@/components/ui/data-table-row";
@@ -12,7 +11,10 @@ import DateText from "@/components/ui/date-text";
 import InvoiceStatusBadge from "@/components/ui/invoice-status-badge";
 import Money from "@/components/ui/money";
 import { parseDateOnly } from "@/lib/format-date";
-import type { InvoiceRow as InvoiceRowData } from "@/lib/invoices/invoices";
+import type {
+  InvoiceClient,
+  InvoiceRow as InvoiceRowData,
+} from "@/lib/invoices/invoices";
 
 type InvoiceRowProps = {
   invoice: InvoiceRowData;
@@ -23,6 +25,11 @@ type InvoiceRowProps = {
   shouldFocusNumber?: boolean;
   // The Overview panel's: Issued is sr-only at every width.
   isCompact?: boolean;
+  // The Admin's global list: the Client cell, plain text (the number stays
+  // the row's one link).
+  client?: Pick<InvoiceClient, "name" | "isArchived">;
+  // Carried on the number link to the detail.
+  linkState?: unknown;
 };
 
 // One link: the number's stretched ::after covers the row, and the row draws
@@ -33,8 +40,11 @@ export default function InvoiceRow({
   isHighlighted = false,
   shouldFocusNumber = false,
   isCompact = false,
+  client,
+  linkState,
 }: InvoiceRowProps): React.ReactNode {
-  const cellClass = isCompact ? COMPACT_CELL_CLASS : CELL_CLASS;
+  const grid = getInvoiceGrid({ isCompact, hasClient: client !== undefined });
+  const cellClass = grid.cellClass;
   const numberRef = useRef<HTMLAnchorElement>(null);
 
   useEffect(() => {
@@ -48,7 +58,7 @@ export default function InvoiceRow({
 
   return (
     <DataTableRow
-      gridClassName={isCompact ? COMPACT_ROW_GRID_CLASS : ROW_GRID_CLASS}
+      gridClassName={grid.rowGridClass}
       isLink
       isHighlighted={isHighlighted}
     >
@@ -56,11 +66,27 @@ export default function InvoiceRow({
         <Link
           ref={numberRef}
           to={href}
+          state={linkState}
           className="block truncate font-mono text-[13px]/5 font-medium text-fg tabular-nums outline-hidden after:absolute after:inset-0"
         >
           {invoice.number}
         </Link>
       </DataTableCell>
+      {client && (
+        <DataTableCell className={CLIENT_CELL_CLASS.client}>
+          {/* The name truncates first; the tag never does. */}
+          <div className="flex min-w-0 items-center gap-1.5">
+            <span className="min-w-0 truncate text-[13px]/5 text-fg-2 lg:text-fg">
+              {client.name}
+            </span>
+            {client.isArchived && (
+              <span className="shrink-0">
+                <ArchivedBadge />
+              </span>
+            )}
+          </div>
+        </DataTableCell>
+      )}
       <DataTableCell className={cellClass.issued}>
         <DateText
           date={parseDateOnly(invoice.issueDate)}

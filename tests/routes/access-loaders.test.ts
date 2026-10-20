@@ -86,9 +86,13 @@ vi.mock("@/lib/requests/requests.server", () => ({
 }));
 
 const listOverdueClientIds = vi.fn<() => Promise<string[]>>();
+const countOverdueInvoices = vi.fn<() => Promise<number>>();
 
 vi.mock("@/lib/invoices/invoices.server", () => ({
-  invoices: { listOverdueClientIds: () => listOverdueClientIds() },
+  invoices: {
+    listOverdueClientIds: () => listOverdueClientIds(),
+    countOverdueInvoices: () => countOverdueInvoices(),
+  },
 }));
 
 const CLIENT_ID = "0199d0a4-5b6c-7d8e-9f01-23456789abcd";
@@ -185,6 +189,8 @@ beforeEach(() => {
   countNewByClient.mockResolvedValue({});
   listOverdueClientIds.mockReset();
   listOverdueClientIds.mockResolvedValue([]);
+  countOverdueInvoices.mockReset();
+  countOverdueInvoices.mockResolvedValue(0);
   listClients.mockReset();
   listClients.mockResolvedValue([]);
   createClient.mockReset();
@@ -435,6 +441,35 @@ describe("the layout's Overdue Invoice Clients", () => {
   });
 });
 
+describe("the layout's Overdue Invoice count", () => {
+  it("carries the count the Invoices module gives", async () => {
+    answerAs(ADMIN);
+    countOverdueInvoices.mockResolvedValue(4);
+
+    const result = (await adminLoader(argsFor("/admin"))) as unknown as {
+      data: { overdueInvoiceCount: number };
+    };
+
+    expect(result.data.overdueInvoiceCount).toBe(4);
+  });
+
+  it("still loads, with no count, when it can't, logging why", async () => {
+    answerAs(ADMIN);
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    countOverdueInvoices.mockRejectedValue(new Error("connection lost"));
+
+    const result = (await adminLoader(argsFor("/admin"))) as unknown as {
+      data: { clients: []; overdueInvoiceCount: number };
+    };
+
+    expect(result.data).toMatchObject({
+      clients: [],
+      overdueInvoiceCount: 0,
+    });
+    expect(logged).toHaveBeenCalled();
+  });
+});
+
 describe("when the roster can't load", () => {
   beforeEach(() => {
     answerAs(ADMIN);
@@ -454,6 +489,7 @@ describe("when the roster can't load", () => {
       syncProblemClientIds: [],
       newRequestCounts: {},
       overdueInvoiceClientIds: [],
+      overdueInvoiceCount: 0,
     });
   });
 
