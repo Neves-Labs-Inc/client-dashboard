@@ -298,6 +298,10 @@ Known follow-ups, found in review and not fixed:
 
 Phase 7 adds Invoices: the Admin's Invoices tab, New invoice drawer and Invoice detail with Mark paid, Revert and Void, the `receipt` alert icon and Home line for Overdue Invoices, the Client User Invoices pages, nav count, Overview panel and KPIs, and the same pages in the Admin preview. It adds **no env vars or secrets** (`.env.example` is unchanged) and nothing to set up by hand. Migration `0007_invoices.sql` creates the `invoices`, `line_items` and `invoice_counters` tables, their policies, grants and triggers; the usual migrate-gated deploy applies it (section 4). Invoice numbers start at `NL-0001-<year>` for each year with no counter row yet.
 
+### 3.12 Phase 7b before prod deploy
+
+Phase 7b adds the Admin's global Invoices page and detail (`/admin/invoices`, `/admin/invoices/:invoiceId`), the sidebar entry with its Overdue count, and a Client select on the New invoice drawer (Franklin, Phase 7b planning (2026-10-20)). It adds **no env vars or secrets** (`.env.example` is unchanged), **no migration** (no schema, grant or policy changes) and nothing to set up by hand: the usual deploy is enough. Each Client's Invoices tab is unchanged.
+
 ## 4. How a deploy works
 
 Every push to `main` (a merged PR) runs `.github/workflows/ci.yml`:
@@ -529,6 +533,29 @@ After the Phase 7 deploy (§3.11), and locally with the qa-visual seed. Use a te
 8. **Admin preview** of the Client: the Invoices nav entry, list, detail, Overview panel and KPIs match the Owner's view, the Void Invoice is hidden, and no action shows.
 9. **Archive** the Client: the Invoices tab has no "+ New invoice" and the detail has no actions. **Unarchive** it.
 
-## 14. Adding to this runbook
+## 14. Phase 7b walkthrough
+
+After the Phase 7b deploy (§3.12), and locally with the qa-visual seed. Use test Clients only: at least two active test Clients (one with a Project) and a third test Client with an Overdue Invoice, issued before you archive it (an archived Client can't take new Invoices; unarchive it when you are done). Spread Invoices over them: Open, Overdue, Paid and one in the past year. Locally, never click "Sync now" (`.env` holds real GitHub credentials), and seed `invoice_counters` (year, highest sequence used) if you insert Invoices directly, or the first create fails. A Void Invoice is final in the database, so to repeat step 8 locally, recreate the throwaway database. On prod, numbers are global across Clients and Invoices can't be deleted, so every test Invoice (the setup ones and step 5's) stays for good and uses up a number, the past-year one a past-year number; when you are done, revert any Paid one to Open, then void them all (step 8 voids one).
+
+1. **As the Admin**, open **Invoices** in the sidebar (under Requests). The sidebar entry is current and shows an "overdue" count. The page lists every Client's Invoices, newest first, Void and the archived Client's included, the archived Client's name tagged "Archived". The panel meta reads "N invoices · open $X". At 375px the entry is a tab in the top row, without the count.
+2. Try each filter and watch the URL change and the meta follow:
+   - the **Open**, **Overdue**, **Paid** and **Void** tabs (Open includes the Overdue ones), and **All**;
+   - **Client**: an active Client, then one from the "Archived" group;
+   - **Issued**: a year (it lists only years that have Invoices), then **Custom range** with only From, only To, and both;
+   - set **From after To**: "From must be on or before To." shows under the dates and the list ignores the range, other filters still apply;
+   - **Number search**: a partial number ("0004") and a lowercase one ("nl-0004") both find NL-0004-<year>; `%` and `_` are literal, so they match nothing; the box stops at 20 characters;
+   - combine two filters, switch a status tab (the other filters stay), then **Clear filters**.
+3. Pick a filter that matches nothing: "No Invoices match these filters." with **Clear filters**. Edit the URL to `?status=nope&client=nope`: both are ignored and the controls show All and All clients.
+4. Filter to an active test Client with at least one Project, then click **+ New invoice**. The drawer has a **Client** select first, with that Client chosen; the Project select lists its Projects. Change the Client: the Project resets to "No specific project" and lists the new Client's Projects. Clear the Client (choose the empty option) and **Issue invoice**: "Choose a client." Fix it.
+5. Add a line and **Issue invoice**. The drawer closes, the toast reads "Invoice NL-000n-<year> issued", the filters stay, and the new row is highlighted (when the filters hide it, there is only the toast).
+6. Open that Invoice from the list. The breadcrumb reads "Invoices / <Client name>" (the name links to the Client's Invoices tab). **Mark paid** with a past paid date, then **Revert to Open**. (If the Invoice is Overdue, the sidebar count follows each step.) Use the back link: you return to the filtered list, and the Invoice's number link takes focus.
+7. Check the **Overdue** count: it matches the active Clients' Overdue Invoices, and does not count the archived Client's. The Overdue tab still lists the archived Client's Overdue Invoices.
+8. Open the **archived Client's** Invoice: it has no Mark paid or Void, and reads "This Client is archived; its Invoices are read-only." under the header. Then open an Open Invoice (a throwaway one) and **Void invoice**: the detail shows the Void badge and "Voided <date>", and it appears under the **Void** tab.
+9. Open `/admin/invoices/not-a-uuid`: "Invoice not found." with a link back to the list, inside the shell.
+10. Each Client's own **Invoices** tab still works as in §13 (list, New invoice without a Client select, detail).
+
+Known gaps, found in review and not fixed: none.
+
+## 15. Adding to this runbook
 
 Every Phase adds its settings here and to `.env.example` (roadmap gate 3): new env vars and secrets in section 2, new manual setup in section 3, new checks in a Phase walkthrough.
