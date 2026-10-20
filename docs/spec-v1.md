@@ -140,6 +140,10 @@ Sources: [App-level tenant scoping alone, or plus Postgres RLS?][#13], `docs/adr
   - **`app_tenant`** runs all Client User traffic, is subject to RLS, and is never a `neon_superuser` member. Each tenant request runs in one transaction that sets `app.client_id` locally (`SET LOCAL` / `set_config(..., true)`);
   - **`app_system`** has `BYPASSRLS` and runs the Admin's routes (always, including inside a single Client's pages), the GitHub sync and Better Auth.
   - Choosing a connection pool is choosing whether to bypass. There is no bypass flag.
+- **Invoices and Line Items** (Franklin, Phase 7 planning (2026-10-19)):
+  - restrictive `SELECT` policies (`invoices_tenant_not_void`, `line_items_tenant_not_void`) hide Void Invoices, and the Line Items of a Void Invoice, from `app_tenant`, whatever the query;
+  - `app_tenant` is read-only on both tables: column-level `SELECT`, no INSERT, UPDATE or DELETE, and no access to `invoice_counters`;
+  - `app_system` may `UPDATE` only `status` and `paid_at` on an issued Invoice (no `number`, dates, memo, `project_id` or `status_changed_at`) and never deletes one. It can only `INSERT` and `SELECT` Line Items, so it can't touch them after insert.
 - **Requests writes:** `app_tenant` writes `requests` only through column-level INSERT and UPDATE grants (insert: `client_id`, `project_id`, `submitter_id`, `kind`, `title`, `description`; update: `project_id`, `kind`, `title`, `description`, `status`). It has no grant on `response_note`, `task_id`, `task_title` or `status_changed_at`, and no DELETE. Restrictive policies allow inserting only New Requests whose `submitter_id` is `app.user_id`, and updating only one's own New Requests, to New or Withdrawn. `app.user_id` is set transaction-locally alongside `app.client_id` (`set_config(..., true)`), and an unset value refuses every write (Franklin, Phase 6 planning (2026-10-16)).
 - **`client_id` on every Client-owned row**, Line Items and Tasks included, with a composite foreign key to the parent (`(parent_id, client_id)`) so it can't drift.
 - **Better Auth tables** have no RLS and are reached only through `app_system`.
@@ -175,9 +179,9 @@ Sources: [What is the v1 data model?][#16], amended by [What does the Admin area
 | `tasks` | `client_id`, `project_id`, optional milestone; keyed by the GitHub project-item node id; title, client note, target date, completed date, Status option; `hidden_at` | Yes |
 | `project_status_mappings` | `project_id`, `github_option_id`, `option_name`, `client_status` (unmapped options added by the sync as flagged rows, counted as In progress); carries `client_id` per the Client-owned rule | Yes |
 | `github_boards` | The org's board pool, a cache: `node_id` PK, number, title, URL, closed, GitHub's `updated_at`, `refreshed_at`. Refreshed from GitHub by the poll and every `projects_v2` webhook; Home's Unassigned panel lists the boards no linked Project uses. Not Client data (Franklin, Phase 4 planning (2026-10-14)) | None; Admin-only (`app_system`) |
-| `invoices` | `client_id`, optional `project_id`, number, issue date, due date, memo, status, `paid_at`, `status_changed_at` | Yes |
-| `line_items` | `client_id`, `invoice_id`, description, `amount_cents bigint`; at least one per Invoice | Yes |
-| `invoice_counters` | `year` PK, `last_seq`; global across Clients | None; Admin-only |
+| `invoices` | `client_id`, optional `project_id`, number, issue date, due date, memo, status, `paid_at`, `status_changed_at`; CHECKs and triggers below (added in Phase 7 (Franklin, Phase 7 planning (2026-10-19))) | Yes |
+| `line_items` | `client_id`, `invoice_id`, `position` (1–50, unique per Invoice; display order; added in Phase 7 (Franklin, Phase 7 planning (2026-10-19))), description, `amount_cents bigint`; at least one per Invoice | Yes |
+| `invoice_counters` | `year` PK, `last_seq` (1–9999); global across Clients | None; Admin-only (no `app_tenant` grant; Phase 7 (Franklin, Phase 7 planning (2026-10-19))) |
 | `requests` | `client_id`, optional `project_id`, submitter `user.id`, kind, title, description, status, one response note, optional `task_id` (`ON DELETE SET NULL`), `task_title` snapshot, `status_changed_at`, `created_at` (added in Phase 6 (Franklin, Phase 6 planning (2026-10-16))) | Yes |
 
 **Invariants**
@@ -191,7 +195,16 @@ Sources: [What is the v1 data model?][#16], amended by [What does the Admin area
 - A Request's `status_changed_at` is set by the `requests_status_changed_at` trigger on every status change, whoever writes it; the app never sets it and `app_tenant` has no grant on it.
 - Linking a Task stores its title in `task_title`. When the Task is deleted (Project delete cascade), `task_id` goes null and `task_title` stays; when it is soft-hidden, the link is kept. Either way the Request shows "<task_title> (no longer tracked)" with no live status; a hidden Task that turns Visible again shows live again ([Settle the GitHub sync and Project gaps][#25]).
 - An Invoice's or Request's `project_id` uses the composite `(project_id, client_id)` FK, which is why the `SET NULL` names only `project_id`.
-- **Invoice numbers:** `NL-<4-digit seq>-<year>` (e.g. `NL-0001-2026`). The year is the issue date's year; the sequence resets yearly. `invoice_counters` is bumped with `UPDATE ... RETURNING` in the same transaction as the Invoice insert. A number never changes; Void leaves a gap.
+- **Invoice numbers:** `NL-<4-digit seq>-<year>` (e.g. `NL-0001-2026`). The year is the issue date's year; the sequence resets yearly. The create transaction bumps `invoice_counters` with `INSERT ... ON CONFLICT (year) DO UPDATE SET last_seq = last_seq + 1 RETURNING last_seq`, whose row lock serialises concurrent creates in the same year, then inserts the Invoice and its Line Items. A number never changes; Void leaves a gap (Franklin, Phase 7 planning (2026-10-19)).
+- **Invoice constraints** (Franklin, Phase 7 planning (2026-10-19)):
+  - CHECK `invoices_number_format`: the number matches `NL-dddd-dddd` and its year equals the issue date's year;
+  - CHECK `invoices_due_after_issue`: due date on or after the issue date;
+  - CHECK `invoices_paid_at_status`: `paid_at` is set if and only if the status is Paid; CHECK `invoices_paid_after_issue`: `paid_at` on or after the issue date;
+  - CHECK `invoices_memo_length`: a memo is 1–2,000 characters or null;
+  - Line Item CHECKs: `position` 1–50, description 1–200 characters, amount non-zero with |amount| ≤ 100,000,000 cents;
+  - a deferred constraint trigger (`invoices_line_items_present`) checks at commit that a new Invoice has at least one Line Item and a total above zero, so the create path can insert the Invoice before its Line Items and a buggy write rolls back whole;
+  - the `invoices_status_changed_at` trigger sets `status_changed_at` on every status change, whoever writes it; the app never sets it. The same trigger refuses any change from Void (Void is final in the database);
+  - the `line_items_only_with_invoice` trigger refuses Line Items inserted outside the transaction that inserted their Invoice, so an issued Invoice's Line Items never change.
 
 ### GitHub Projects v2 sync
 
@@ -264,14 +277,14 @@ Navigation (sidebar on desktop, top bar + tab row on mobile): **Overview, Projec
 Sources: [What does the Admin area look like?][#19], `DESIGN.md` §6.3, prototype `prototype/admin-area` (`prototypes/admin-area/index.html?variant=A`, throwaway).
 
 - **Structure: Client-centric (variant A)**, reusing the client shell and tokens. No forked tokens.
-- **Sidebar:** Home; Requests inbox (all Clients, New count); the list of active Clients, each row showing one **alert icon per active reason** (right-aligned, lucide, tooltip + `aria-label`): New Requests (`inbox`, with the New count), sync problem (`refresh-cw-off`), Overdue Invoice (`receipt`); no icons when nothing needs attention ([#25][#25]); "+ New client"; a collapsed Archived group.
-- **Home:** a table of Clients plus an **Unassigned GitHub boards** panel, where boards are linked.
-- **Client workspace tabs:** Overview, Projects & boards, Team, Invoices, Requests. Clicking a row replaces the tab's list with a detail view with a back link. Create and edit forms open in the right-hand drawer.
+- **Sidebar:** Home; Requests inbox (all Clients, New count); the list of active Clients, each row showing one **alert icon per active reason** (right-aligned, lucide, tooltip + `aria-label`): New Requests (`inbox`, with the New count), sync problem (`refresh-cw-off`), Overdue Invoice (`receipt`, tooltip and `aria-label` "Overdue Invoices", no count, after the inbox and sync icons; shown while an active Client has at least one Overdue Invoice) (Franklin, Phase 7 planning (2026-10-19)); no icons when nothing needs attention ([#25][#25]); "+ New client"; a collapsed Archived group.
+- **Home:** a table of Clients (a Client with an Overdue Invoice shows an "Overdue invoice" line with the `receipt` icon under its name, as "Sync problem" does (Franklin, Phase 7 planning (2026-10-19))) plus an **Unassigned GitHub boards** panel, where boards are linked.
+- **Client workspace tabs:** Projects & boards, Team, Invoices, Requests (Overview still to come) (Franklin, Phase 7 planning (2026-10-19)). Clicking a row replaces the tab's list with a detail view with a back link. Create and edit forms open in the right-hand drawer.
 - **Create Client:** drawer asks for a name; then the Team tab opens with "Invite first Owner".
 - **Team:** first-Owner Invitation; promote, demote, remove users; pending Invitations (revoke/resend). Expired Invitations drop off.
 - **Archive / unarchive** a Client. An archived Client's data is kept, read-only for the Admin ([#16][#16]).
 - **Projects & boards:** link and unlink boards, column → client-status mapping (saving with unmapped columns allowed; those Tasks count as In progress and the board is flagged). Board detail: required-field check (a required field that is an org issue field shows "Issue field", warns `<field> is an issue field; add it as a project field`, and counts in the panel's "<n> to fix"; it is not a sync problem), Milestone progress, Tasks with client status, sync state, "Sync now". Board detail also lists the client-visible Tasks (with their GitHub Status option name) and a count of hidden ones. Boards that are sync problems (error, or stale over 26 hours) are flagged on the row, on the board detail and by an alert icon on the Client's sidebar row (and on Home's Clients table). Delete Project.
-- **Invoices:** author (see [Invoices](#invoices)); mark Paid, revert Paid to Open, and Void, each with a confirmation.
+- **Invoices:** the tab lists every Invoice of the Client, Void included (newest issue date first, ties by number descending), with "+ New invoice" for active Clients (Franklin, Phase 7 planning (2026-10-19)). Author (see [Invoices](#invoices)); mark Paid, revert Paid to Open, and Void, each with a confirmation.
 - **Requests:** triage from the global inbox or the Client's tab; the detail view sets the status and the one response note and links a Task (only while Accepted or Done). Withdrawn Requests are read-only. The global inbox lists the Requests of active Clients only, filtered New (default) or All; an archived Client's Requests are read-only on its own tab and absent from the inbox (Franklin, Phase 6 planning (2026-10-16)).
 - The Admin always runs as `app_system` (ADR 0003).
 
@@ -284,15 +297,15 @@ Source: Franklin, 2026-10-13. Story 49. Built in its own mini-Phase after Phase 
 - **Tenant isolation:** Client data in the preview goes through the same `app_tenant` + `SET LOCAL` scope as a real Client User, never the system pool, and the preview opens no path for the Admin's session to read tenant data outside a preview.
 - **Entry:** a "Preview" button in the Client workspace header, on every tab and for archived Clients too, opening in the same tab (Franklin, Phase 5a planning (2026-10-16)).
 - **Exit:** the banner's "Exit preview" returns to the Client's Projects & boards tab (Franklin, Phase 5a planning (2026-10-16)).
-- **Routes and guard:** the preview lives at `/admin/clients/:clientId/preview/{,projects,projects/:id,requests,requests/:id}`. Every request is re-authorised as the Admin (`requirePreviewClient`), and an unknown Client is a 404. Tenant reads go through `withTenant` with the Client id from the URL and no user id. Every preview action answers 405 (Franklin, Phase 5a planning (2026-10-16)).
+- **Routes and guard:** the preview lives at `/admin/clients/:clientId/preview/{,projects,projects/:id,invoices,invoices/:id,requests,requests/:id}` (Invoices routes added in Phase 7 (Franklin, Phase 7 planning (2026-10-19))). Every request is re-authorised as the Admin (`requirePreviewClient`), and an unknown Client is a 404. Tenant reads go through `withTenant` with the Client id from the URL and no user id. Every preview action answers 405 (Franklin, Phase 5a planning (2026-10-16)).
 - **Expiry:** none of its own. The preview holds no state, so it lasts as long as the Admin session (Franklin, Phase 5a planning (2026-10-16)).
 - **Audit:** none of any kind (Franklin, Phase 5a planning (2026-10-16)).
-- **Pages:** Overview, Projects, Project view, Requests and Request detail. Team and Profile are left out. "New request", Edit and Withdraw are hidden. The Requests empty state reads "No Requests yet." with no button (Franklin, Phase 5a planning (2026-10-16); Franklin, Phase 5a plan approval (2026-10-19)). Not-found titles include the Client's name.
+- **Pages:** Overview, Projects, Project view, Invoices, Invoice detail, Requests and Request detail (Invoices pages added in Phase 7 (Franklin, Phase 7 planning (2026-10-19))). Team and Profile are left out. "New request", Edit and Withdraw are hidden. The Requests empty state reads "No Requests yet." with no button (Franklin, Phase 5a planning (2026-10-16); Franklin, Phase 5a plan approval (2026-10-19)). Not-found titles include the Client's name.
 - **Chrome:**
   - the banner "Previewing <Client> as an Owner · Read-only", plus "Archived: its users can't sign in" for an archived Client;
   - an "Admin preview" block (theme toggle, Exit) in place of the user menu;
-  - the nav shows Overview, Projects and Requests.
-- **Later:** Phase 7 adds Invoices to the preview.
+  - the nav shows Overview, Projects, Invoices and Requests (Invoices added in Phase 7 (Franklin, Phase 7 planning (2026-10-19))).
+- **Invoices:** the preview shows the Owner's view of Invoices: the nav entry and open count, the list, the detail, the Overview panel and KPIs. Void Invoices are filtered as for Client Users, there are no write controls, and every action answers 405 (Franklin, Phase 7 planning (2026-10-19)).
 - Its tickets get the security review axis.
 
 ### Invoices
@@ -303,11 +316,18 @@ Sources: [How does the Admin add Invoices and update their status?][#7], [What d
 - **Fields:** number (auto), issue date, due date, status, paid date, optional memo, optional Project (zero or one, from that Client), and one or more Line Items (description + amount). Amount = sum of Line Items, computed, never typed. USD only.
 - **Amounts:** a Line Item amount is non-zero and may be negative (a discount or credit); the Invoice total must be greater than 0. Validated in the form and on the server. ([Settle the Invoice gaps][#24])
 - **Form defaults:** issued today, due in 30 days.
+- **Date rules** (Franklin, Phase 7 planning (2026-10-19)): the due date is on or after the issue date, and the issue date is not after today (New York). The paid date is entered in the Mark paid confirm (default today) and must be on or after the issue date and not after today.
+- **Limits** (Franklin, Phase 7 planning (2026-10-19)) (validated in the form and on the server):
+  - 1–50 Line Items;
+  - description 1–200 characters;
+  - amount non-zero, up to 2 decimals, |amount| ≤ $1,000,000, and a total above $0.00;
+  - memo up to 2,000 characters, plain text (no Markdown).
 - **Number:** assigned on creation (see data model). Hand-entered past invoices get new numbers too.
 - **Lifecycle:** Open → Paid, Paid → Open (revert), Open → Void. Only Open (or Overdue) Invoices can be voided, never Paid ones. Void is final and keeps its number. Paid and Void each ask for confirmation; marking Paid records the paid date. Reverting Paid (with confirmation) clears `paid_at` and updates `status_changed_at`; it changes status only, so it is not an edit. A reverted Invoice is Open again (so it can be Overdue or voided). A wrong paid date is fixed by reverting and marking Paid again. ([Settle the Invoice gaps][#24])
 - **Overdue** is derived: Open and past its due date. Never stored, never set by hand.
 - **Business timezone:** all Invoice dates are plain dates evaluated in one configured business timezone, `America/New_York`. "Today" (the default issue date), the default due date (issue + 30 days) and Overdue use it, for every viewer and on the server. An Invoice is Overdue from the day after its due date (`today > due_date`). ([Settle the Invoice gaps][#24])
 - **No edits after issue:** an issued Invoice is never edited; a mistake is fixed by voiding and issuing a new one ([#19][#19] supersedes #7's "any field can change while Open"). Moving the issue date into another year likewise means void and reissue.
+- **Admin view** (Franklin, Phase 7 planning (2026-10-19)): the Admin sees Void Invoices on the Client's Invoices tab and detail, with the Void badge and "Voided <date>"; Client Users never do. Mark paid, Revert to Open and Void are inline confirms in the detail, not dialogs. An action that lands after the Invoice changed elsewhere shows an error and reloads the detail. An archived Client's Invoices are read-only: no "+ New invoice" and no actions.
 - **Client view:** read-only; Void Invoices are never shown. Payment happens outside the dashboard. No PDF in v1 (neither upload nor generated).
 
 ### Requests

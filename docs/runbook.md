@@ -294,6 +294,10 @@ Known follow-ups, found in review and not fixed:
 - If a linked Task is deleted and the Admin then saves the Request, `task_title` is cleared, so the "(no longer tracked)" snapshot is lost.
 - The Overview and the Requests page duplicate the drawer, toast, highlight and focus logic.
 
+### 3.11 Phase 7 before prod deploy
+
+Phase 7 adds Invoices: the Admin's Invoices tab, New invoice drawer and Invoice detail with Mark paid, Revert and Void, the `receipt` alert icon and Home line for Overdue Invoices, the Client User Invoices pages, nav count, Overview panel and KPIs, and the same pages in the Admin preview. It adds **no env vars or secrets** (`.env.example` is unchanged) and nothing to set up by hand. Migration `0007_invoices.sql` creates the `invoices`, `line_items` and `invoice_counters` tables, their policies, grants and triggers; the usual migrate-gated deploy applies it (section 4). Invoice numbers start at `NL-0001-<year>` for each year with no counter row yet.
+
 ## 4. How a deploy works
 
 Every push to `main` (a merged PR) runs `.github/workflows/ci.yml`:
@@ -508,6 +512,23 @@ Known follow-ups, found in review and not fixed:
 - The Request detail's links are below the 44px touch target (issue #49).
 - A document POST to a preview page gets a 405, but the preview layout's loader still runs its reads first (the Client lookup and the nav counts). Nothing is written.
 
-## 13. Adding to this runbook
+## 13. Phase 7 walkthrough
+
+After the Phase 7 deploy (§3.11), and locally with the qa-visual seed. Use a test Client with an Owner and a Member you can sign in as, and at least one Project. Locally, never click "Sync now" (`.env` holds real GitHub credentials). A Void Invoice is final in the database, so to repeat step 6 locally, recreate the throwaway database instead of resetting the row in SQL. On prod, numbers are global across Clients and Invoices can't be deleted, so the test Invoices stay for good and use up the first numbers of the year (and of the past year used in step 3); when you are done, revert any Paid one to Open, then void them all (only an Open Invoice can be voided).
+
+1. **As the Admin**, open the test Client's **Invoices** tab: the empty state reads "No Invoices yet."
+2. Click **+ New invoice**. Check the defaults (issue date today, due date 30 days later) and that the due date follows the issue date until you edit it. Add 3 lines, one of them negative, and check the live total. Then check the errors: a zero amount, a future issue date, and a negative total (the total must be more than $0.00). **Issue invoice**: the drawer closes, the toast reads "Invoice NL-000n-<year> issued", and the new row is highlighted.
+3. Issue an Invoice with a past-year issue date. Its number uses that year's sequence (`NL-0001-<past year>` if none exists), not the current year's.
+4. Issue one with a past due date. It shows Overdue. The Client's sidebar row shows the `receipt` icon ("Overdue Invoices", no count), and Home's Clients table shows "Overdue invoice" under the Client's name.
+5. **As the Owner, and again as the Member**, check:
+   - the **Invoices** nav entry and its open count (Open and Overdue Invoices);
+   - the list, with the Overdue badge, and the detail with the memo, the Project link and the Line Items;
+   - the **Overview** KPIs (Open balance, Overdue), and the Invoices panel beside the Requests panel at `xl`.
+6. **As the Admin**, open an Open Invoice and **Mark paid** with a past paid date. First try a date before the issue date, and see the error. **Revert to Open**: the paid date clears. Mark it paid again. Then **Void invoice** another Open Invoice. As the Owner, the Void one is gone from the list, the detail ("Invoice not found.") and the Overview. As the Admin, it shows with the Void badge and "Voided <date>".
+7. Pay or void the last Overdue Invoice: the `receipt` icon leaves the sidebar and the "Overdue invoice" line leaves Home.
+8. **Admin preview** of the Client: the Invoices nav entry, list, detail, Overview panel and KPIs match the Owner's view, the Void Invoice is hidden, and no action shows.
+9. **Archive** the Client: the Invoices tab has no "+ New invoice" and the detail has no actions. **Unarchive** it.
+
+## 14. Adding to this runbook
 
 Every Phase adds its settings here and to `.env.example` (roadmap gate 3): new env vars and secrets in section 2, new manual setup in section 3, new checks in a Phase walkthrough.

@@ -337,9 +337,11 @@ Same mechanics as 9.4 with the 2.3 colors and icons. Open uses `border-fg-2 text
 
 ### 9.7 Invoice table
 
-Columns at `md`+: Number (mono) | Issued (mono) | Due (mono) | Amount (mono, right) | Status (badge). Template `minmax(110px,1.2fr) 90px 90px minmax(90px,1fr) 92px`.
-Below `md`: `grid-cols-[minmax(0,1fr)_auto_auto] gap-x-2.5 gap-y-0.5`: Number over Due date ("Due Oct 1", mono `fg-2`) on the left, Amount, Status; Issued hidden visually (still present for screen readers as `sr-only`).
-Amounts are formatted `Intl.NumberFormat("en-US", { style: "currency", currency: "USD" })`. Sorted by issue date, newest first. Void never appears; the number gap is expected and not explained in the UI. Row links to the Invoice detail (Line Items, memo, Project). Panel meta: "open $X" = sum of Open + Overdue.
+Columns at `lg`+: Number (mono) | Issued (mono) | Due (mono) | Amount (mono, right) | Status (badge). Template `minmax(110px,1.2fr) 96px 96px minmax(90px,1fr) 92px`. The date tracks are 96px, not 90: a year-qualified date like "Jun 28, 2025" is ~94px in 13px mono.
+From `md` to `lg` the table has 4 columns, `minmax(110px,1.2fr) 96px minmax(90px,1fr) 92px`, and Issued is screen-reader only (`sr-only`, header and cells). With the sidebar, the main column is ~480px at 768px, and the five columns need at least 532px, so the table would scroll the page sideways.
+The Overview's Invoices panel uses a compact table at every width from `md`: Number | Due | Amount | Status, with Issued screen-reader only.
+Below `md`: `grid-cols-[minmax(0,1fr)_auto_92px] gap-x-2.5 gap-y-0.5`: Number over Due date ("Due Oct 1", mono `fg-2`) on the left, Amount, Status; Issued hidden visually (still present for screen readers as `sr-only`).
+Amounts are formatted `Intl.NumberFormat("en-US", { style: "currency", currency: "USD" })`. Sorted by issue date, newest first. Void never appears for Client Users (the Admin's tab shows it with the Void badge); the number gap is expected and not explained in the UI. Row links to the Invoice detail (Line Items, memo, Project). Panel meta: "open $X" = sum of Open + Overdue.
 
 ### 9.8 Requests table
 
@@ -349,7 +351,7 @@ Kind and Status per 2.4. A Request that points to a hidden Task shows its last t
 
 ### 9.9 Summary numbers (KPI row)
 
-Overview only. Four tiles in one bordered strip: `grid grid-cols-2 lg:grid-cols-4 border border-line rounded-[3px] bg-surface`, tiles separated by hairlines (`border-l` / `border-t` per position, no double borders).
+Overview only. Four tiles in one bordered strip: `grid grid-cols-2 lg:grid-cols-4 border border-line rounded-[3px] bg-surface`, tiles separated by hairlines (`border-l` / `border-t` per position, no double borders). The strip is 2x2 below `lg` and 4-across from `lg`: four tiles at 768px are 127px wide and clip balances of $1,000 and up (Franklin, ticket 07 review, Phase 7).
 
 | Tile | Value | Notes |
 |---|---|---|
